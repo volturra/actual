@@ -10,6 +10,13 @@ function wait(n) {
   return new Promise(resolve => setTimeout(() => resolve(`wait(${n})`), n));
 }
 
+// `tracer.wait` only sees future events, so a query fired synchronously
+// would slip into the queue unseen. `end()` fails on anything queued.
+async function expectNoMoreEvents(ms: number) {
+  await wait(ms);
+  tracer.end();
+}
+
 function select(row, selectExpressions) {
   return Object.fromEntries(
     selectExpressions.map(fieldName => [fieldName, row[fieldName]]),
@@ -207,8 +214,7 @@ describe('pagedQuery', () => {
       tables: ['transactions'],
     });
 
-    const p = Promise.race([tracer.wait('server-query'), wait(100)]);
-    expect(await p).toEqual('wait(100)');
+    await expectNoMoreEvents(100);
   });
 
   it(`runs and updates with sync events (onlySync: true)`, async () => {
@@ -354,8 +360,7 @@ describe('pagedQuery', () => {
     });
 
     // Wait a bit and make sure nothing comes through
-    const p = Promise.race([tracer.wait('server-query'), wait(100)]);
-    await expect(p).resolves.toEqual('wait(100)');
+    await expectNoMoreEvents(100);
   });
 
   it('pagedQuery makes requests in pages', async () => {
@@ -412,8 +417,7 @@ describe('pagedQuery', () => {
 
     await paged.fetchNext();
     // Wait a bit and make sure nothing comes through
-    const p = Promise.race([tracer.wait('server-query'), wait(100)]);
-    expect(await p).toEqual('wait(100)');
+    await expectNoMoreEvents(100);
   });
 
   it('pagedQuery allows customizing page count', async () => {
@@ -522,8 +526,7 @@ describe('pagedQuery', () => {
     });
 
     // An optimistic update is local only: nothing is sent to the server
-    const p = Promise.race([tracer.wait('server-query'), wait(100)]);
-    expect(await p).toEqual('wait(100)');
+    await expectNoMoreEvents(100);
   });
 
   it('pagedQuery only runs `fetchNext` once at a time', async () => {
@@ -547,8 +550,7 @@ describe('pagedQuery', () => {
     await tracer.expect('data', vi.fn());
 
     // Wait a bit and make sure nothing comes through
-    const p = Promise.race([tracer.wait('server-query'), wait(200)]);
-    expect(await p).toEqual('wait(200)');
+    await expectNoMoreEvents(200);
   });
 
   it('pagedQuery refetches all paged data on update', async () => {
