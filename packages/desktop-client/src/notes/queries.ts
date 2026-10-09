@@ -9,13 +9,8 @@ export type NotesById = ReadonlyMap<NoteEntity['id'], NoteEntity['note']>;
 export const notesQueries = {
   all: () => ['notes'],
   lists: () => [...notesQueries.all(), 'lists'],
-  // One shared query of the whole notes table instead of one query per
-  // note id: the budget page alone shows a notes button per category and
-  // month. The table holds account, category, group and month notes
-  // (transaction notes live on transactions), so it grows with category ×
-  // month notes (`${categoryId}-${month}`), and rows are never deleted:
-  // undo leaves null notes and deleting a category leaves its notes
-  // behind. Each row is small, though.
+  // One shared query of the whole notes table instead of one per note id
+  // (the budget page shows a notes button per category and month).
   list: () =>
     queryOptions<NotesById>({
       queryKey: [...notesQueries.lists()],
