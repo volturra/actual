@@ -40,7 +40,7 @@ function makeTransaction(
     amount: -1000,
     date: '2024-01-01',
     ...fields,
-  } as TransactionEntity;
+  } satisfies TransactionEntity;
 }
 
 const transactions = [
