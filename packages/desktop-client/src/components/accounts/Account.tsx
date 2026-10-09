@@ -1065,6 +1065,10 @@ class AccountInternal extends PureComponent<
     return this.props.matchedTransactions.includes(id);
   };
 
+  onCloseAddTransaction = () => {
+    this.setState({ isAdding: false });
+  };
+
   onCreatePayee = async (name: string) => {
     const trimmed = name.trim();
     if (trimmed !== '') {
@@ -1984,9 +1988,7 @@ class AccountInternal extends PureComponent<
                     this.onMakeAsNonSplitTransactions
                   }
                   onRefetch={this.refetchTransactions}
-                  onCloseAddTransaction={() =>
-                    this.setState({ isAdding: false })
-                  }
+                  onCloseAddTransaction={this.onCloseAddTransaction}
                   onCreatePayee={this.onCreatePayee}
                   onApplyFilter={this.onApplyFilter}
                 />

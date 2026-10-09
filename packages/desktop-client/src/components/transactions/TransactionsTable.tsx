@@ -11,6 +11,7 @@ import {
   useState,
 } from 'react';
 import type {
+  ComponentProps,
   CSSProperties,
   ForwardedRef,
   KeyboardEvent,
@@ -203,23 +204,27 @@ export function useAmountColumnWidths(
   transactions: TransactionEntity[],
   balances: Record<TransactionEntity['id'], IntegerAmount> | null,
 ): AmountColumnWidths {
-  const debitCreditValues = transactions.map(t =>
-    integerToCurrency(Math.abs(t.amount ?? 0)),
-  );
-  const balanceValues = balances
-    ? Object.values(balances).map(balance => integerToCurrency(balance))
-    : [];
+  // Memoized manually: the compiler skips this hook because it calls no other
+  // hooks, and the result is passed to every row's `memo()` boundary.
+  return useMemo(() => {
+    const debitCreditValues = transactions.map(t =>
+      integerToCurrency(Math.abs(t.amount ?? 0)),
+    );
+    const balanceValues = balances
+      ? Object.values(balances).map(balance => integerToCurrency(balance))
+      : [];
 
-  return {
-    amount: measureAmountColumnWidth(
-      debitCreditValues,
-      DEFAULT_AMOUNT_COLUMN_WIDTHS.amount,
-    ),
-    balance: measureAmountColumnWidth(
-      balanceValues,
-      DEFAULT_AMOUNT_COLUMN_WIDTHS.balance,
-    ),
-  };
+    return {
+      amount: measureAmountColumnWidth(
+        debitCreditValues,
+        DEFAULT_AMOUNT_COLUMN_WIDTHS.amount,
+      ),
+      balance: measureAmountColumnWidth(
+        balanceValues,
+        DEFAULT_AMOUNT_COLUMN_WIDTHS.balance,
+      ),
+    };
+  }, [transactions, balances]);
 }
 
 type TransactionHeaderProps = {
@@ -912,7 +917,7 @@ function PayeeIcons({
   const { t } = useTranslation();
 
   const scheduleId = transaction.schedule;
-  const { isLoading, schedules = [] } = useCachedSchedules();
+  const { isLoading, schedules } = useCachedSchedules();
 
   if (isLoading) {
     return null;
@@ -1045,6 +1050,18 @@ type TransactionProps = {
   amountColumnWidths: AmountColumnWidths;
 };
 
+// Latest transfer date sync per transaction, so a newer date edit wins over
+// one still querying. Kept outside the component because reading a ref from
+// the row's handlers stops the React Compiler from optimizing the row.
+const latestTransferDateSync = new Map<TransactionEntity['id'], number>();
+let transferDateSyncCounter = 0;
+
+function nextTransferDateSync(id: TransactionEntity['id']) {
+  transferDateSyncCounter += 1;
+  latestTransferDateSync.set(id, transferDateSyncCounter);
+  return transferDateSyncCounter;
+}
+
 const Transaction = memo(function Transaction({
   allTransactions,
   transactionMap,
@@ -1065,7 +1082,7 @@ const Transaction = memo(function Transaction({
   payees,
   accounts,
   balance,
-  dateFormat = 'MM/dd/yyyy',
+  dateFormat: dateFormatProp,
   hideFraction,
   onSave,
   onEdit,
@@ -1089,12 +1106,12 @@ const Transaction = memo(function Transaction({
   showSelection,
   allowSplitTransaction,
   showHiddenCategories,
-  canDrag = false,
+  canDrag: canDragProp,
   draggedDate,
   draggedId,
   draggedParentId,
-  siblingCount = 0,
-  previewSiblingCount = 0,
+  siblingCount: siblingCountProp,
+  previewSiblingCount: previewSiblingCountProp,
   prevRowDate,
   nextRowDate,
   sortField,
@@ -1104,6 +1121,12 @@ const Transaction = memo(function Transaction({
   index,
   amountColumnWidths,
 }: TransactionProps) {
+  // Defaults live here rather than in the destructuring above: the React
+  // Compiler skips any component with destructuring defaults.
+  const dateFormat = dateFormatProp ?? 'MM/dd/yyyy';
+  const canDrag = canDragProp ?? false;
+  const siblingCount = siblingCountProp ?? 0;
+  const previewSiblingCount = previewSiblingCountProp ?? 0;
   const { t } = useTranslation();
 
   const dispatch = useDispatch();
@@ -1133,9 +1156,117 @@ const Transaction = memo(function Transaction({
   const [syncTransferDatePref, setSyncTransferDatePref] =
     useSyncedPref('sync-transfer-date');
   const syncTransferDate = String(syncTransferDatePref) === 'true';
+
+  const {
+    id,
+    amount,
+    debit,
+    credit,
+    payee: payeeId,
+    imported_payee: importedPayee,
+    notes,
+    date,
+    account: accountId,
+    category: categoryId,
+    cleared,
+    reconciled,
+    forceUpcoming,
+    is_parent: isParent,
+    _unmatched,
+  } = transaction;
+
+  const { schedules } = useCachedSchedules();
+  const schedule = transaction.schedule
+    ? schedules.find(s => s.id === transaction.schedule)
+    : null;
+
+  const previewStatus = forceUpcoming ? 'upcoming' : categoryId;
+
+  // Join in some data
+  const payee =
+    (payees && payeeId && getPayeesById(payees)[payeeId]) || undefined;
+  const account = accounts && accountId && getAccountsById(accounts)[accountId];
+
+  const isChild = transaction.is_child;
+  const transferAcct =
+    isTemporaryId(id) && payee?.transfer_acct
+      ? getAccountsById(accounts)[payee.transfer_acct]
+      : transferAccountsByTransaction[id];
+  const isBudgetTransfer = transferAcct && transferAcct.offbudget === 0;
+  const isOffBudget = account && account.offbudget === 1;
+
+  const valueStyle = added
+    ? { fontWeight: 600, color: theme.tableTextItemAdded }
+    : null;
+  const backgroundFocus = focusedField === 'select';
+  const amountStyle = hideFraction ? { letterSpacing: -0.5 } : null;
+  const amountCellStyle = {
+    ...(isParent && { fontStyle: 'italic' }),
+    ...styles.tnum,
+    ...amountStyle,
+  };
+
+  const runningBalance = !isTemporaryId(id) ? balance : balance + amount;
+
+  // Ok this entire logic is a dirty, dirty hack.. but let me explain.
+  // Problem: the split-error Popover (which has the buttons to distribute/add split)
+  // renders before schedules are added to the table. After schedules finally load
+  // the entire table gets pushed down. But the Popover does not re-calculate
+  // its positioning. This is because there is nothing in react-aria that would be
+  // watching for the position of the trigger element.
+  // Solution: when transactions (this includes schedules) change - we increment
+  // a variable (with a small delay in order for the next render cycle to pick up
+  // the change instead of the current). We pass the integer to the Popover which
+  // causes it to re-calculate the positioning. Thus fixing the problem.
+  useEffect(() => {
+    // The hack applies to only transactions with split errors
+    if (!splitError) {
+      return;
+    }
+
+    const id = setTimeout(() => {
+      window.dispatchEvent(new Event('resize')); // Force popover to recalculate position
+    }, 1);
+    return () => clearTimeout(id);
+  }, [splitError, allTransactions]);
+
+  // Drag and drop support
+  const isChildTransaction = transaction.is_child;
+  const parentId = transaction.parent_id;
+  // Disable drag if this is the only transaction on its date (nothing to reorder with)
+  // For child transactions, disable if there's only one sibling (nothing to reorder with)
+  // For previews, disable if there's only one preview on this date (real transactions
+  // sharing the date don't count; previews can only reorder against other previews)
+  const isOnlyTransactionOnDate = isChildTransaction
+    ? siblingCount <= 1
+    : isPreview
+      ? previewSiblingCount <= 1
+      : prevRowDate !== transaction.date && nextRowDate !== transaction.date;
+  const previewRef = useRef<DragPreviewRenderer>(null);
+  // Row-level drag must not compete with inline editors (notes, amounts,
+  // payee, etc.): otherwise clicks/drags inside inputs start a reorder drag
+  // instead of moving the caret or selecting text (see GH #7567).
+  // The running balance is read-only, so pause the drag while the mouse is
+  // pressed on it to let the user select and copy the value (see GH #7833).
+  const [isSelectingBalance, setIsSelectingBalance] = useState(false);
+  useEffect(() => {
+    if (!isSelectingBalance) return;
+    const stopSelecting = () => setIsSelectingBalance(false);
+    // `blur` covers a mouseup the window never gets (e.g. alt-tab while pressed)
+    window.addEventListener('mouseup', stopSelecting);
+    window.addEventListener('blur', stopSelecting);
+    return () => {
+      window.removeEventListener('mouseup', stopSelecting);
+      window.removeEventListener('blur', stopSelecting);
+    };
+  }, [isSelectingBalance]);
+  const allowRowDrag =
+    canDrag &&
+    !isSelectingBalance &&
+    !isOnlyTransactionOnDate &&
+    (!editing || focusedField === 'select' || focusedField === 'cleared');
   const setSyncTransferDate = (checked: boolean) =>
     setSyncTransferDatePref(checked ? 'true' : 'false');
-  const transferDateSyncSeq = useRef(0);
 
   const onUpdate: TransactionUpdateFunction = async (name, value) => {
     // Had some issues with this is called twice which is a problem now that we are showing a warning
@@ -1293,7 +1424,7 @@ const Transaction = memo(function Transaction({
         ].filter((id): id is string => Boolean(id));
 
         if (transferIds.length > 0) {
-          const seq = ++transferDateSyncSeq.current;
+          const seq = nextTransferDateSync(transaction.id);
           void (async () => {
             const updated: { id: string; date: string }[] = transferIds.map(
               id => ({ id, date: value }),
@@ -1317,9 +1448,10 @@ const Transaction = memo(function Transaction({
             );
 
             // a newer date edit started while we were querying: let it win
-            if (seq !== transferDateSyncSeq.current) {
+            if (latestTransferDateSync.get(transaction.id) !== seq) {
               return;
             }
+            latestTransferDateSync.delete(transaction.id);
 
             await send('transactions-batch-update', {
               updated,
@@ -1332,223 +1464,6 @@ const Transaction = memo(function Transaction({
       }
     }
   };
-
-  const {
-    id,
-    amount,
-    debit,
-    credit,
-    payee: payeeId,
-    imported_payee: importedPayee,
-    notes,
-    date,
-    account: accountId,
-    category: categoryId,
-    cleared,
-    reconciled,
-    forceUpcoming,
-    is_parent: isParent,
-    _unmatched = false,
-  } = transaction;
-
-  const { schedules = [] } = useCachedSchedules();
-  const schedule = transaction.schedule
-    ? schedules.find(s => s.id === transaction.schedule)
-    : null;
-
-  const previewStatus = forceUpcoming ? 'upcoming' : categoryId;
-
-  // Join in some data
-  const payee =
-    (payees && payeeId && getPayeesById(payees)[payeeId]) || undefined;
-  const account = accounts && accountId && getAccountsById(accounts)[accountId];
-
-  const isChild = transaction.is_child;
-  const transferAcct =
-    isTemporaryId(id) && payee?.transfer_acct
-      ? getAccountsById(accounts)[payee.transfer_acct]
-      : transferAccountsByTransaction[id];
-  const isBudgetTransfer = transferAcct && transferAcct.offbudget === 0;
-  const isOffBudget = account && account.offbudget === 1;
-
-  const valueStyle = added
-    ? { fontWeight: 600, color: theme.tableTextItemAdded }
-    : null;
-  const backgroundFocus = focusedField === 'select';
-  const amountStyle = hideFraction ? { letterSpacing: -0.5 } : null;
-
-  const runningBalance = !isTemporaryId(id) ? balance : balance + amount;
-
-  // Ok this entire logic is a dirty, dirty hack.. but let me explain.
-  // Problem: the split-error Popover (which has the buttons to distribute/add split)
-  // renders before schedules are added to the table. After schedules finally load
-  // the entire table gets pushed down. But the Popover does not re-calculate
-  // its positioning. This is because there is nothing in react-aria that would be
-  // watching for the position of the trigger element.
-  // Solution: when transactions (this includes schedules) change - we increment
-  // a variable (with a small delay in order for the next render cycle to pick up
-  // the change instead of the current). We pass the integer to the Popover which
-  // causes it to re-calculate the positioning. Thus fixing the problem.
-  useEffect(() => {
-    // The hack applies to only transactions with split errors
-    if (!splitError) {
-      return;
-    }
-
-    const id = setTimeout(() => {
-      window.dispatchEvent(new Event('resize')); // Force popover to recalculate position
-    }, 1);
-    return () => clearTimeout(id);
-  }, [splitError, allTransactions]);
-
-  // Drag and drop support
-  const isChildTransaction = transaction.is_child;
-  const parentId = transaction.parent_id;
-  // Disable drag if this is the only transaction on its date (nothing to reorder with)
-  // For child transactions, disable if there's only one sibling (nothing to reorder with)
-  // For previews, disable if there's only one preview on this date (real transactions
-  // sharing the date don't count; previews can only reorder against other previews)
-  const isOnlyTransactionOnDate = isChildTransaction
-    ? siblingCount <= 1
-    : isPreview
-      ? previewSiblingCount <= 1
-      : prevRowDate !== transaction.date && nextRowDate !== transaction.date;
-  const previewRef = useRef<DragPreviewRenderer>(null);
-  // Row-level drag must not compete with inline editors (notes, amounts,
-  // payee, etc.): otherwise clicks/drags inside inputs start a reorder drag
-  // instead of moving the caret or selecting text (see GH #7567).
-  // The running balance is read-only, so pause the drag while the mouse is
-  // pressed on it to let the user select and copy the value (see GH #7833).
-  const [isSelectingBalance, setIsSelectingBalance] = useState(false);
-  useEffect(() => {
-    if (!isSelectingBalance) return;
-    const stopSelecting = () => setIsSelectingBalance(false);
-    // `blur` covers a mouseup the window never gets (e.g. alt-tab while pressed)
-    window.addEventListener('mouseup', stopSelecting);
-    window.addEventListener('blur', stopSelecting);
-    return () => {
-      window.removeEventListener('mouseup', stopSelecting);
-      window.removeEventListener('blur', stopSelecting);
-    };
-  }, [isSelectingBalance]);
-  const allowRowDrag =
-    canDrag &&
-    !isSelectingBalance &&
-    !isOnlyTransactionOnDate &&
-    (!editing || focusedField === 'select' || focusedField === 'cleared');
-  const { dragRef, dragProps } = useDrag<TransactionEntity>({
-    item: originalTransaction,
-    type: 'transaction',
-    canDrag: allowRowDrag,
-    onDragChange,
-    preview: previewRef,
-  });
-
-  // Gate callbacks for non-reorderable rows (children/previews) to avoid invalid drop operations
-  // For child transactions, allow drops only from siblings (same parent)
-  // For previews, allow drops only from another preview on the same date
-  const draggedIsPreview = draggedId != null && isPreviewId(draggedId);
-  const isSiblingDrag = isChildTransaction && draggedParentId === parentId;
-  const isSiblingPreviewDrag =
-    isPreview && draggedIsPreview && draggedDate === transaction.date;
-  const safeOnDrop: OnDropCallback | undefined = isPreview
-    ? isSiblingPreviewDrag
-      ? onDrop
-      : undefined
-    : draggedIsPreview
-      ? undefined
-      : isChildTransaction
-        ? isSiblingDrag
-          ? onDrop
-          : undefined
-        : onDrop;
-
-  const { dropRef, dropProps, dropPos } = useDrop<TransactionEntity>({
-    types: 'transaction',
-    id: transaction.id,
-    onDrop: safeOnDrop,
-  });
-
-  // Merge refs: drag on row, drop on outer view
-  const rowRef = useMergedRefs(triggerRef, dragRef);
-
-  // Check if this row is a valid drop target for the currently dragged transaction
-  const isValidDropTarget = useMemo(() => {
-    // Previews can only be valid drop targets for other previews on the
-    // same date. Never mix preview and real transactions.
-    if (isPreview !== draggedIsPreview) return false;
-    if (isPreview) {
-      return draggedDate === transaction.date && dropPos != null;
-    }
-
-    // When dragging a child transaction, only siblings are valid targets
-    if (draggedParentId) {
-      // Only allow drops between siblings (same parent)
-      if (!isChildTransaction || draggedParentId !== parentId) return false;
-      return dropPos != null;
-    }
-
-    // Child transactions are not valid drop targets for parent transactions
-    if (isChildTransaction) return false;
-
-    // Parent transaction drop logic (existing behavior)
-    if (!draggedDate) return false;
-    // Only allow drops when sorted by date (or no sort active)
-    if (sortField && sortField !== 'date') return false;
-    // Prevent inserting between a split parent and its children
-    if (isParent && dropPos === 'after') return false;
-    // Same date is always a valid drop target
-    if (transaction.date === draggedDate) return true;
-    // Boundary drops require a valid drop position
-    if (!dropPos) return false;
-
-    const isAscending = sortField === 'date' && ascDesc === 'asc';
-    const neighborDate = dropPos === 'before' ? prevRowDate : nextRowDate;
-    return isValidBoundaryDrop(
-      dropPos,
-      transaction.date,
-      draggedDate,
-      neighborDate ?? null,
-      isAscending,
-    );
-  }, [
-    draggedDate,
-    draggedParentId,
-    draggedIsPreview,
-    parentId,
-    isChildTransaction,
-    isPreview,
-    sortField,
-    isParent,
-    dropPos,
-    transaction.date,
-    ascDesc,
-    prevRowDate,
-    nextRowDate,
-  ]);
-
-  // Dim this row if it (or its parent) is being dragged
-  const isBeingDragged =
-    draggedId != null &&
-    (draggedId === transaction.id || draggedId === transaction.parent_id);
-
-  // Show drop highlight only for valid targets that aren't the dragged row
-  const showDropHighlight = Boolean(
-    dropPos && isValidDropTarget && !isBeingDragged,
-  );
-
-  useTransactionRowContextActions({
-    rowRef: triggerRef,
-    transaction,
-    getTransaction: id => transactionMap?.get(id),
-    onDelete: ids => onBatchDelete?.(ids),
-    onDuplicate: ids => onBatchDuplicate?.(ids),
-    onLinkSchedule: ids => onBatchLinkSchedule?.(ids),
-    onUnlinkSchedule: ids => onBatchUnlinkSchedule?.(ids),
-    onCreateRule: ids => onCreateRule?.(ids),
-    onScheduleAction: (name, ids) => onScheduleAction?.(name, ids),
-    onMakeAsNonSplitTransactions: ids => onMakeAsNonSplitTransactions?.(ids),
-  });
 
   // For child transactions the date/account cells render as blank
   // placeholders, and the select/delete cell sits immediately before the
@@ -2001,15 +1916,11 @@ const Transaction = memo(function Transaction({
             textAlign="right"
             title={debit}
             onExpose={name => !isPreview && onEdit(id, name)}
-            style={{
-              ...(isParent && { fontStyle: 'italic' }),
-              ...styles.tnum,
-              ...amountStyle,
-            }}
+            style={amountCellStyle}
             inputProps={{
               value:
                 debit === '' && credit === '' ? amountToCurrency(0) : debit,
-              onUpdate: onUpdate.bind(null, 'debit'),
+              onUpdate: (value: string) => onUpdate('debit', value),
               'data-1p-ignore': true,
             }}
             privacyFilter={{
@@ -2036,14 +1947,10 @@ const Transaction = memo(function Transaction({
             textAlign="right"
             title={credit}
             onExpose={name => !isPreview && onEdit(id, name)}
-            style={{
-              ...(isParent && { fontStyle: 'italic' }),
-              ...styles.tnum,
-              ...amountStyle,
-            }}
+            style={amountCellStyle}
             inputProps={{
               value: credit,
-              onUpdate: onUpdate.bind(null, 'credit'),
+              onUpdate: (value: string) => onUpdate('credit', value),
               'data-1p-ignore': true,
             }}
             privacyFilter={{
@@ -2106,6 +2013,129 @@ const Transaction = memo(function Transaction({
         return null;
     }
   };
+  // Build the cells before the drag and drop hooks: react-aria hands back new
+  // drag/drop props on every render (e.g. on each keyboard/pointer modality
+  // switch), and the cells must not be rebuilt along with them.
+  const cellsBeforeSelection = columns
+    .slice(0, selectionCellIndex)
+    .map(renderColumnCell);
+  const cellsAfterSelection = columns
+    .slice(selectionCellIndex)
+    .map(renderColumnCell);
+
+  const { dragRef, dragProps } = useDrag<TransactionEntity>({
+    item: originalTransaction,
+    type: 'transaction',
+    canDrag: allowRowDrag,
+    onDragChange,
+    preview: previewRef,
+  });
+
+  // Gate callbacks for non-reorderable rows (children/previews) to avoid invalid drop operations
+  // For child transactions, allow drops only from siblings (same parent)
+  // For previews, allow drops only from another preview on the same date
+  const draggedIsPreview = draggedId != null && isPreviewId(draggedId);
+  const isSiblingDrag = isChildTransaction && draggedParentId === parentId;
+  const isSiblingPreviewDrag =
+    isPreview && draggedIsPreview && draggedDate === transaction.date;
+  const safeOnDrop: OnDropCallback | undefined = isPreview
+    ? isSiblingPreviewDrag
+      ? onDrop
+      : undefined
+    : draggedIsPreview
+      ? undefined
+      : isChildTransaction
+        ? isSiblingDrag
+          ? onDrop
+          : undefined
+        : onDrop;
+
+  const { dropRef, dropProps, dropPos } = useDrop<TransactionEntity>({
+    types: 'transaction',
+    id: transaction.id,
+    onDrop: safeOnDrop,
+  });
+
+  // Merge refs: drag on row, drop on outer view
+  const rowRef = useMergedRefs(triggerRef, dragRef);
+
+  // Check if this row is a valid drop target for the currently dragged transaction
+  const isValidDropTarget = useMemo(() => {
+    // Previews can only be valid drop targets for other previews on the
+    // same date. Never mix preview and real transactions.
+    if (isPreview !== draggedIsPreview) return false;
+    if (isPreview) {
+      return draggedDate === transaction.date && dropPos != null;
+    }
+
+    // When dragging a child transaction, only siblings are valid targets
+    if (draggedParentId) {
+      // Only allow drops between siblings (same parent)
+      if (!isChildTransaction || draggedParentId !== parentId) return false;
+      return dropPos != null;
+    }
+
+    // Child transactions are not valid drop targets for parent transactions
+    if (isChildTransaction) return false;
+
+    // Parent transaction drop logic (existing behavior)
+    if (!draggedDate) return false;
+    // Only allow drops when sorted by date (or no sort active)
+    if (sortField && sortField !== 'date') return false;
+    // Prevent inserting between a split parent and its children
+    if (isParent && dropPos === 'after') return false;
+    // Same date is always a valid drop target
+    if (transaction.date === draggedDate) return true;
+    // Boundary drops require a valid drop position
+    if (!dropPos) return false;
+
+    const isAscending = sortField === 'date' && ascDesc === 'asc';
+    const neighborDate = dropPos === 'before' ? prevRowDate : nextRowDate;
+    return isValidBoundaryDrop(
+      dropPos,
+      transaction.date,
+      draggedDate,
+      neighborDate ?? null,
+      isAscending,
+    );
+  }, [
+    draggedDate,
+    draggedParentId,
+    draggedIsPreview,
+    parentId,
+    isChildTransaction,
+    isPreview,
+    sortField,
+    isParent,
+    dropPos,
+    transaction.date,
+    ascDesc,
+    prevRowDate,
+    nextRowDate,
+  ]);
+
+  // Dim this row if it (or its parent) is being dragged
+  const isBeingDragged =
+    draggedId != null &&
+    (draggedId === transaction.id || draggedId === transaction.parent_id);
+
+  // Show drop highlight only for valid targets that aren't the dragged row
+  const showDropHighlight = Boolean(
+    dropPos && isValidDropTarget && !isBeingDragged,
+  );
+
+  useTransactionRowContextActions({
+    rowRef: triggerRef,
+    transaction,
+    getTransaction: id => transactionMap?.get(id),
+    onDelete: ids => onBatchDelete?.(ids),
+    onDuplicate: ids => onBatchDuplicate?.(ids),
+    onLinkSchedule: ids => onBatchLinkSchedule?.(ids),
+    onUnlinkSchedule: ids => onBatchUnlinkSchedule?.(ids),
+    onCreateRule: ids => onCreateRule?.(ids),
+    onScheduleAction: (name, ids) => onScheduleAction?.(name, ids),
+    onMakeAsNonSplitTransactions: ids => onMakeAsNonSplitTransactions?.(ids),
+  });
 
   return (
     <View
@@ -2148,29 +2178,18 @@ const Transaction = memo(function Transaction({
           ...(isBeingDragged && { opacity: 0.5 }),
         }}
       >
-        {splitError && listContainerRef?.current && (
-          <Popover
+        {splitError && (
+          <SplitErrorPopover
             triggerRef={triggerRef}
-            isOpen
-            isNonModal
-            style={{
-              width: 'max-content',
-              maxWidth: 'none',
-              maxHeight: 'none !important',
-              minWidth: 375,
-              padding: 5,
-            }}
-            shouldFlip={false}
-            placement="bottom end"
-            UNSTABLE_portalContainer={listContainerRef.current}
+            listContainerRef={listContainerRef}
           >
             {splitError}
-          </Popover>
+          </SplitErrorPopover>
         )}
 
-        {columns.slice(0, selectionCellIndex).map(renderColumnCell)}
+        {cellsBeforeSelection}
         {selectionCell}
-        {columns.slice(selectionCellIndex).map(renderColumnCell)}
+        {cellsAfterSelection}
 
         <Cell width={5} />
       </Row>
@@ -2341,6 +2360,44 @@ function NotesCell({
         />
       )}
     </CustomCell>
+  );
+}
+
+type SplitErrorPopoverProps = {
+  triggerRef: ComponentProps<typeof Popover>['triggerRef'];
+  listContainerRef?: RefObject<HTMLDivElement>;
+  children: ReactNode;
+};
+
+// Reading `listContainerRef.current` during render makes the React Compiler
+// skip the whole component, so it lives here instead of in `Transaction`.
+function SplitErrorPopover({
+  triggerRef,
+  listContainerRef,
+  children,
+}: SplitErrorPopoverProps) {
+  if (!listContainerRef?.current) {
+    return null;
+  }
+
+  return (
+    <Popover
+      triggerRef={triggerRef}
+      isOpen
+      isNonModal
+      style={{
+        width: 'max-content',
+        maxWidth: 'none',
+        maxHeight: 'none !important',
+        minWidth: 375,
+        padding: 5,
+      }}
+      shouldFlip={false}
+      placement="bottom end"
+      UNSTABLE_portalContainer={listContainerRef.current}
+    >
+      {children}
+    </Popover>
   );
 }
 
@@ -2687,12 +2744,14 @@ function TransactionTableInner({
   tableNavigator,
   tableRef,
   listContainerRef,
-  dateFormat = 'MM/dd/yyyy',
+  dateFormat: dateFormatProp,
   newNavigator,
   renderEmpty,
   showHiddenCategories,
   ...props
 }: TransactionTableInnerProps) {
+  // See `Transaction`: destructuring defaults stop the compiler.
+  const dateFormat = dateFormatProp ?? 'MM/dd/yyyy';
   const containerRef = createRef<HTMLDivElement>();
   const isAddingPrev = usePrevious(props.isAdding);
   const [scrollWidth, setScrollWidth] = useState(0);
@@ -4002,16 +4061,20 @@ export const TransactionTable = forwardRef(
       [onSave],
     );
 
-    function onCloseAddTransaction() {
+    // Memoized manually (the compiler bails out on this component): the
+    // navigation callbacks handed to every row depend on it.
+    const {
+      currentAccountId,
+      currentCategoryId,
+      onCloseAddTransaction: onCloseAddTransactionProp,
+    } = props;
+    const onCloseAddTransaction = useCallback(() => {
       clearedFields.current.clear();
       setNewTransactions(
-        makeTemporaryTransactions(
-          props.currentAccountId,
-          props.currentCategoryId,
-        ),
+        makeTemporaryTransactions(currentAccountId, currentCategoryId),
       );
-      props.onCloseAddTransaction();
-    }
+      onCloseAddTransactionProp();
+    }, [currentAccountId, currentCategoryId, onCloseAddTransactionProp]);
 
     const onToggleSplit = useCallback(
       (id: TransactionEntity['id']) =>
