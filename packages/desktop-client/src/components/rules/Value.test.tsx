@@ -22,7 +22,7 @@ vi.mock('#hooks/useAccounts', () => ({
   useAccounts: () => ({ data: accounts }),
 }));
 vi.mock('#hooks/useFormat', () => ({
-  useFormat: () => (value: unknown, type: string) => `${type}:${value}`,
+  useFormat: () => (value: number, type: string) => `${type}:${value}`,
 }));
 vi.mock('#hooks/useDateFormat', () => ({
   useDateFormat: () => 'MM/dd/yyyy',
