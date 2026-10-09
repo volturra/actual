@@ -24,7 +24,7 @@ export function IncomeCategoryList({
   onBudgetAction,
 }: IncomeCategoryListProps) {
   const { t } = useTranslation();
-  const { mutate: moveCategory } = useMoveCategoryMutation();
+  const moveCategory = useMoveCategoryMutation();
 
   const { dragAndDropHooks } = useDragAndDrop({
     getItems: keys =>
@@ -69,7 +69,7 @@ export function IncomeCategoryList({
       const targetCategoryId = e.target.key as CategoryEntity['id'];
 
       if (e.target.dropPosition === 'before') {
-        moveCategory({
+        moveCategory.mutate({
           id: categoryToMove.id,
           groupId: categoryToMove.group,
           targetId: targetCategoryId,
@@ -87,7 +87,7 @@ export function IncomeCategoryList({
 
         const nextToTargetCategory = categories[targetCategoryIndex + 1];
 
-        moveCategory({
+        moveCategory.mutate({
           id: categoryToMove.id,
           groupId: categoryToMove.group,
           // Due to the way `moveCategory` works, we use the category next to the

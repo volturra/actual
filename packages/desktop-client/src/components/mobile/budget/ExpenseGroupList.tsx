@@ -42,7 +42,7 @@ export function ExpenseGroupList({
   onToggleCollapse,
 }: ExpenseGroupListProps) {
   const { t } = useTranslation();
-  const { mutate: moveCategoryGroup } = useMoveCategoryGroupMutation();
+  const moveCategoryGroup = useMoveCategoryGroupMutation();
 
   const { dragAndDropHooks } = useDragAndDrop({
     getItems: keys =>
@@ -102,7 +102,7 @@ export function ExpenseGroupList({
       const targetGroupId = e.target.key as CategoryEntity['id'];
 
       if (e.target.dropPosition === 'before') {
-        moveCategoryGroup({
+        moveCategoryGroup.mutate({
           id: groupToMove.id,
           targetId: targetGroupId,
         });
@@ -119,7 +119,7 @@ export function ExpenseGroupList({
 
         const nextToTargetCategory = categoryGroups[targetGroupIndex + 1];
 
-        moveCategoryGroup({
+        moveCategoryGroup.mutate({
           id: groupToMove.id,
           // Due to the way `moveCategory` works, we use the category next to the
           // actual target category here because `moveCategory` always shoves the

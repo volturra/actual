@@ -53,8 +53,8 @@ export function Budget() {
   const [maxMonthsPref] = useGlobalPref('maxMonths');
   const maxMonths = maxMonthsPref || 1;
   const [initialized, setInitialized] = useState(false);
-  const { data: { grouped: categoryGroups } = { grouped: [] } } =
-    useCategories();
+  const { data: categories } = useCategories();
+  const categoryGroups = categories?.grouped ?? [];
 
   const init = useEffectEvent(() => {
     async function run() {
