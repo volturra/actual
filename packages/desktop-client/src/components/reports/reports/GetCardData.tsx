@@ -178,8 +178,17 @@ export function GetCardData({
     // the date format preference changes, until something else invalidates it.
     dateFormat,
   ]);
-  const graphData = useReport('default' + report.name, getGraphData);
-  const groupedData = useReport('grouped' + report.name, getGroupData);
+  // A live range depends on the earliest and latest transactions, which load
+  // after the card mounts. Data loaded before then would be thrown away.
+  const isDateRangeResolved = report.isDateStatic || latestTransaction !== '';
+  const graphData = useReport(
+    'default' + report.name,
+    isDateRangeResolved ? getGraphData : null,
+  );
+  const groupedData = useReport(
+    'grouped' + report.name,
+    isDateRangeResolved ? getGroupData : null,
+  );
 
   const data =
     graphData && groupedData ? { ...graphData, groupedData } : graphData;

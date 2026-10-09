@@ -592,8 +592,18 @@ function CustomReportInner({
     firstDayOfWeekIdx,
     dateFormat,
   ]);
-  const graphData = useReport('default', getGraphData);
-  const groupedData = useReport('grouped', getGroupData);
+  // The effect above re-applies the filter conditions and sets the date range
+  // once the earliest and latest transactions are known. Anything loaded
+  // before then would be thrown away, so wait for it.
+  const isDateRangeResolved = latestTransactionDate !== '';
+  const graphData = useReport(
+    'default',
+    isDateRangeResolved ? getGraphData : null,
+  );
+  const groupedData = useReport(
+    'grouped',
+    isDateRangeResolved ? getGroupData : null,
+  );
 
   const data: DataEntity | null = graphData
     ? { ...graphData, groupedData }
