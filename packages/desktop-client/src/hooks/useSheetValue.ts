@@ -37,15 +37,35 @@ export function useSheetValue<
   );
 
   const spreadsheet = useSpreadsheet();
-  const [result, setResult] = useState<SheetValueResult<SheetName, FieldName>>({
-    name: fullSheetName,
-    value: memoizedBinding.value ? memoizedBinding.value : null,
-  });
-  const latestOnChange = useRef(onChange);
-  latestOnChange.current = onChange;
+  const [state, setResult] = useState<SheetValueResult<SheetName, FieldName>>(
+    () =>
+      readInitialResult(spreadsheet, sheetName, fullSheetName, memoizedBinding),
+  );
 
-  const latestValue = useRef(result.value);
-  latestValue.current = result.value;
+  let result = state;
+  if (state.name !== fullSheetName) {
+    // The binding now points at a different cell (e.g. the budget month
+    // changed). Never render the previous cell's value for it: switch to the
+    // new cell's cached value (or the binding's default) during this render,
+    // instead of rendering the stale value and correcting it from the effect
+    // below, which would render the whole subtree twice.
+    result = readInitialResult(
+      spreadsheet,
+      sheetName,
+      fullSheetName,
+      memoizedBinding,
+    );
+    setResult(result);
+  }
+
+  // Refs are only written after commit (before the binding effect below
+  // runs) and from the binding callback, never during render.
+  const latestOnChange = useRef(onChange);
+  const latestResult = useRef(result);
+  useLayoutEffect(() => {
+    latestOnChange.current = onChange;
+    latestResult.current = result;
+  });
 
   useLayoutEffect(() => {
     let isMounted = true;
@@ -55,28 +75,58 @@ export function useSheetValue<
         return;
       }
 
-      const newCastedResult = {
-        name: newResult.name,
-        // TODO: Spreadsheets, SheetNames, SheetFields, etc must be moved to the loot-core package
-        value: newResult.value as Spreadsheets[SheetName][FieldName],
-      };
+      // TODO: Spreadsheets, SheetNames, SheetFields, etc must be moved to the loot-core package
+      const value = newResult.value as Spreadsheets[SheetName][FieldName];
 
       if (latestOnChange.current) {
-        latestOnChange.current(newCastedResult);
+        latestOnChange.current({ name: newResult.name, value });
       }
 
-      if (newResult.value !== latestValue.current) {
-        setResult(newCastedResult);
+      // Skip scheduling a render when the value did not change.
+      if (
+        latestResult.current.name === fullSheetName &&
+        latestResult.current.value === value
+      ) {
+        return;
       }
+
+      const nextResult = { name: fullSheetName, value };
+      // Remember the pending value so that a later update back to the
+      // committed value is not skipped.
+      latestResult.current = nextResult;
+      setResult(nextResult);
     });
 
     return () => {
       isMounted = false;
       unbind();
     };
-  }, [spreadsheet, sheetName, memoizedBinding]);
+  }, [spreadsheet, sheetName, fullSheetName, memoizedBinding]);
 
   return result.value;
+}
+
+function readInitialResult<
+  SheetName extends SheetNames,
+  FieldName extends SheetFields<SheetName>,
+>(
+  spreadsheet: ReturnType<typeof useSpreadsheet>,
+  sheetName: string,
+  fullSheetName: string,
+  binding: BindingObject<SheetName, FieldName>,
+): SheetValueResult<SheetName, FieldName> {
+  const cached = spreadsheet.getCachedValue(sheetName, binding);
+  if (cached) {
+    return {
+      name: fullSheetName,
+      // TODO: Spreadsheets, SheetNames, SheetFields, etc must be moved to the loot-core package
+      value: cached.value as Spreadsheets[SheetName][FieldName],
+    };
+  }
+  return {
+    name: fullSheetName,
+    value: binding.value ? binding.value : null,
+  };
 }
 
 type MemoKey<

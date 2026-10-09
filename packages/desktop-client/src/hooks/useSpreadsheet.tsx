@@ -28,9 +28,25 @@ type CellObservers = { [name: string]: CellObserverCallback[] };
 
 const GLOBAL_SHEET_NAME = '__global';
 
+// Most recently seen cell values, used to render a cell's value
+// synchronously when it is (re)bound instead of waiting for a `get-cell`
+// round-trip. The budget page prewarms several months at once (about 700
+// cells per month on a large budget, see `prewarmAllMonths`), so this has
+// to hold several thousand entries or the prewarmed values are evicted
+// before they are used. An entry is a short name plus a primitive value
+// (a few hundred bytes at most), so a full cache stays in the low MBs.
+const VALUE_CACHE_SIZE = 10_000;
+
+function resolveBindingName(sheetName: string, binding: Binding): string {
+  const name = typeof binding === 'string' ? binding : binding.name;
+  return `${sheetName}!${name}`;
+}
+
 function makeSpreadsheet() {
   const cellObservers: CellObservers = {};
-  const LRUValueCache = new LRUCache<string, CellCacheValue>({ max: 1200 });
+  const LRUValueCache = new LRUCache<string, CellCacheValue>({
+    max: VALUE_CACHE_SIZE,
+  });
   const cellCache: CellCache = {};
   let observersDisabled = false;
 
@@ -58,6 +74,19 @@ function makeSpreadsheet() {
       observersDisabled = false;
     }
 
+    /**
+     * Synchronously returns the last known value of a cell, if it is still
+     * in the value cache. It can briefly be out of date (e.g. right after
+     * switching budgets); `bind` always fetches or receives the current
+     * value afterwards.
+     */
+    getCachedValue(
+      sheetName: string = GLOBAL_SHEET_NAME,
+      binding: Binding,
+    ): CellCacheValue | undefined {
+      return LRUValueCache.get(resolveBindingName(sheetName, binding));
+    }
+
     prewarmCache(name: string, value: CellCacheValue): void {
       LRUValueCache.set(name, value);
     }
@@ -71,6 +100,10 @@ function makeSpreadsheet() {
             if (observers) {
               observers.forEach(func => func(node));
               cellCache[node.name] = Promise.resolve(node);
+              LRUValueCache.set(node.name, node);
+            } else if (LRUValueCache.has(node.name)) {
+              // Keep prewarmed values of cells nobody observes right now
+              // up to date so they are not rendered stale later.
               LRUValueCache.set(node.name, node);
             }
           });
@@ -89,7 +122,7 @@ function makeSpreadsheet() {
         void this.createQuery(sheetName, binding.name, binding.query);
       }
 
-      const resolvedName = `${sheetName}!${binding.name}`;
+      const resolvedName = resolveBindingName(sheetName, binding);
       const cleanup = this.observeCell(resolvedName, callback);
 
       // Always synchronously call with the existing value if it has one.
