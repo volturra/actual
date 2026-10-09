@@ -1,6 +1,7 @@
 // @ts-strict-ignore
 import { generateTransaction } from '#mocks';
 import * as db from '#server/db';
+import { q } from '#shared/query';
 
 import { Spreadsheet } from './spreadsheet';
 
@@ -187,5 +188,136 @@ describe('Spreadsheet', () => {
 
     expect(spreadsheet.getValue('foo!x')).toBe(1);
     expect(spreadsheet.getValue('foo!y')).toBe(2);
+  });
+});
+
+describe('Spreadsheet query cells', () => {
+  function sumQuery(filter: Record<string, unknown>) {
+    return q('transactions')
+      .filter(filter)
+      .calculate({ $sum: '$amount' })
+      .serialize();
+  }
+
+  function trackComputed(spreadsheet: Spreadsheet) {
+    const computed: string[] = [];
+    spreadsheet.addEventListener('change', ({ names }) => {
+      computed.push(...names);
+    });
+    return computed;
+  }
+
+  function finished(spreadsheet: Spreadsheet) {
+    return new Promise(resolve => {
+      // Computations start on the next tick
+      setTimeout(() => spreadsheet.onFinish(resolve), 0);
+    });
+  }
+
+  test('binding the same query again does not rerun it', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+    const computed = trackComputed(spreadsheet);
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+
+    // A new but equal object, as it arrives from the client on every bind
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+
+    expect(computed).toEqual(['g!balance']);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+  });
+
+  test('binding a different query reruns it', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+    const computed = trackComputed(spreadsheet);
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ category: 'cat1' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(-3200);
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ category: 'cat2' }));
+    await finished(spreadsheet);
+
+    expect(computed).toEqual(['g!balance', 'g!balance']);
+    expect(spreadsheet.getValue('g!balance')).toBe(-12632);
+  });
+
+  test('a data change reruns a cell bound with the same query', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+    const computed = trackComputed(spreadsheet);
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+
+    const [transaction] = generateTransaction({
+      amount: -1000,
+      account: '1',
+      date: '2017-01-20',
+    });
+    await db.insertTransaction(transaction);
+    spreadsheet.triggerDatabaseChanges(
+      new Map(),
+      new Map([['transactions', new Map([[transaction.id, transaction]])]]),
+    );
+    await finished(spreadsheet);
+    expect(computed).toEqual(['g!balance', 'g!balance']);
+    expect(spreadsheet.getValue('g!balance')).toBe(-16832);
+
+    // Binding again afterwards reuses the fresh value
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    expect(computed).toHaveLength(2);
+    expect(spreadsheet.getValue('g!balance')).toBe(-16832);
+  });
+
+  test('binding again reruns a query skipped after an error', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+
+    spreadsheet.transaction(() => {
+      spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+      spreadsheet.createDynamic('g', 'broken', {
+        initialValue: 0,
+        run: () => {
+          throw new Error('broken cell');
+        },
+      });
+    });
+    // The broken cell runs first and stops the computations
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(null);
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+  });
+
+  test('a category merge reruns transaction query cells', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+
+    spreadsheet.createQuery('g', 'cat2', sumQuery({ category: 'cat2' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!cat2')).toBe(-12632);
+
+    // The query joins `categories` (to check the reference), so merging a
+    // category into it invalidates the cell
+    await db.deleteCategory({ id: 'cat1' }, 'cat2');
+    spreadsheet.triggerDatabaseChanges(
+      new Map(),
+      new Map([
+        ['category_mapping', new Map([['cat1', { id: 'cat1' }]])],
+        ['categories', new Map([['cat1', { id: 'cat1' }]])],
+      ]),
+    );
+    await finished(spreadsheet);
+
+    expect(spreadsheet.getValue('g!cat2')).toBe(-15832);
   });
 });

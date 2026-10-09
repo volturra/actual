@@ -20,6 +20,8 @@ export type Node = {
   value: string | number | boolean;
   sheet: unknown;
   query?: QueryState;
+  /** `query` serialized, to recognise the same query being sent again */
+  queryKey?: string;
   sql?: { sqlPieces: unknown; state: { dependencies: unknown[] } };
   dynamic?: boolean;
   _run?: unknown;
@@ -186,7 +188,15 @@ export class Spreadsheet {
         }
       } catch (e) {
         logger.log('Error while evaluating ' + name + ':', e);
-        // If an error happens, bail on the rest of the computations
+        // If an error happens, bail on the rest of the computations. Forget
+        // the query of every cell left uncomputed so the next `createQuery`
+        // for it runs it again.
+        for (const skipped of this.computeQueue.slice(idx)) {
+          const skippedNode = this.nodes.get(skipped);
+          if (skippedNode) {
+            skippedNode.queryKey = undefined;
+          }
+        }
         this.running = false;
         this.computeQueue = [];
         return;
@@ -203,6 +213,8 @@ export class Spreadsheet {
           err => {
             // TODO: use captureException here
             logger.warn(`Failed running ${node.name}!`, err);
+            // Let the next `createQuery` for this cell try again
+            node.queryKey = undefined;
             this.runComputations(idx + 1);
           },
         );
@@ -358,8 +370,12 @@ export class Spreadsheet {
   createQuery(sheetName: string, cellName: string, query: QueryState): void {
     const name = resolveName(sheetName, cellName);
     const node = this._getNode(name);
+    // Every component binding the cell sends its query again, as a new
+    // object. The cell's value already stays up to date through
+    // `triggerDatabaseChanges`, so only a different query needs a rerun.
+    const queryKey = JSON.stringify(query);
 
-    if (node.query !== query) {
+    if (node.queryKey !== queryKey) {
       node.query = query;
       const { sqlPieces, state } = compileQuery(
         node.query,
@@ -367,6 +383,8 @@ export class Spreadsheet {
         schemaConfig,
       );
       node.sql = { sqlPieces, state };
+      // Only once it compiled, so a query that failed to compile is retried
+      node.queryKey = queryKey;
 
       this.transaction(() => {
         this._markDirty(name);
