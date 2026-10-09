@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Dispatch, Ref, SetStateAction } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 
 import { debounce } from 'es-toolkit/compat';
 
@@ -43,7 +43,10 @@ export function useMonthNameFormatFit(
         if (container && suitableFormat) {
           setMonthNameFormats(prev => {
             if (prev[index] === suitableFormat.format) return prev;
-            const newArray = [...prev];
+            // `slice` keeps the holes left for months that haven't been
+            // measured yet, which the card's `reduce` skips; spreading would
+            // turn them into `undefined` entries.
+            const newArray = prev.slice();
             newArray[index] = suitableFormat.format;
             return newArray;
           });
@@ -63,11 +66,13 @@ export function useMonthNameFormatFit(
     [debouncedResizeCallback],
   );
 
-  const monthNameResizeRef = useResizeObserver(debouncedResizeCallback);
-  const monthNameRef = useMergedRefs(
+  const monthNameResizeRef = useResizeObserver<HTMLDivElement>(
+    debouncedResizeCallback,
+  );
+  const monthNameRef = useMergedRefs<HTMLDivElement>(
     monthNameContainerRef,
     monthNameResizeRef,
-  ) as Ref<HTMLDivElement>;
+  );
 
   const setFormatSizeContainer = useCallback(
     (formatIndex: number, node: HTMLSpanElement | null) => {

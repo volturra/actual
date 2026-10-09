@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MockInstance } from 'vitest';
 
 import { useMonthNameFormatFit } from './useMonthNameFormatFit';
 
@@ -15,18 +16,24 @@ const formats = [
 ];
 
 let resizeCallbacks: ResizeObserverCallback[] = [];
+let clientWidthSpy: MockInstance<() => number>;
 
 function Harness({
   index,
   initialFormats,
+  onSetFormats,
 }: {
   index: number;
   initialFormats: string[];
+  onSetFormats?: () => void;
 }) {
   const [monthNameFormats, setMonthNameFormats] =
     useState<string[]>(initialFormats);
   const { monthNameVisible, monthNameRef, setFormatSizeContainer } =
-    useMonthNameFormatFit(index, setMonthNameFormats);
+    useMonthNameFormatFit(index, update => {
+      onSetFormats?.();
+      setMonthNameFormats(update);
+    });
 
   return (
     <>
@@ -82,11 +89,11 @@ describe('useMonthNameFormatFit', () => {
         }
       },
     );
-    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(
-      function (this: HTMLElement) {
+    clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockImplementation(function (this: HTMLElement) {
         return Number(this.dataset.width ?? 0);
-      },
-    );
+      });
     vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(
       function (this: HTMLElement) {
         return Number(this.dataset.scrollWidth ?? 0);
@@ -157,5 +164,28 @@ describe('useMonthNameFormatFit', () => {
       vi.advanceTimersByTime(10);
     });
     expect(renderedFormats()).toEqual(['MMMM yyyy']);
+  });
+
+  it('drops a pending measurement when unmounted', () => {
+    const onSetFormats = vi.fn();
+    const { unmount } = render(
+      <Harness index={0} initialFormats={[]} onSetFormats={onSetFormats} />,
+    );
+
+    setContainerSize(200);
+    act(() => {
+      notifyResize();
+      vi.advanceTimersByTime(10);
+    });
+    unmount();
+    clientWidthSpy.mockClear();
+    act(() => {
+      vi.advanceTimersByTime(20);
+    });
+
+    // Neither measures nor updates any state (the container ref is already
+    // cleared, so only a measurement read would show a stray callback).
+    expect(clientWidthSpy).not.toHaveBeenCalled();
+    expect(onSetFormats).not.toHaveBeenCalled();
   });
 });
