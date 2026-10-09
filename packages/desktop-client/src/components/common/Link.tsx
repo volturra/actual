@@ -113,7 +113,12 @@ const ButtonLink = ({ to, style, activeStyle, ...props }: ButtonLinkProps) => {
       variant={props.buttonVariant}
       onPress={e => {
         props.onPress?.(e);
-        void navigate(path);
+        // Without `to` this is just a styled button (e.g. the budget month
+        // arrows). Navigating to '' would push a duplicate history entry and
+        // re-render everything that reads the location.
+        if (to != null) {
+          void navigate(path);
+        }
       }}
     />
   );
