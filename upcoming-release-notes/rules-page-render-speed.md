@@ -1,6 +1,6 @@
 ---
-category: Enhancements
+category: Maintenance
 authors: [volturra]
 ---
 
-Make the rules page render faster
+Let React Compiler optimize the value display on the rules page.

@@ -32,7 +32,7 @@ vi.mock('#hooks/useLocale', () => ({
 }));
 
 describe('Value', () => {
-  it('describes an item by its name when no describe function is given', () => {
+  it('describes an item by its name', () => {
     render(<Value value="payee-1" field="payee" />);
     expect(screen.getByText('Grocery Store')).toBeInTheDocument();
   });
@@ -96,19 +96,9 @@ describe('Value', () => {
   });
 
   it('returns the raw value without describing it when valueIsRaw is set', () => {
-    const describe = vi.fn(() => 'Described');
-    render(
-      <Value value="payee-1" field="payee" valueIsRaw describe={describe} />,
-    );
+    render(<Value value="payee-1" field="payee" valueIsRaw />);
     expect(screen.getByText('payee-1')).toBeInTheDocument();
-    expect(describe).not.toHaveBeenCalled();
-  });
-
-  it('uses the given describe function', () => {
-    render(
-      <Value value="payee-2" field="payee" describe={() => 'Described'} />,
-    );
-    expect(screen.getByText('Described')).toBeInTheDocument();
+    expect(screen.queryByText('Grocery Store')).not.toBeInTheDocument();
   });
 
   it('describes items from the data prop by name', () => {
