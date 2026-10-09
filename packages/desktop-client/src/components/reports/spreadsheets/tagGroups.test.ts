@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { QueryDataEntity } from '#components/reports/ReportOptions';
 
+import {
+  filterReportTransactions,
+  sumItemAmountsByDate,
+} from './filterHiddenItems';
 import { recalculate } from './recalculate';
 import { groupQueryDataByTags, UNTAGGED_BUCKET_ID } from './tagGroups';
 
@@ -76,9 +80,18 @@ describe('groupQueryDataByTags', () => {
       recalculate({
         item,
         intervals: ['2026-01-01'],
-        assets: result.assets,
-        debts: result.debts,
-        groupByLabel: 'tagBucketId',
+        amountsByDate: {
+          assets: sumItemAmountsByDate(
+            item,
+            filterReportTransactions(result.assets),
+            'tagBucketId',
+          ),
+          debts: sumItemAmountsByDate(
+            item,
+            filterReportTransactions(result.debts),
+            'tagBucketId',
+          ),
+        },
         startDate: '2026-01-01',
         endDate: '2026-01-01',
       }),

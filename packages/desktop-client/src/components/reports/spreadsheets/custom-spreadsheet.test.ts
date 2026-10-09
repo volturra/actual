@@ -28,6 +28,58 @@ const transaction: QueryDataEntity = {
   amount: -100,
 };
 
+it('checks each row against the visibility filters once, not once per group', async () => {
+  let hiddenChecks = 0;
+  const countingRow = (row: QueryDataEntity) =>
+    Object.defineProperty({ ...row }, 'categoryHidden', {
+      get() {
+        hiddenChecks++;
+        return row.categoryHidden;
+      },
+    });
+  const debts = [
+    countingRow({ ...transaction, category: 'food', amount: -100 }),
+    countingRow({ ...transaction, category: 'rent', amount: -50 }),
+    countingRow({ ...transaction, category: 'rent', date: '2026-02' }),
+  ];
+  vi.mocked(fetchSpreadsheetQueryData).mockResolvedValue({
+    assets: [],
+    debts,
+  });
+  const { result } = renderHook(useSpreadsheet, {
+    wrapper: SpreadsheetProvider,
+  });
+  const setData = vi.fn<(data: DataEntity) => void>();
+  await createCustomSpreadsheet({
+    startDate: '2026-01',
+    endDate: '2026-02',
+    interval: 'Monthly',
+    categories: {
+      list: [
+        { id: 'food', name: 'Food', group: 'group' },
+        { id: 'rent', name: 'Rent', group: 'group' },
+      ],
+      grouped: [{ id: 'group', name: 'Group' }],
+    },
+    conditions: [],
+    conditionsOp: 'and',
+    showEmpty: false,
+    showOffBudget: false,
+    showHiddenCategories: false,
+    showUncategorized: false,
+    trimIntervals: false,
+    groupBy: 'Category',
+  })(result.current, setData);
+
+  const data = setData.mock.calls[0][0];
+  expect(data.totalDebts).toBe(-250);
+  expect(data.data?.map(group => [group.name, group.totalDebts])).toEqual([
+    ['Rent', -150],
+    ['Food', -100],
+  ]);
+  expect(hiddenChecks).toBe(debts.length);
+});
+
 it.each([
   { categoryHidden: true },
   { categoryGroupHidden: true },

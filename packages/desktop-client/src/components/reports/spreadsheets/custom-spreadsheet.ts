@@ -31,8 +31,8 @@ import { calculateLegend } from './calculateLegend';
 import { fetchSpreadsheetQueryData } from './fetchSpreadsheetQueryData';
 import { filterEmptyRows } from './filterEmptyRows';
 import {
-  filterHiddenItems,
   filterReportTransactions,
+  sumItemAmountsByDate,
 } from './filterHiddenItems';
 import { recalculate } from './recalculate';
 import { sortData } from './sortData';
@@ -149,22 +149,26 @@ export function createCustomSpreadsheet({
       groupBy,
     }));
 
+    // These filters don't depend on the group, so apply them once here.
+    assets = filterReportTransactions(
+      assets,
+      showOffBudget,
+      showHiddenCategories,
+      showUncategorized,
+    );
+    debts = filterReportTransactions(
+      debts,
+      showOffBudget,
+      showHiddenCategories,
+      showUncategorized,
+    );
+
     if (groupBy === 'Tag') {
       const resolvedScope = resolveTagScope(tags, tagScope);
       scopeTagNames = resolvedScope.map(tag => tag.tag);
       const groupedQueryData = groupQueryDataByTags({
-        assets: filterReportTransactions(
-          assets,
-          showOffBudget,
-          showHiddenCategories,
-          showUncategorized,
-        ),
-        debts: filterReportTransactions(
-          debts,
-          showOffBudget,
-          showHiddenCategories,
-          showUncategorized,
-        ),
+        assets,
+        debts,
         tags: resolvedScope,
         showEmpty,
       });
@@ -205,8 +209,10 @@ export function createCustomSpreadsheet({
     let netAssets = 0;
     let netDebts = 0;
 
-    const groupsByCategory =
-      groupByLabel === 'category' || groupByLabel === 'categoryGroup';
+    const amountsByItem = groupByList.map(item => ({
+      assets: sumItemAmountsByDate(item, assets, groupByLabel),
+      debts: sumItemAmountsByDate(item, debts, groupByLabel),
+    }));
 
     const intervalData = intervals.reduce(
       (arr: IntervalEntity[], intervalItem, index) => {
@@ -217,41 +223,15 @@ export function createCustomSpreadsheet({
         let perIntervalTotals = 0;
         const stacked: Record<string, number> = {};
 
-        groupByList.map(item => {
+        groupByList.map((item, itemIndex) => {
           let stackAmounts = 0;
 
-          const intervalAssets = filterHiddenItems(
-            item,
-            assets,
-            showOffBudget,
-            showHiddenCategories,
-            showUncategorized,
-            groupsByCategory,
-          )
-            .filter(
-              asset =>
-                asset.date === intervalItem &&
-                (asset[groupByLabel] === (item.id ?? null) ||
-                  (item.uncategorized_id && groupsByCategory)),
-            )
-            .reduce((a, v) => a + v.amount, 0);
+          const intervalAssets =
+            amountsByItem[itemIndex].assets.get(intervalItem) ?? 0;
           perIntervalAssets += intervalAssets;
 
-          const intervalDebts = filterHiddenItems(
-            item,
-            debts,
-            showOffBudget,
-            showHiddenCategories,
-            showUncategorized,
-            groupsByCategory,
-          )
-            .filter(
-              debt =>
-                debt.date === intervalItem &&
-                (debt[groupByLabel] === (item.id ?? null) ||
-                  (item.uncategorized_id && groupsByCategory)),
-            )
-            .reduce((a, v) => a + v.amount, 0);
+          const intervalDebts =
+            amountsByItem[itemIndex].debts.get(intervalItem) ?? 0;
           perIntervalDebts += intervalDebts;
 
           const netAmounts = intervalAssets + intervalDebts;
@@ -315,16 +295,11 @@ export function createCustomSpreadsheet({
       [],
     );
 
-    const calcData: GroupedEntity[] = groupByList.map(item => {
+    const calcData: GroupedEntity[] = groupByList.map((item, itemIndex) => {
       const calc = recalculate({
         item,
         intervals,
-        assets,
-        debts,
-        groupByLabel,
-        showOffBudget,
-        showHiddenCategories,
-        showUncategorized,
+        amountsByDate: amountsByItem[itemIndex],
         startDate,
         endDate,
       });
