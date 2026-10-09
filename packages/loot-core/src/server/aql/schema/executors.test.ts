@@ -418,3 +418,275 @@ describe('transaction executors', () => {
     });
   }, 20_000);
 });
+
+describe('grouped transactions with filters', () => {
+  async function setup() {
+    await db.insertAccount({ id: 'acct1', name: 'Checking' });
+    await db.insertAccount({ id: 'acct2', name: 'Savings' });
+    await db.insertCategoryGroup({ id: 'group1', name: 'Group' });
+    await db.insertCategory({ id: 'food', name: 'Food', cat_group: 'group1' });
+    await db.insertCategory({ id: 'rent', name: 'Rent', cat_group: 'group1' });
+    await db.insertPayee({ id: 'cafe', name: 'Café Crème' });
+    await db.insertPayee({ id: 'shop', name: 'Corner Shop' });
+
+    const base = { account: 'acct1', amount: -100 };
+    await insertTransactions([
+      {
+        ...base,
+        id: 't1',
+        date: '2024-01-05',
+        payee: 'cafe',
+        category: 'food',
+      },
+      { ...base, id: 't2', date: '2024-01-04', payee: 'shop', notes: 'CAFÉ' },
+      {
+        ...base,
+        id: 't3',
+        date: '2024-01-03',
+        payee: 'shop',
+        category: 'rent',
+      },
+      // A split whose second child matches a search for "cafe"
+      { ...base, id: 's1', date: '2024-01-02', is_parent: true },
+      {
+        ...base,
+        id: 's1-a',
+        date: '2024-01-02',
+        is_child: true,
+        parent_id: 's1',
+        payee: 'shop',
+        category: 'rent',
+      },
+      {
+        ...base,
+        id: 's1-b',
+        date: '2024-01-02',
+        is_child: true,
+        parent_id: 's1',
+        payee: 'cafe',
+        category: 'food',
+      },
+      {
+        ...base,
+        id: 't4',
+        date: '2024-01-01',
+        payee: 'cafe',
+        category: 'food',
+      },
+      // Another account
+      {
+        ...base,
+        id: 't5',
+        account: 'acct2',
+        date: '2024-01-06',
+        payee: 'cafe',
+        category: 'food',
+      },
+    ]);
+  }
+
+  function search(text: string) {
+    return q('transactions')
+      .options({ splits: 'grouped' })
+      .filter({ account: 'acct1' })
+      .filter({
+        $or: {
+          'payee.name': { $like: `%${text}%` },
+          notes: { $like: `%${text}%` },
+          'category.name': { $like: `%${text}%` },
+          'account.name': { $like: `%${text}%` },
+        },
+      })
+      .select('*');
+  }
+
+  async function ids(query) {
+    const { data } = await aqlQuery(query.serialize());
+    return data.map(t => [
+      t.id,
+      ...t.subtransactions.map(s => (s._unmatched ? `(${s.id})` : s.id)),
+    ]);
+  }
+
+  it('matches payee and notes ignoring accents and case', async () => {
+    await setup();
+    expect(await ids(search('cafe'))).toEqual([
+      ['t1'],
+      ['t2'],
+      ['s1', '(s1-a)', 's1-b'],
+      ['t4'],
+    ]);
+    expect(await ids(search('CRÈME'))).toEqual([
+      ['t1'],
+      ['s1', '(s1-a)', 's1-b'],
+      ['t4'],
+    ]);
+  });
+
+  it('matches category and account names', async () => {
+    await setup();
+    expect(await ids(search('rent'))).toEqual([
+      ['t3'],
+      ['s1', 's1-a', '(s1-b)'],
+    ]);
+    expect(await ids(search('checking'))).toEqual([
+      ['t1'],
+      ['t2'],
+      ['t3'],
+      ['s1', 's1-a', 's1-b'],
+      ['t4'],
+    ]);
+  });
+
+  it('shows the parent of a split whose child matches a category filter', async () => {
+    await setup();
+    const query = q('transactions')
+      .options({ splits: 'grouped' })
+      .filter({ account: 'acct1', category: 'food' })
+      .select('*');
+    expect(await ids(query)).toEqual([
+      ['t1'],
+      ['s1', '(s1-a)', 's1-b'],
+      ['t4'],
+    ]);
+  });
+
+  it('pages filtered results in order', async () => {
+    await setup();
+    const query = search('cafe');
+    expect(await ids(query.limit(2))).toEqual([['t1'], ['t2']]);
+    expect(await ids(query.limit(2).offset(2))).toEqual([
+      ['s1', '(s1-a)', 's1-b'],
+      ['t4'],
+    ]);
+    expect(await ids(query.limit(2).offset(4))).toEqual([]);
+
+    const ascending = query.orderBy({ date: 'asc' });
+    expect(await ids(ascending.limit(3))).toEqual([
+      ['t4'],
+      ['s1', '(s1-a)', 's1-b'],
+      ['t2'],
+    ]);
+    expect(await ids(ascending.limit(3).offset(3))).toEqual([['t1']]);
+  });
+
+  it('ignores deleted transactions and splits with a deleted parent', async () => {
+    await setup();
+    await insertTransactions([
+      // A deleted child that would match doesn't pull in its parent
+      {
+        id: 's2',
+        account: 'acct1',
+        amount: -100,
+        date: '2024-01-07',
+        is_parent: true,
+      },
+      {
+        id: 's2-a',
+        account: 'acct1',
+        amount: -100,
+        date: '2024-01-07',
+        is_child: true,
+        parent_id: 's2',
+        payee: 'shop',
+      },
+      {
+        id: 's2-b',
+        account: 'acct1',
+        amount: 0,
+        date: '2024-01-07',
+        is_child: true,
+        parent_id: 's2',
+        payee: 'cafe',
+        tombstone: 1,
+      },
+      // A matching child of a deleted parent is not shown
+      {
+        id: 's3',
+        account: 'acct1',
+        amount: -100,
+        date: '2024-01-08',
+        is_parent: true,
+        tombstone: 1,
+      },
+      {
+        id: 's3-a',
+        account: 'acct1',
+        amount: -100,
+        date: '2024-01-08',
+        is_child: true,
+        parent_id: 's3',
+        payee: 'cafe',
+      },
+      // A deleted plain transaction that would match
+      {
+        id: 't6',
+        account: 'acct1',
+        amount: -100,
+        date: '2024-01-09',
+        payee: 'cafe',
+        tombstone: 1,
+      },
+    ]);
+    expect(await ids(search('cafe'))).toEqual([
+      ['t1'],
+      ['t2'],
+      ['s1', '(s1-a)', 's1-b'],
+      ['t4'],
+    ]);
+    expect(await ids(search('cafe').limit(1))).toEqual([['t1']]);
+    expect(await ids(search('shop'))).toEqual([
+      ['s2', 's2-a'],
+      ['t2'],
+      ['t3'],
+      ['s1', 's1-a', '(s1-b)'],
+    ]);
+  });
+
+  it('matches escaped wildcards literally', async () => {
+    await setup();
+    await db.insertPayee({ id: 'pct', name: '100% Juice_Bar' });
+    await insertTransactions([
+      {
+        id: 't7',
+        account: 'acct1',
+        amount: -100,
+        date: '2024-01-10',
+        payee: 'pct',
+      },
+      {
+        id: 't8',
+        account: 'acct1',
+        amount: -100,
+        date: '2024-01-11',
+        notes: '1000 JuiceXBar',
+      },
+    ]);
+    // `%` and `?` are wildcards unless escaped; `_` is always literal
+    expect(await ids(search('0\\% juice'))).toEqual([['t7']]);
+    expect(await ids(search('0% juice'))).toEqual([['t8'], ['t7']]);
+    expect(await ids(search('juice_bar'))).toEqual([['t7']]);
+    expect(await ids(search('juice?bar'))).toEqual([['t8'], ['t7']]);
+    expect(await ids(search('juice\\?bar'))).toEqual([]);
+  });
+
+  it('does not count a child without a parent row towards the page size', async () => {
+    await setup();
+    await insertTransactions([
+      {
+        id: 'orphan',
+        account: 'acct1',
+        amount: -100,
+        date: '2023-12-31',
+        is_child: true,
+        parent_id: 'missing',
+        payee: 'cafe',
+      },
+    ]);
+    const query = search('cafe').orderBy({ date: 'asc' });
+    expect(await ids(query.limit(2))).toEqual([
+      ['t4'],
+      ['s1', '(s1-a)', 's1-b'],
+    ]);
+  });
+});

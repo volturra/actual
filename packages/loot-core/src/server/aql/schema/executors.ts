@@ -146,6 +146,13 @@ async function execTransactionsGrouped(
     rows = await db.all<db.DbViewTransactionInternal>(rowSql, params);
   } else {
     // TODO: phew, what a doozy. write docs why it works this way
+    //
+    // The outer join to the view must be an inner join: a LEFT JOIN makes
+    // SQLite materialize the whole view (every transaction) before looking
+    // up the matched groups, which dominates the cost of every filtered
+    // or searched page. A group whose parent row is missing has nothing to
+    // show (the grouping below drops it), so it shouldn't take up a slot
+    // in the page either.
     const rowSql = `
       SELECT group_id, matched FROM (
         SELECT
@@ -160,7 +167,7 @@ async function execTransactionsGrouped(
           )
         GROUP BY group_id
       )
-      LEFT JOIN ${sqlPieces.from} ON ${sqlPieces.from}.id = group_id
+      JOIN ${sqlPieces.from} ON ${sqlPieces.from}.id = group_id
       ${sqlPieces.joins}
       ${sqlPieces.orderBy}
       ${sqlPieces.limit != null ? `LIMIT ${sqlPieces.limit}` : ''}
