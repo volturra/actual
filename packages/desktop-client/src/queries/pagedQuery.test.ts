@@ -10,15 +10,6 @@ function wait(n) {
   return new Promise(resolve => setTimeout(() => resolve(`wait(${n})`), n));
 }
 
-function isCountQuery(query) {
-  if (query.selectExpressions.length === 1) {
-    const select = query.selectExpressions[0];
-    return select.result && select.result.$count === '*';
-  }
-
-  return false;
-}
-
 function select(row, selectExpressions) {
   return Object.fromEntries(
     selectExpressions.map(fieldName => [fieldName, row[fieldName]]),
@@ -36,10 +27,6 @@ function limitOffset(data, limit, offset) {
 }
 
 function runPagedQuery(query, data) {
-  if (isCountQuery(query)) {
-    return data.length;
-  }
-
   if (query.filterExpressions.length > 0) {
     const filter = query.filterExpressions[0];
     if (filter.id != null) {
@@ -112,9 +99,7 @@ async function mockSend(name, args, { delay }) {
   switch (name) {
     case 'query':
       const query = args;
-      if (!isCountQuery(query)) {
-        tracer.event('server-query');
-      }
+      tracer.event('server-query');
       if (delay) {
         await wait(delay);
       }
@@ -250,13 +235,10 @@ describe('pagedQuery', () => {
   it(`cancels existing requests`, async () => {
     let requestId = 0;
     mockServer({
-      send: async (name, args) => {
+      send: async name => {
         switch (name) {
           case 'query':
-            const query = args;
-            if (!isCountQuery(query)) {
-              requestId++;
-            }
+            requestId++;
             await wait(500);
             return { data: requestId, dependencies: ['transactions'] };
           default:
@@ -351,7 +333,7 @@ describe('pagedQuery', () => {
     await tracer.expect('data', ['*']);
   });
 
-  it(`unsubscribes correctly`, () => async done => {
+  it(`unsubscribes correctly`, async () => {
     mockBasicServer();
     tracer.start();
 
@@ -372,12 +354,11 @@ describe('pagedQuery', () => {
     });
 
     // Wait a bit and make sure nothing comes through
-    const p = Promise.race([tracer.expect('server-query'), wait(100)]);
+    const p = Promise.race([tracer.wait('server-query'), wait(100)]);
     await expect(p).resolves.toEqual('wait(100)');
-    done();
   });
 
-  it('pagedQuery makes requests in pages', () => async done => {
+  it('pagedQuery makes requests in pages', async () => {
     const data = mockPagingServer(1502);
     tracer.start();
 
@@ -387,15 +368,12 @@ describe('pagedQuery', () => {
       onPageData: data => tracer.event('page-data', data),
     });
 
-    await tracer.expect('server-query', [{ result: { $count: '*' } }]);
     await tracer.expect('server-query', ['id']);
 
     await tracer.expect('data', async d => {
       expect(d.length).toBe(500);
       expect(d[0].id).toBe(data[0].id);
     });
-
-    expect(paged.totalCount).toBe(data.length);
 
     await paged.fetchNext();
     tracer.expectNow('server-query', ['id']);
@@ -434,9 +412,8 @@ describe('pagedQuery', () => {
 
     await paged.fetchNext();
     // Wait a bit and make sure nothing comes through
-    const p = Promise.race([tracer.expect('server-query'), wait(100)]);
+    const p = Promise.race([tracer.wait('server-query'), wait(100)]);
     expect(await p).toEqual('wait(100)');
-    done();
   });
 
   it('pagedQuery allows customizing page count', async () => {
@@ -449,14 +426,74 @@ describe('pagedQuery', () => {
       options: { pageCount: 10 },
     });
 
-    await tracer.expect('server-query', [{ result: { $count: '*' } }]);
     await tracer.expect('server-query', ['id']);
 
     // Should only get 10 items back
     await tracer.expect('data', selectData(data, ['id']).slice(0, 10));
   });
 
-  it('pagedQuery only runs `fetchNext` once at a time', () => async done => {
+  it('pagedQuery never runs an aggregate count query', async () => {
+    const data = mockPagingServer(45, { eventType: 'all' });
+    tracer.start();
+
+    const query = q('transactions').select(['id', 'date']).orderBy({
+      date: 'desc',
+    });
+    const paged = pagedQuery(query, {
+      onData: data => tracer.event('data', data),
+      options: { pageCount: 20 },
+    });
+
+    // First page: only the page query is sent
+    await tracer.expect(
+      'server-query',
+      expect.objectContaining({
+        selectExpressions: ['id', 'date'],
+        limit: 20,
+      }),
+    );
+    await tracer.expect('data', d => expect(d.length).toBe(20));
+    expect(paged.hasNext).toBe(true);
+
+    // Refetch on a sync event: only the page query again
+    mockPublishEvent('sync-event', {
+      type: 'success',
+      tables: ['transactions'],
+    });
+    await tracer.expect(
+      'server-query',
+      expect.objectContaining({
+        selectExpressions: ['id', 'date'],
+        limit: 20,
+      }),
+    );
+    await tracer.expect('data', d => expect(d.length).toBe(20));
+
+    // Paging still reaches the end without knowing the total
+    await paged.fetchNext();
+    tracer.expectNow('server-query', expect.objectContaining({ offset: 20 }));
+    tracer.expectNow('data', d => expect(d.length).toBe(40));
+    expect(paged.hasNext).toBe(true);
+
+    await paged.fetchNext();
+    tracer.expectNow('server-query', expect.objectContaining({ offset: 40 }));
+    tracer.expectNow('data', d => expect(d.length).toBe(45));
+    expect(paged.hasNext).toBe(false);
+    expect(paged.data).toEqual(selectData(data, ['id', 'date']));
+
+    // refetchUpToRow does not count either
+    await paged.refetchUpToRow(data[30].id, { field: 'date', order: 'desc' });
+    tracer.expectNow(
+      'server-query',
+      expect.objectContaining({ filterExpressions: [{ id: data[30].id }] }),
+    );
+    tracer.expectNow('server-query', expect.anything());
+    tracer.expectNow('server-query', expect.anything());
+    tracer.expectNow('data', expect.anything());
+    expect(paged.hasNext).toBe(true);
+  });
+
+  it('pagedQuery only runs `fetchNext` once at a time', async () => {
     mockPagingServer(1000, { delay: 200 });
     tracer.start();
 
@@ -465,7 +502,6 @@ describe('pagedQuery', () => {
       onData: data => tracer.event('data', data),
     });
 
-    await tracer.expect('server-query', [{ result: { $count: '*' } }]);
     await tracer.expect('server-query', ['id']);
     await tracer.expect('data', vi.fn());
 
@@ -478,9 +514,8 @@ describe('pagedQuery', () => {
     await tracer.expect('data', vi.fn());
 
     // Wait a bit and make sure nothing comes through
-    const p = Promise.race([tracer.expect('server-query'), wait(200)]);
+    const p = Promise.race([tracer.wait('server-query'), wait(200)]);
     expect(await p).toEqual('wait(200)');
-    done();
   });
 
   it('pagedQuery refetches all paged data on update', async () => {
@@ -494,7 +529,6 @@ describe('pagedQuery', () => {
       options: { pageCount: 20 },
     });
 
-    await tracer.expect('server-query', [{ result: { $count: '*' } }]);
     await tracer.expect('server-query', ['id']);
     await tracer.expect('data', d => {
       expect(d.length).toBe(20);
@@ -517,7 +551,6 @@ describe('pagedQuery', () => {
       tables: ['transactions'],
     });
 
-    await tracer.expect('server-query', [{ result: { $count: '*' } }]);
     await tracer.expect('server-query', ['id']);
     await tracer.expect('data', d => {
       // All 40 we fetched again
@@ -552,7 +585,6 @@ describe('pagedQuery', () => {
     // This is from the paged request, but it ignores the new data
     await tracer.expect('server-query', ['id']);
 
-    await tracer.expect('server-query', [{ result: { $count: '*' } }]);
     await tracer.expect('server-query', ['id']);
     await tracer.expect('data', d => {
       expect(d.length).toBe(40);
@@ -588,12 +620,6 @@ describe('pagedQuery', () => {
     const item = data.find(row => row.id === 300);
     void paged.refetchUpToRow(item.id, { field: 'date', order: 'desc' });
 
-    await tracer.expect(
-      'server-query',
-      expect.objectContaining({
-        selectExpressions: [{ result: { $count: '*' } }],
-      }),
-    );
     await tracer.expect(
       'server-query',
       expect.objectContaining({ filterExpressions: [{ id: 300 }] }),
@@ -637,9 +663,6 @@ describe('pagedQuery', () => {
         switch (name) {
           case 'query': {
             const query = args;
-            if (isCountQuery(query)) {
-              return { data: data.length, dependencies: ['transactions'] };
-            }
             await new Promise(resolve => pending.push(resolve));
             return {
               data: limitOffset(
