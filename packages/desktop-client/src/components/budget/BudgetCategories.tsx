@@ -294,7 +294,9 @@ export const BudgetCategories = memo<BudgetCategoriesProps>(
               content = (
                 <ExpenseGroup
                   group={item.value}
-                  editingCell={editingCell}
+                  editingCell={
+                    editingCell?.id === item.value.id ? editingCell : null
+                  }
                   collapsed={collapsedGroupIds.includes(item.value.id)}
                   dragState={dragState}
                   onEditName={onEditName}
@@ -315,7 +317,9 @@ export const BudgetCategories = memo<BudgetCategoriesProps>(
                 <ExpenseCategory
                   cat={item.value}
                   categoryGroup={item.group}
-                  editingCell={editingCell}
+                  editingCell={
+                    editingCell?.id === item.value.id ? editingCell : null
+                  }
                   dragState={dragState}
                   onEditName={onEditName}
                   onEditMonth={onEditMonth}
@@ -344,7 +348,9 @@ export const BudgetCategories = memo<BudgetCategoriesProps>(
               content = (
                 <IncomeGroup
                   group={item.value}
-                  editingCell={editingCell}
+                  editingCell={
+                    editingCell?.id === item.value.id ? editingCell : null
+                  }
                   collapsed={collapsedGroupIds.includes(item.value.id)}
                   onEditName={onEditName!}
                   onSave={_onSaveGroup}
@@ -358,7 +364,9 @@ export const BudgetCategories = memo<BudgetCategoriesProps>(
               content = (
                 <IncomeCategory
                   cat={item.value}
-                  editingCell={editingCell}
+                  editingCell={
+                    editingCell?.id === item.value.id ? editingCell : null
+                  }
                   isLast={idx === items.length - 1}
                   onEditName={onEditName}
                   onEditMonth={onEditMonth}
