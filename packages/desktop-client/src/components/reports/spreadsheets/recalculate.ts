@@ -4,23 +4,15 @@ import type {
   IntervalEntity,
 } from '@actual-app/core/types/models';
 
-import type {
-  QueryDataEntity,
-  UncategorizedEntity,
-} from '#components/reports/ReportOptions';
+import type { UncategorizedEntity } from '#components/reports/ReportOptions';
 
-import { sumItemAmountsByDate } from './filterHiddenItems';
-import type { GroupByLabel } from './filterHiddenItems';
+import type { ItemAmountsByDate } from './filterHiddenItems';
 
 type recalculateProps = {
   item: UncategorizedEntity;
   intervals: Array<string>;
-  assets: QueryDataEntity[];
-  debts: QueryDataEntity[];
-  groupByLabel: GroupByLabel;
-  showOffBudget?: boolean;
-  showHiddenCategories?: boolean;
-  showUncategorized?: boolean;
+  // The item's sums from `sumItemAmountsByDate`.
+  amountsByDate: ItemAmountsByDate;
   startDate: string;
   endDate: string;
 };
@@ -28,32 +20,10 @@ type recalculateProps = {
 export function recalculate({
   item,
   intervals,
-  assets,
-  debts,
-  groupByLabel,
-  showOffBudget,
-  showHiddenCategories,
-  showUncategorized,
+  amountsByDate: { assets: assetsByDate, debts: debtsByDate },
   startDate,
   endDate,
 }: recalculateProps): GroupedEntity {
-  const assetsByDate = sumItemAmountsByDate(
-    item,
-    assets,
-    groupByLabel,
-    showOffBudget,
-    showHiddenCategories,
-    showUncategorized,
-  );
-  const debtsByDate = sumItemAmountsByDate(
-    item,
-    debts,
-    groupByLabel,
-    showOffBudget,
-    showHiddenCategories,
-    showUncategorized,
-  );
-
   let totalAssets = 0;
   let totalDebts = 0;
   const intervalData = intervals.reduce(

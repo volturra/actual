@@ -3,7 +3,11 @@ import type {
   UncategorizedEntity,
 } from '#components/reports/ReportOptions';
 
-import { filterHiddenItems, sumItemAmountsByDate } from './filterHiddenItems';
+import {
+  filterHiddenItems,
+  filterReportTransactions,
+  sumItemAmountsByDate,
+} from './filterHiddenItems';
 import type { GroupByLabel } from './filterHiddenItems';
 
 const intervals = ['2026-01', '2026-02', '2026-03'];
@@ -172,11 +176,13 @@ describe('sumItemAmountsByDate', () => {
       for (const data of [assets, debts]) {
         const sums = sumItemAmountsByDate(
           item,
-          data,
+          filterReportTransactions(
+            data,
+            flags.showOffBudget,
+            flags.showHiddenCategories,
+            flags.showUncategorized,
+          ),
           groupByLabel,
-          flags.showOffBudget,
-          flags.showHiddenCategories,
-          flags.showUncategorized,
         );
         expect(intervals.map(interval => sums.get(interval) ?? 0)).toEqual(
           sumPerInterval(item, data, groupByLabel, flags),
@@ -188,11 +194,8 @@ describe('sumItemAmountsByDate', () => {
   it('sums a category by date and skips hidden and off-budget rows', () => {
     const sums = sumItemAmountsByDate(
       { id: 'food', name: 'Food', hidden: false },
-      debts,
+      filterReportTransactions(debts, false, false, false),
       'category',
-      false,
-      false,
-      false,
     );
     expect(Object.fromEntries(sums)).toEqual({
       '2025-12': -1000,
@@ -204,11 +207,8 @@ describe('sumItemAmountsByDate', () => {
   it('puts uncategorized, transfer and off-budget rows in the "all" bucket', () => {
     const sums = sumItemAmountsByDate(
       { id: '', name: 'All', hidden: false, uncategorized_id: 'all' },
-      debts,
+      filterReportTransactions(debts, true, false, true),
       'category',
-      true,
-      false,
-      true,
     );
     expect(Object.fromEntries(sums)).toEqual({
       '2026-01': -13,

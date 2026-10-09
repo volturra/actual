@@ -149,22 +149,26 @@ export function createCustomSpreadsheet({
       groupBy,
     }));
 
+    // These filters don't depend on the group, so apply them once here.
+    assets = filterReportTransactions(
+      assets,
+      showOffBudget,
+      showHiddenCategories,
+      showUncategorized,
+    );
+    debts = filterReportTransactions(
+      debts,
+      showOffBudget,
+      showHiddenCategories,
+      showUncategorized,
+    );
+
     if (groupBy === 'Tag') {
       const resolvedScope = resolveTagScope(tags, tagScope);
       scopeTagNames = resolvedScope.map(tag => tag.tag);
       const groupedQueryData = groupQueryDataByTags({
-        assets: filterReportTransactions(
-          assets,
-          showOffBudget,
-          showHiddenCategories,
-          showUncategorized,
-        ),
-        debts: filterReportTransactions(
-          debts,
-          showOffBudget,
-          showHiddenCategories,
-          showUncategorized,
-        ),
+        assets,
+        debts,
         tags: resolvedScope,
         showEmpty,
       });
@@ -206,22 +210,8 @@ export function createCustomSpreadsheet({
     let netDebts = 0;
 
     const amountsByItem = groupByList.map(item => ({
-      assets: sumItemAmountsByDate(
-        item,
-        assets,
-        groupByLabel,
-        showOffBudget,
-        showHiddenCategories,
-        showUncategorized,
-      ),
-      debts: sumItemAmountsByDate(
-        item,
-        debts,
-        groupByLabel,
-        showOffBudget,
-        showHiddenCategories,
-        showUncategorized,
-      ),
+      assets: sumItemAmountsByDate(item, assets, groupByLabel),
+      debts: sumItemAmountsByDate(item, debts, groupByLabel),
     }));
 
     const intervalData = intervals.reduce(
@@ -305,16 +295,11 @@ export function createCustomSpreadsheet({
       [],
     );
 
-    const calcData: GroupedEntity[] = groupByList.map(item => {
+    const calcData: GroupedEntity[] = groupByList.map((item, itemIndex) => {
       const calc = recalculate({
         item,
         intervals,
-        assets,
-        debts,
-        groupByLabel,
-        showOffBudget,
-        showHiddenCategories,
-        showUncategorized,
+        amountsByDate: amountsByItem[itemIndex],
         startDate,
         endDate,
       });
