@@ -99,14 +99,17 @@ export function BudgetPage() {
   const numberFormat = _numberFormat || 'comma-dot';
   const [hideFraction] = useSyncedPref('hideFraction');
   const dispatch = useDispatch();
-  const applyBudgetAction = useBudgetActions();
-  const createCategory = useCreateCategoryMutation();
-  const saveCategory = useSaveCategoryMutation();
-  const deleteCategory = useDeleteCategoryMutation();
-  const createCategoryGroup = useCreateCategoryGroupMutation();
-  const saveCategoryGroup = useSaveCategoryGroupMutation();
-  const deleteCategoryGroup = useDeleteCategoryGroupMutation();
-  const sortCategories = useSortCategoriesMutation();
+  // Only keep the stable `mutate` functions: the mutation result objects
+  // change identity on every status change, which would recreate the
+  // callbacks below and re-render the whole budget list.
+  const { mutate: applyBudgetAction } = useBudgetActions();
+  const { mutate: createCategory } = useCreateCategoryMutation();
+  const { mutate: saveCategory } = useSaveCategoryMutation();
+  const { mutate: deleteCategory } = useDeleteCategoryMutation();
+  const { mutate: createCategoryGroup } = useCreateCategoryGroupMutation();
+  const { mutate: saveCategoryGroup } = useSaveCategoryGroupMutation();
+  const { mutate: deleteCategoryGroup } = useDeleteCategoryGroupMutation();
+  const { mutate: sortCategories } = useSortCategoriesMutation();
 
   useEffect(() => {
     async function init() {
@@ -123,7 +126,7 @@ export function BudgetPage() {
 
   const onBudgetAction = useCallback(
     async (month, type, args) => {
-      applyBudgetAction.mutate({ month, type, args });
+      applyBudgetAction({ month, type, args });
     },
     [applyBudgetAction],
   );
@@ -163,7 +166,7 @@ export function BudgetPage() {
           options: {
             onValidate: name => (!name ? 'Name is required.' : null),
             onSubmit: async name => {
-              createCategoryGroup.mutate(
+              createCategoryGroup(
                 { name },
                 {
                   onSettled: () => {
@@ -189,7 +192,7 @@ export function BudgetPage() {
             options: {
               onValidate: name => (!name ? 'Name is required.' : null),
               onSubmit: async name => {
-                createCategory.mutate(
+                createCategory(
                   {
                     name,
                     groupId,
@@ -217,14 +220,14 @@ export function BudgetPage() {
 
   const onSaveGroup = useCallback(
     group => {
-      saveCategoryGroup.mutate({ group });
+      saveCategoryGroup({ group });
     },
     [saveCategoryGroup],
   );
 
   const onApplyBudgetTemplatesInGroup = useCallback(
     async categories => {
-      applyBudgetAction.mutate({
+      applyBudgetAction({
         month: startMonth,
         type: 'apply-multiple-templates',
         args: {
@@ -238,7 +241,7 @@ export function BudgetPage() {
   const onDeleteGroup = useCallback(
     groupId => {
       dispatch(collapseModals({ rootModalName: 'category-group-menu' }));
-      deleteCategoryGroup.mutate({ id: groupId });
+      deleteCategoryGroup({ id: groupId });
     },
     [deleteCategoryGroup, dispatch],
   );
@@ -257,7 +260,7 @@ export function BudgetPage() {
 
   const onSaveCategory = useCallback(
     category => {
-      saveCategory.mutate({ category });
+      saveCategory({ category });
     },
     [saveCategory],
   );
@@ -265,7 +268,7 @@ export function BudgetPage() {
   const onDeleteCategory = useCallback(
     categoryId => {
       dispatch(collapseModals({ rootModalName: 'category-menu' }));
-      deleteCategory.mutate({ id: categoryId });
+      deleteCategory({ id: categoryId });
     },
     [deleteCategory, dispatch],
   );
@@ -399,7 +402,7 @@ export function BudgetPage() {
               onToggleVisibility: onToggleGroupVisibility,
               onApplyBudgetTemplatesInGroup,
               onSortCategories: (groupId, direction) => {
-                sortCategories.mutate({ groupId, direction });
+                sortCategories({ groupId, direction });
               },
             },
           },
