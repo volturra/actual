@@ -317,6 +317,32 @@ export function setNumberFormat(config: typeof numberFormatConfig) {
   numberFormatConfig = config;
 }
 
+// Creating an Intl.NumberFormat is expensive and getNumberFormat runs for
+// every formatted amount, so reuse one per locale and fraction digits (the
+// only options passed to it). Intl.NumberFormat instances are immutable.
+const MAX_INTL_NUMBER_FORMAT_CACHE_SIZE = 50;
+const intlNumberFormatCache = new Map<string, Intl.NumberFormat>();
+
+function getIntlNumberFormat(
+  locale: string,
+  minimumFractionDigits: number,
+  maximumFractionDigits: number,
+) {
+  const key = `${locale}|${minimumFractionDigits}|${maximumFractionDigits}`;
+  let intlFormatter = intlNumberFormatCache.get(key);
+  if (!intlFormatter) {
+    intlFormatter = new Intl.NumberFormat(locale, {
+      minimumFractionDigits,
+      maximumFractionDigits,
+    });
+    if (intlNumberFormatCache.size >= MAX_INTL_NUMBER_FORMAT_CACHE_SIZE) {
+      intlNumberFormatCache.clear();
+    }
+    intlNumberFormatCache.set(key, intlFormatter);
+  }
+  return intlFormatter;
+}
+
 export function getNumberFormat({
   format = numberFormatConfig.format,
   hideFraction = numberFormatConfig.hideFraction,
@@ -376,7 +402,11 @@ export function getNumberFormat({
           maximumFractionDigits: currentHideFraction ? 0 : 2,
         };
 
-  const intlFormatter = new Intl.NumberFormat(locale, fractionDigitsOptions);
+  const intlFormatter = getIntlNumberFormat(
+    locale,
+    fractionDigitsOptions.minimumFractionDigits,
+    fractionDigitsOptions.maximumFractionDigits,
+  );
 
   // Wrapper to handle -0 edge case
   // Normalize apostrophe-dot to U+2019 for consistency across

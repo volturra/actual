@@ -149,6 +149,58 @@ describe('utility functions', () => {
     expect(formatter.format(Number('1234.56'))).toBe(`1\u2019235`);
   });
 
+  test('number formatting reuses Intl.NumberFormat instances', () => {
+    const spy = vi.spyOn(Intl, 'NumberFormat');
+    try {
+      // Use an option combination no other test creates, so the first call
+      // is guaranteed to be a cache miss.
+      const options = { format: 'dot-comma', decimalPlaces: 7 } as const;
+      expect(getNumberFormat(options).formatter.format(1.5)).toBe('1,5000000');
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      expect(getNumberFormat(options).formatter.format(2.25)).toBe('2,2500000');
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      // A different option creates (and caches) a separate instance.
+      expect(
+        getNumberFormat({ ...options, format: 'comma-dot' }).formatter.format(
+          1234.5,
+        ),
+      ).toBe('1,234.5000000');
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(getNumberFormat(options).formatter.format(1234.5)).toBe(
+        '1.234,5000000',
+      );
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('number formatting follows a runtime format switch', () => {
+    setNumberFormat({ format: 'comma-dot', hideFraction: false });
+    expect(getNumberFormat().formatter.format(1234.56)).toBe('1,234.56');
+    expect(getNumberFormat().formatter.format(1234.56)).toBe('1,234.56');
+
+    setNumberFormat({ format: 'dot-comma', hideFraction: false });
+    expect(getNumberFormat().formatter.format(1234.56)).toBe('1.234,56');
+
+    setNumberFormat({ format: 'dot-comma', hideFraction: true });
+    expect(getNumberFormat().formatter.format(1234.56)).toBe('1.235');
+
+    setNumberFormat({ format: 'apostrophe-dot', hideFraction: false });
+    expect(getNumberFormat().formatter.format(1234.56)).toBe('1\u2019234.56');
+
+    setNumberFormat({ format: 'comma-dot', hideFraction: false });
+    expect(getNumberFormat().formatter.format(1234.56)).toBe('1,234.56');
+    expect(
+      getNumberFormat({
+        format: 'comma-dot',
+        decimalPlaces: 0,
+      }).formatter.format(1234.56),
+    ).toBe('1,235');
+  });
+
   test('number formatting works with small negative numbers with 0 decimal places', () => {
     setNumberFormat({ format: 'comma-dot', hideFraction: true });
     const formatter = getNumberFormat().formatter;
