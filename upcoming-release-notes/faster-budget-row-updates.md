@@ -3,4 +3,4 @@ category: Enhancements
 authors: [volturra]
 ---
 
-Make the budget page respond faster when editing amounts, collapsing groups or showing hidden categories.
+Re-render fewer budget rows when collapsing groups, showing hidden categories or editing amounts.
