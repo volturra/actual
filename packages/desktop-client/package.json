@@ -139,6 +139,7 @@
     "test": "vitest --run",
     "validate:theme-catalog": "node --experimental-strip-types bin/validate-theme-catalog.mts",
     "e2e": "npx playwright test --browser=chromium",
+    "e2e:bench": "playwright test --config playwright.benchmark.config.ts",
     "vrt": "cross-env VRT=true npx playwright test --browser=chromium",
     "playwright": "playwright",
     "typecheck": "tsgo -b && tsc-strict"
