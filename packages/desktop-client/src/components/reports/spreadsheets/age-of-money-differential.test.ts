@@ -19,6 +19,7 @@ const TIME_ZONES = [
   'UTC',
   'America/New_York',
   // DST starts at midnight, so some local midnights do not exist
+  // (Sao Paulo until 2018, Santiago every September)
   'America/Sao_Paulo',
   'America/Santiago',
   'Pacific/Auckland',
@@ -86,7 +87,7 @@ describe('Age of Money matches the date-fns implementation', () => {
     process.env.TZ = timeZone;
     const cases = [
       // Long history across several year boundaries and a leap day
-      { seed: 1, startDate: '2019-11-15', endDate: '2024-03-10', count: 6000 },
+      { seed: 1, startDate: '2017-09-15', endDate: '2024-03-10', count: 8000 },
       // Short and dense, many transactions per date
       { seed: 2, startDate: '2023-12-20', endDate: '2024-01-10', count: 2000 },
       // Sparse, mostly insufficient income
