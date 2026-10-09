@@ -1,10 +1,12 @@
 import type { RefObject } from 'react';
 
+import type { Falsy } from '@actual-app/core/types/util';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 
 import { addItems } from '#contextmenu/contextMenuSlice';
+import type { ContextMenuItem } from '#contextmenu/types';
 import { useRefEventListener } from '#hooks/useRefEventListener';
 import { useDispatch } from '#redux';
 
@@ -76,6 +78,91 @@ describe('useContextMenu', () => {
     } as unknown as MouseEvent);
 
     expect(mockDispatch).toHaveBeenCalledWith(addItems(items));
+  });
+
+  it('should leave out hidden and falsy items', () => {
+    const visible = { name: 'visible', text: 'Visible', onClick: vi.fn() };
+    const hidden = {
+      name: 'hidden',
+      text: 'Hidden',
+      onClick: vi.fn(),
+      hidden: true,
+    };
+
+    renderHook(() =>
+      useContextMenu({
+        triggerRef: mockTriggerRef as unknown as RefObject<HTMLElement | null>,
+        items: [visible, hidden, false, null],
+      }),
+    );
+
+    const listener = (useRefEventListener as Mock).mock.calls[0][2];
+    listener({
+      preventDefault: vi.fn(),
+      clientX: 100,
+      clientY: 200,
+    } as unknown as MouseEvent);
+
+    expect(mockDispatch).toHaveBeenCalledWith(addItems([visible]));
+  });
+
+  it('should only call an items function when the menu opens', () => {
+    const visible = { name: 'visible', text: 'Visible', onClick: vi.fn() };
+    const hidden = {
+      name: 'hidden',
+      text: 'Hidden',
+      onClick: vi.fn(),
+      hidden: true,
+    };
+    const getItems = vi.fn((): Falsy<ContextMenuItem>[] => [
+      visible,
+      hidden,
+      false,
+    ]);
+
+    const { rerender } = renderHook(() =>
+      useContextMenu({
+        triggerRef: mockTriggerRef as unknown as RefObject<HTMLElement | null>,
+        items: getItems,
+      }),
+    );
+    rerender();
+
+    expect(getItems).not.toHaveBeenCalled();
+
+    const listener = (useRefEventListener as Mock).mock.calls.at(-1)?.[2];
+    listener({
+      preventDefault: vi.fn(),
+      clientX: 100,
+      clientY: 200,
+    } as unknown as MouseEvent);
+
+    expect(getItems).toHaveBeenCalledTimes(1);
+    expect(mockDispatch).toHaveBeenCalledWith(addItems([visible]));
+  });
+
+  it('should not call an items function when enabled is false', () => {
+    const getItems = vi.fn(() => [
+      { name: 'test', text: 'Test', onClick: vi.fn() },
+    ]);
+
+    renderHook(() =>
+      useContextMenu({
+        triggerRef: mockTriggerRef as unknown as RefObject<HTMLElement | null>,
+        enabled: false,
+        items: getItems,
+      }),
+    );
+
+    const listener = (useRefEventListener as Mock).mock.calls[0][2];
+    listener({
+      preventDefault: vi.fn(),
+      clientX: 100,
+      clientY: 200,
+    } as unknown as MouseEvent);
+
+    expect(getItems).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalled();
   });
 
   it('should not dispatch addItems when enabled is false', () => {

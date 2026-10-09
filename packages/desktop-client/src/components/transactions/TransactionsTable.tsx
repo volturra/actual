@@ -982,6 +982,7 @@ function PayeeIcons({
 
 type TransactionProps = {
   allTransactions?: TransactionEntity[];
+  transactionMap?: Map<TransactionEntity['id'], TransactionEntity>;
   transaction: TransactionEntity;
   subtransactions: TransactionEntity[] | null;
   transferAccountsByTransaction: {
@@ -1063,6 +1064,7 @@ function nextTransferDateSync(id: TransactionEntity['id']) {
 
 const Transaction = memo(function Transaction({
   allTransactions,
+  transactionMap,
   transaction: originalTransaction,
   subtransactions,
   transferAccountsByTransaction,
@@ -2125,7 +2127,7 @@ const Transaction = memo(function Transaction({
   useTransactionRowContextActions({
     rowRef: triggerRef,
     transaction,
-    getTransaction: id => allTransactions?.find(t => t.id === id),
+    getTransaction: id => transactionMap?.get(id),
     onDelete: ids => onBatchDelete?.(ids),
     onDuplicate: ids => onBatchDuplicate?.(ids),
     onLinkSchedule: ids => onBatchLinkSchedule?.(ids),
@@ -2896,6 +2898,7 @@ function TransactionTableInner({
     return (
       <Transaction
         allTransactions={props.transactions}
+        transactionMap={props.transactionMap}
         editing={editing}
         transaction={trans}
         transferAccountsByTransaction={props.transferAccountsByTransaction}
