@@ -150,31 +150,67 @@ describe('utility functions', () => {
   });
 
   test('number formatting reuses Intl.NumberFormat instances', () => {
+    const dotComma = { format: 'dot-comma', decimalPlaces: 7 } as const;
+    const commaDot = { format: 'comma-dot', decimalPlaces: 7 } as const;
+    // Warm both entries twice so they are cached regardless of what earlier
+    // tests left in the cache (a size-limit clear can only drop one of them
+    // in the first round).
+    for (let i = 0; i < 2; i++) {
+      getNumberFormat(dotComma);
+      getNumberFormat(commaDot);
+    }
+
     const spy = vi.spyOn(Intl, 'NumberFormat');
     try {
-      // Use an option combination no other test creates, so the first call
-      // is guaranteed to be a cache miss.
-      const options = { format: 'dot-comma', decimalPlaces: 7 } as const;
-      expect(getNumberFormat(options).formatter.format(1.5)).toBe('1,5000000');
-      expect(spy).toHaveBeenCalledTimes(1);
-
-      expect(getNumberFormat(options).formatter.format(2.25)).toBe('2,2500000');
-      expect(spy).toHaveBeenCalledTimes(1);
-
-      // A different option creates (and caches) a separate instance.
-      expect(
-        getNumberFormat({ ...options, format: 'comma-dot' }).formatter.format(
-          1234.5,
-        ),
-      ).toBe('1,234.5000000');
-      expect(spy).toHaveBeenCalledTimes(2);
-      expect(getNumberFormat(options).formatter.format(1234.5)).toBe(
+      expect(getNumberFormat(dotComma).formatter.format(1234.5)).toBe(
         '1.234,5000000',
       );
-      expect(spy).toHaveBeenCalledTimes(2);
+      expect(getNumberFormat(commaDot).formatter.format(1234.5)).toBe(
+        '1,234.5000000',
+      );
+      expect(getNumberFormat(dotComma).formatter.format(2.25)).toBe(
+        '2,2500000',
+      );
+      expect(spy).not.toHaveBeenCalled();
     } finally {
       spy.mockRestore();
     }
+  });
+
+  test('number formatting stays correct when the cache overflows', () => {
+    const locales = {
+      'comma-dot': 'en-US',
+      'dot-comma': 'de-DE',
+      'space-comma': 'fr-FR',
+      'apostrophe-dot': 'de-CH',
+      'comma-dot-in': 'en-IN',
+    } as const;
+    const value = 1234567.891;
+
+    // 5 formats x 21 decimal places is more than the cache holds, so it is
+    // cleared at least once per pass; output must not change across passes.
+    for (let pass = 0; pass < 2; pass++) {
+      for (const [format, locale] of Object.entries(locales)) {
+        for (let decimalPlaces = 0; decimalPlaces <= 20; decimalPlaces++) {
+          let expected = new Intl.NumberFormat(locale, {
+            minimumFractionDigits: decimalPlaces,
+            maximumFractionDigits: decimalPlaces,
+          }).format(value);
+          if (format === 'apostrophe-dot') {
+            expected = expected.replace(/'/g, '\u2019');
+          }
+          expect(
+            getNumberFormat({
+              format: format as keyof typeof locales,
+              decimalPlaces,
+            }).formatter.format(value),
+          ).toBe(expected);
+        }
+      }
+    }
+
+    setNumberFormat({ format: 'comma-dot', hideFraction: false });
+    expect(getNumberFormat().formatter.format(1234.56)).toBe('1,234.56');
   });
 
   test('number formatting follows a runtime format switch', () => {

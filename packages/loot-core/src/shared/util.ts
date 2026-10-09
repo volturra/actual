@@ -318,8 +318,10 @@ export function setNumberFormat(config: typeof numberFormatConfig) {
 }
 
 // Creating an Intl.NumberFormat is expensive and getNumberFormat runs for
-// every formatted amount, so reuse one per locale and fraction digits (the
-// only options passed to it). Intl.NumberFormat instances are immutable.
+// every formatted amount, so reuse one per locale and fraction digits.
+// Intl.NumberFormat instances are immutable. The cache key must include
+// every option passed to the Intl.NumberFormat constructor below: if an
+// option is added there (e.g. useGrouping or style), add it to the key too.
 const MAX_INTL_NUMBER_FORMAT_CACHE_SIZE = 50;
 const intlNumberFormatCache = new Map<string, Intl.NumberFormat>();
 
