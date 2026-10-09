@@ -325,17 +325,13 @@ export function setNumberFormat(config: typeof numberFormatConfig) {
 const MAX_INTL_NUMBER_FORMAT_CACHE_SIZE = 50;
 const intlNumberFormatCache = new Map<string, Intl.NumberFormat>();
 
-function getIntlNumberFormat(
-  locale: string,
-  minimumFractionDigits: number,
-  maximumFractionDigits: number,
-) {
-  const key = `${locale}|${minimumFractionDigits}|${maximumFractionDigits}`;
+function getIntlNumberFormat(locale: string, fractionDigits: number) {
+  const key = `${locale}|${fractionDigits}`;
   let intlFormatter = intlNumberFormatCache.get(key);
   if (!intlFormatter) {
     intlFormatter = new Intl.NumberFormat(locale, {
-      minimumFractionDigits,
-      maximumFractionDigits,
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
     });
     if (intlNumberFormatCache.size >= MAX_INTL_NUMBER_FORMAT_CACHE_SIZE) {
       intlNumberFormatCache.clear();
@@ -390,25 +386,13 @@ export function getNumberFormat({
       decimalSeparator = '.';
   }
 
-  const fractionDigitsOptions: {
-    minimumFractionDigits: number;
-    maximumFractionDigits: number;
-  } =
+  const fractionDigits =
     typeof decimalPlaces === 'number'
-      ? {
-          minimumFractionDigits: decimalPlaces,
-          maximumFractionDigits: decimalPlaces,
-        }
-      : {
-          minimumFractionDigits: currentHideFraction ? 0 : 2,
-          maximumFractionDigits: currentHideFraction ? 0 : 2,
-        };
-
-  const intlFormatter = getIntlNumberFormat(
-    locale,
-    fractionDigitsOptions.minimumFractionDigits,
-    fractionDigitsOptions.maximumFractionDigits,
-  );
+      ? decimalPlaces
+      : currentHideFraction
+        ? 0
+        : 2;
+  const intlFormatter = getIntlNumberFormat(locale, fractionDigits);
 
   // Wrapper to handle -0 edge case
   // Normalize apostrophe-dot to U+2019 for consistency across
