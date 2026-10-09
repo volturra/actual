@@ -102,9 +102,7 @@ export const BudgetCategories = memo<BudgetCategoriesProps>(
             cat => showHiddenCategories || !cat.hidden,
           );
 
-          const items: BudgetItem[] = [
-            { type: 'expense-group', value: { ...group } },
-          ];
+          const items: BudgetItem[] = [{ type: 'expense-group', value: group }];
 
           if (newCategoryForGroup === group.id) {
             items.push({ type: 'new-category' });

@@ -1,5 +1,5 @@
 // @ts-strict-ignore
-import React from 'react';
+import React, { memo } from 'react';
 
 import { theme } from '@actual-app/components/theme';
 import type { CategoryGroupEntity } from '@actual-app/core/types/models';
@@ -25,7 +25,7 @@ type IncomeGroupProps = {
   onShowNewCategory: (groupId: CategoryGroupEntity['id']) => void;
 };
 
-export function IncomeGroup({
+export const IncomeGroup = memo(function IncomeGroup({
   group,
   editingCell,
   collapsed,
@@ -63,4 +63,4 @@ export function IncomeGroup({
       </RenderMonths>
     </Row>
   );
-}
+});

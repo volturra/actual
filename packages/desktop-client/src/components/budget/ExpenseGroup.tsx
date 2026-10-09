@@ -1,5 +1,5 @@
 // @ts-strict-ignore
-import React from 'react';
+import React, { memo } from 'react';
 import type { ComponentProps } from 'react';
 
 import { theme } from '@actual-app/components/theme';
@@ -44,7 +44,7 @@ type ExpenseGroupProps = {
   onShowNewCategory?: ComponentProps<typeof SidebarGroup>['onShowNewCategory'];
 };
 
-export function ExpenseGroup({
+export const ExpenseGroup = memo(function ExpenseGroup({
   group,
   collapsed,
   editingCell,
@@ -149,4 +149,4 @@ export function ExpenseGroup({
       </View>
     </Row>
   );
-}
+});
