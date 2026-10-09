@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type * as MonthNameFormatFit from '#components/reports/useMonthNameFormatFit';
 import { TestProviders } from '#mocks';
 
 import { CalendarCard } from './CalendarCard';
@@ -18,6 +19,22 @@ vi.mock('#components/reports/ReportCard', () => ({
 vi.mock('#components/reports/graphs/CalendarGraph', () => ({
   CalendarGraph: () => null,
 }));
+
+// Every month calls this hook with its index, so this counts how often each
+// month's CalendarCardInner runs.
+const monthRuns = vi.hoisted(() => new Map<number, number>());
+
+vi.mock('#components/reports/useMonthNameFormatFit', async importOriginal => {
+  const actual = await importOriginal<typeof MonthNameFormatFit>();
+  return {
+    useMonthNameFormatFit: (
+      ...args: Parameters<typeof actual.useMonthNameFormatFit>
+    ) => {
+      monthRuns.set(args[0], (monthRuns.get(args[0]) ?? 0) + 1);
+      return actual.useMonthNameFormatFit(...args);
+    },
+  };
+});
 
 vi.mock('#hooks/useNavigate', () => ({
   useNavigate: () => vi.fn(),
@@ -145,5 +162,17 @@ describe('CalendarCard', () => {
     reportMonthWidth(2, 200);
 
     expect(monthNames()).toEqual(['Jan', 'Feb', 'Mar']);
+  });
+
+  it('re-renders no month when a measurement keeps the shared format', () => {
+    renderCard();
+    reportMonthWidth(0, 50);
+    monthRuns.clear();
+
+    // February fits the full name, but every month keeps showing 'MMM'.
+    reportMonthWidth(1, 200);
+
+    expect(monthNames()).toEqual(['Jan', 'Feb', 'Mar']);
+    expect(Object.fromEntries(monthRuns)).toEqual({});
   });
 });

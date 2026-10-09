@@ -47,7 +47,7 @@ type CalendarCardProps = {
 export function CalendarCard({
   widgetId,
   isEditing,
-  meta = {},
+  meta,
   onMetaChange,
   firstDayOfWeekIdx,
 }: CalendarCardProps) {
