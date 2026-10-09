@@ -117,9 +117,11 @@ type AllTransactionsProps = {
   ) => ReactElement;
 };
 
+const EMPTY_TRANSACTIONS: TransactionEntity[] = [];
+
 function AllTransactions({
   account,
-  transactions,
+  transactions: transactionsProp,
   balances,
   showBalances,
   filtered,
@@ -143,7 +145,8 @@ function AllTransactions({
     splitsExpandedDispatch,
   ]);
 
-  transactions ??= [];
+  // A const, not `??=`, which React Compiler cannot compile.
+  const transactions = transactionsProp ?? EMPTY_TRANSACTIONS;
 
   const runningBalance = useMemo(() => {
     if (!showBalances) {

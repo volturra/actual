@@ -188,7 +188,6 @@ function PayeeList({
 
   const { newPayee, suggestedPayees, payees, transferPayees, nearbyPayees } =
     useMemo(() => {
-      let currentIndex = 0;
       const result = items.reduce(
         (acc, item) => {
           if (item.id === 'new') {
@@ -213,29 +212,35 @@ function PayeeList({
         },
       );
 
-      // assign indexes in render order
+      // Assign indexes in render order; offsets, as React Compiler rejects `i++` here.
       const newPayeeWithIndex = result.newPayee
-        ? { ...result.newPayee, highlightedIndex: currentIndex++ }
+        ? { ...result.newPayee, highlightedIndex: 0 }
         : null;
 
-      const nearbyPayeesWithIndex = result.nearbyPayees.map(item => ({
+      const nearbyOffset = newPayeeWithIndex ? 1 : 0;
+      const nearbyPayeesWithIndex = result.nearbyPayees.map((item, i) => ({
         ...item,
-        highlightedIndex: currentIndex++,
+        highlightedIndex: nearbyOffset + i,
       }));
 
-      const suggestedPayeesWithIndex = result.suggestedPayees.map(item => ({
+      const suggestedOffset = nearbyOffset + nearbyPayeesWithIndex.length;
+      const suggestedPayeesWithIndex = result.suggestedPayees.map(
+        (item, i) => ({
+          ...item,
+          highlightedIndex: suggestedOffset + i,
+        }),
+      );
+
+      const payeesOffset = suggestedOffset + suggestedPayeesWithIndex.length;
+      const payeesWithIndex = result.payees.map((item, i) => ({
         ...item,
-        highlightedIndex: currentIndex++,
+        highlightedIndex: payeesOffset + i,
       }));
 
-      const payeesWithIndex = result.payees.map(item => ({
+      const transferOffset = payeesOffset + payeesWithIndex.length;
+      const transferPayeesWithIndex = result.transferPayees.map((item, i) => ({
         ...item,
-        highlightedIndex: currentIndex++,
-      }));
-
-      const transferPayeesWithIndex = result.transferPayees.map(item => ({
-        ...item,
-        highlightedIndex: currentIndex++,
+        highlightedIndex: transferOffset + i,
       }));
 
       return {
@@ -376,9 +381,9 @@ export function PayeeAutocomplete({
   renderCreatePayeeButton = defaultRenderCreatePayeeButton,
   renderPayeeItemGroupHeader = defaultRenderPayeeItemGroupHeader,
   renderPayeeItem = defaultRenderPayeeItem,
-  accounts,
-  payees,
-  nearbyPayees,
+  accounts: accountsProp,
+  payees: payeesProp,
+  nearbyPayees: nearbyPayeesProp,
   ...props
 }: PayeeAutocompleteProps) {
   const { t } = useTranslation();
@@ -388,20 +393,15 @@ export function PayeeAutocomplete({
   const { data: retrievedNearbyPayees = [] } = useNearbyPayees({
     enabled: isGranted,
   });
-  if (!payees) {
-    payees = retrievedPayees;
-  }
+  // Consts, not reassigned props, which React Compiler cannot destructure.
+  const payees = payeesProp || retrievedPayees;
   const createPayeeMutation = useCreatePayeeMutation();
   const deletePayeeLocationMutation = useDeletePayeeLocationMutation();
 
-  if (!nearbyPayees) {
-    nearbyPayees = retrievedNearbyPayees;
-  }
+  const nearbyPayees = nearbyPayeesProp || retrievedNearbyPayees;
 
   const { data: cachedAccounts = [] } = useAccounts();
-  if (!accounts) {
-    accounts = cachedAccounts;
-  }
+  const accounts = accountsProp || cachedAccounts;
 
   const [focusTransferPayees, setFocusTransferPayees] = useState(false);
   const [rawPayee, setRawPayee] = useState('');
