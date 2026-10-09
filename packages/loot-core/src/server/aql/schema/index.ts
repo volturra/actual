@@ -228,7 +228,9 @@ export const schema = {
 
 export const schemaConfig: SchemaConfig = {
   // The transaction views resolve categories and payees through these
-  // mappings, so writing only a mapping (as a merge does) changes results
+  // mappings, so writing only a mapping (as a merge does) changes results.
+  // The list is intentionally limited: the payees, categories and accounts
+  // tombstone joins are not listed, as writes to them were traced as safe.
   tableDependencies(name) {
     return name === 'transactions' ? ['category_mapping', 'payee_mapping'] : [];
   },
