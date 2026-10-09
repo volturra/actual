@@ -105,7 +105,8 @@ const ButtonLink = ({ to, style, activeStyle, ...props }: ButtonLinkProps) => {
           css({
             ...style,
             '&[data-pressed]': activeStyle,
-            ...(match ? activeStyle : {}),
+            // useMatch with an empty path matches every location.
+            ...(to != null && match ? activeStyle : {}),
           }),
         )
       }

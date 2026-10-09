@@ -50,4 +50,28 @@ describe('Link variant="button"', () => {
     expect(router.state.location.key).toBe(initialKey);
     expect(router.state.historyAction).toBe('POP');
   });
+
+  it('applies activeStyle only when `to` matches the location', () => {
+    renderInRouter(
+      <>
+        <Link variant="button" activeStyle={{ color: 'rgb(255, 0, 0)' }}>
+          Plain
+        </Link>
+        <Link
+          variant="button"
+          to="/budget"
+          activeStyle={{ color: 'rgb(255, 0, 0)' }}
+        >
+          Active
+        </Link>
+      </>,
+    );
+
+    expect(
+      getComputedStyle(screen.getByRole('button', { name: 'Plain' })).color,
+    ).not.toBe('rgb(255, 0, 0)');
+    expect(
+      getComputedStyle(screen.getByRole('button', { name: 'Active' })).color,
+    ).toBe('rgb(255, 0, 0)');
+  });
 });
