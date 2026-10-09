@@ -92,6 +92,15 @@ function transfer(
 
 // A small in-memory evaluator for the subset of AQL this report uses, so the
 // tests describe transactions rather than the exact query sequence.
+function compare(value: unknown, operand: unknown): number {
+  // Numbers (amounts) compare numerically, everything else (dates) as text.
+  if (typeof value === 'number' && typeof operand === 'number') {
+    return value - operand;
+  }
+  const [a, b] = [String(value), String(operand)];
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function matchesValue(value: unknown, expected: unknown): boolean {
   if (typeof expected !== 'object' || expected === null) {
     return value === expected;
@@ -103,13 +112,13 @@ function matchesValue(value: unknown, expected: unknown): boolean {
       case '$ne':
         return operand === null ? value != null : value !== operand;
       case '$lt':
-        return value != null && String(value) < String(operand);
+        return value != null && compare(value, operand) < 0;
       case '$lte':
-        return value != null && String(value) <= String(operand);
+        return value != null && compare(value, operand) <= 0;
       case '$gt':
-        return value != null && String(value) > String(operand);
+        return value != null && compare(value, operand) > 0;
       case '$gte':
-        return value != null && String(value) >= String(operand);
+        return value != null && compare(value, operand) >= 0;
       case '$oneof':
         return Array.isArray(operand) && operand.includes(value);
       default:
@@ -124,8 +133,9 @@ function matchesFilter(row: FakeTransaction, filter: object): boolean {
       return (expected as object[]).every(f => matchesFilter(row, f));
     }
     if (key === '$or') {
-      // Like the AQL compiler, an empty `$or` matches nothing.
-      return (expected as object[]).some(f => matchesFilter(row, f));
+      // The AQL compiler drops an empty `$or`, so it matches everything.
+      const conds = expected as object[];
+      return conds.length === 0 || conds.some(f => matchesFilter(row, f));
     }
     if (typeof expected === 'number' && key === 'amount') {
       return row.amount === expected;
@@ -565,6 +575,36 @@ describe('net worth balances', () => {
       expect(accountSeries(report, 'savings')).toEqual(savings);
     },
   );
+
+  it('ignores an empty filter list when conditions are combined with or', async () => {
+    const { report } = await runReport({
+      accounts,
+      conditionsOp: 'or',
+      filters: [],
+      transactions: [
+        tx('c1', 'checking', '2026-06-01', 10_000),
+        tx('c2', 'checking', '2026-07-15', -2_000),
+        tx('s1', 'savings', '2026-08-01', 3_000),
+      ],
+    });
+
+    expect(accountSeries(report, 'checking')).toEqual([8_000, 8_000]);
+    expect(accountSeries(report, 'savings')).toEqual([0, 3_000]);
+  });
+
+  it('compares amounts numerically in filters', async () => {
+    const { report } = await runReport({
+      accounts: [accounts[0]],
+      filters: [{ amount: { $gt: 500 } }],
+      transactions: [
+        tx('c1', 'checking', '2026-06-01', 1_000),
+        tx('c2', 'checking', '2026-07-15', 200),
+        tx('c3', 'checking', '2026-08-01', 5_000),
+      ],
+    });
+
+    expect(accountSeries(report, 'checking')).toEqual([1_000, 6_000]);
+  });
 
   it.each([
     {
