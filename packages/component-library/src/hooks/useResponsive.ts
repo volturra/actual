@@ -52,6 +52,9 @@ function subscribe(listener: () => void) {
 function getCurrentSize() {
   // With no subscribers the cached size may be stale, so the first caller to
   // mount reads the real size and renders the right layout immediately.
+  // While subscribers exist and a resize is still debouncing, a newly mounted
+  // caller gets the cached (pre-resize) size instead. That keeps every caller
+  // on one agreed size, and all of them converge within RESIZE_DEBOUNCE_MS.
   if (listeners.size === 0) {
     windowSize = readWindowSize();
   }

@@ -1,3 +1,5 @@
+import { StrictMode } from 'react';
+
 import { act, render, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -23,6 +25,12 @@ function resizeWindow(width: number, height: number) {
 
 function countResizeListeners(spy: { mock: { calls: unknown[][] } }) {
   return spy.mock.calls.filter(([type]) => type === 'resize').length;
+}
+
+function trackActiveResizeListeners() {
+  const addSpy = vi.spyOn(window, 'addEventListener');
+  const removeSpy = vi.spyOn(window, 'removeEventListener');
+  return () => countResizeListeners(addSpy) - countResizeListeners(removeSpy);
 }
 
 describe('useResponsive', () => {
@@ -141,5 +149,48 @@ describe('useResponsive', () => {
 
     expect(a.result.current.isSmallWidth).toBe(true);
     expect(b.result.current.isSmallWidth).toBe(true);
+  });
+
+  it('clears a pending debounce timer when the last subscriber unmounts', () => {
+    const { unmount } = renderHook(() => useResponsive());
+
+    resizeWindow(500, 500);
+    expect(vi.getTimerCount()).toBe(1);
+
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('leaves exactly one resize listener under StrictMode', () => {
+    const activeResizeListeners = trackActiveResizeListeners();
+
+    const { unmount } = renderHook(() => useResponsive(), {
+      wrapper: StrictMode,
+    });
+    expect(activeResizeListeners()).toBe(1);
+
+    unmount();
+    expect(activeResizeListeners()).toBe(0);
+  });
+
+  it('converges a caller that mounts while a resize is pending', () => {
+    const first = renderHook(() => useResponsive());
+
+    act(() => {
+      resizeWindow(400, 600);
+      vi.advanceTimersByTime(100);
+    });
+    // Mounts mid-debounce, so it agrees with the existing caller's cached size
+    const second = renderHook(() => useResponsive());
+    expect(second.result.current.width).toBe(1200);
+    expect(first.result.current.width).toBe(1200);
+
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
+    expect(first.result.current.width).toBe(400);
+    expect(second.result.current.width).toBe(400);
+    expect(second.result.current.height).toBe(600);
+    expect(second.result.current.isNarrowWidth).toBe(true);
   });
 });
