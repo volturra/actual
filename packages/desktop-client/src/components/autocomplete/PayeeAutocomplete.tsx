@@ -180,9 +180,10 @@ function PayeeList({
   footer,
   onForgetLocation,
 }: PayeeListProps) {
-  // Defaults are applied here rather than in the destructuring so React
-  // Compiler can compile this component (without the yarn patch it bails
-  // out on any destructuring default).
+  // Defaults are applied here rather than in the destructuring because
+  // babel-plugin-react-compiler 1.0 skips any function with a destructuring
+  // default under Babel 8 (which no longer counts AssignmentPattern as an
+  // LVal).
   const renderCreatePayeeButton =
     renderCreatePayeeButtonProp ?? defaultRenderCreatePayeeButton;
   const renderPayeeItemGroupHeader =
@@ -221,8 +222,9 @@ function PayeeList({
       );
 
       // Assign indexes in render order. Each group starts where the
-      // previous one ended (no counter mutated inside the callbacks, which
-      // React Compiler cannot compile).
+      // previous one ended, rather than incrementing a shared counter inside
+      // the callbacks: React Compiler cannot compile an update expression
+      // (`i++`) on a variable captured by a lambda.
       const newPayeeWithIndex = result.newPayee
         ? { ...result.newPayee, highlightedIndex: 0 }
         : null;
@@ -400,9 +402,12 @@ export function PayeeAutocomplete({
   nearbyPayees: nearbyPayeesProp,
   ...props
 }: PayeeAutocompleteProps) {
-  // Defaults are applied here rather than in the destructuring, and the
-  // fallback lists are new constants rather than reassigned props, so React
-  // Compiler can compile this component.
+  // Defaults are applied here rather than in the destructuring, because
+  // babel-plugin-react-compiler 1.0 skips any function with a destructuring
+  // default under Babel 8 (which no longer counts AssignmentPattern as an
+  // LVal). The fallback lists are new constants rather than reassigned
+  // props, because React Compiler does not support destructuring a variable
+  // that is reassigned later (a "context variable").
   const showInactivePayees = showInactivePayeesProp ?? false;
   const showMakeTransfer = showMakeTransferProp ?? true;
   const showManagePayees = showManagePayeesProp ?? false;

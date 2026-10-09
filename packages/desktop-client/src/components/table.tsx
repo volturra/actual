@@ -646,9 +646,11 @@ export function SelectCell({
   buttonProps: buttonPropsProp,
   ...props
 }: SelectCellProps) {
-  // Defaults are applied here rather than in the destructuring so React
-  // Compiler can compile this component (it bails out on JSX and, without
-  // the yarn patch, on any destructuring default).
+  // Defaults are applied here rather than in the destructuring because
+  // React Compiler cannot lower a JSX element used as a destructuring
+  // default, and babel-plugin-react-compiler 1.0 skips any function with a
+  // destructuring default under Babel 8 (which no longer counts
+  // AssignmentPattern as an LVal).
   const icon =
     iconProp === undefined ? <SvgCheckmark width={6} height={6} /> : iconProp;
   const buttonProps = buttonPropsProp ?? {};
@@ -983,9 +985,11 @@ export const Table = forwardRef(
     },
     ref,
   ) => {
-    // Defaults are applied here rather than in the destructuring so React
-    // Compiler can compile this component (without the yarn patch it bails
-    // out on any destructuring default).
+    // Defaults are applied here rather than in the destructuring because
+    // babel-plugin-react-compiler 1.0 skips any function with a
+    // destructuring default under Babel 8 (which no longer counts
+    // AssignmentPattern as an LVal). The same applies to the AutoSizer
+    // render prop below.
     const rowHeight = rowHeightProp ?? ROW_HEIGHT;
     const backgroundColor = backgroundColorProp ?? theme.tableBackground;
 
@@ -1059,6 +1063,8 @@ export const Table = forwardRef(
       },
     }));
 
+    // Declared before the layout effect that uses it: React Compiler bails
+    // out when a function is referenced before its declaration.
     function saveScrollDelayed() {
       saveScrollWidth(
         scrollContainer.current?.offsetParent

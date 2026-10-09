@@ -1,3 +1,5 @@
+import type { ComponentPropsWithoutRef } from 'react';
+
 import { generateAccount } from '@actual-app/core/mocks';
 import type {
   AccountEntity,
@@ -11,11 +13,13 @@ import userEvent from '@testing-library/user-event';
 import { vi } from 'vitest';
 
 import { AuthProvider } from '#auth/AuthProvider';
+import { useAccounts } from '#hooks/useAccounts';
 import { useNearbyPayees } from '#hooks/useNearbyPayees';
+import { usePayees } from '#hooks/usePayees';
 import { createTestQueryClient, TestProviders } from '#mocks';
 import { payeeQueries } from '#payees';
 
-import { PayeeAutocomplete } from './PayeeAutocomplete';
+import { CreatePayeeButton, PayeeAutocomplete } from './PayeeAutocomplete';
 import type { PayeeAutocompleteProps } from './PayeeAutocomplete';
 
 const PAYEE_SELECTOR = '[data-testid][role=option]';
@@ -119,6 +123,17 @@ vi.mock('#hooks/useNearbyPayees', () => ({
   useNearbyPayees: vi.fn(),
 }));
 
+// Pass through to the real hooks unless a test overrides them.
+vi.mock('#hooks/usePayees', async importOriginal => {
+  const actual = await importOriginal<{ usePayees: typeof usePayees }>();
+  return { ...actual, usePayees: vi.fn(actual.usePayees) };
+});
+
+vi.mock('#hooks/useAccounts', async importOriginal => {
+  const actual = await importOriginal<{ useAccounts: typeof useAccounts }>();
+  return { ...actual, useAccounts: vi.fn(actual.useAccounts) };
+});
+
 function firstOrIncorrect(id: string | null): string {
   return id?.split('-', 1)[0] || 'incorrect';
 }
@@ -126,6 +141,10 @@ function firstOrIncorrect(id: string | null): string {
 function mockNearbyPayeesResult(
   data: NearbyPayeeEntity[],
 ): UseQueryResult<NearbyPayeeEntity[], Error> {
+  return mockQueryResult(data);
+}
+
+function mockQueryResult<T>(data: T): UseQueryResult<T, Error> {
   return {
     data,
     dataUpdatedAt: 0,
@@ -156,10 +175,75 @@ function mockNearbyPayeesResult(
   };
 }
 
+function mockPendingQueryResult<T>(): UseQueryResult<T, Error> {
+  return {
+    data: undefined,
+    dataUpdatedAt: 0,
+    error: null,
+    errorUpdatedAt: 0,
+    errorUpdateCount: 0,
+    failureCount: 0,
+    failureReason: null,
+    fetchStatus: 'fetching',
+    isError: false,
+    isFetched: false,
+    isFetchedAfterMount: false,
+    isFetching: true,
+    isInitialLoading: true,
+    isLoading: true,
+    isLoadingError: false,
+    isPaused: false,
+    isPending: true,
+    isPlaceholderData: false,
+    isRefetchError: false,
+    isRefetching: false,
+    isStale: true,
+    isSuccess: false,
+    isEnabled: true,
+    promise: new Promise<T>(() => undefined),
+    refetch: vi.fn(),
+    status: 'pending',
+  };
+}
+
+function renderCreatePayeeButtonWithMarker(
+  props: ComponentPropsWithoutRef<typeof CreatePayeeButton>,
+) {
+  return (
+    <CreatePayeeButton
+      {...props}
+      data-highlighted={props.highlighted || undefined}
+    />
+  );
+}
+
+// The create-payee button plus every payee item, in render order.
+function renderedItems() {
+  // Queried from the document: the autocomplete menu is not rendered at all
+  // when there is nothing to show.
+  return [
+    ...document.body.querySelectorAll(
+      `[data-testid="create-payee-button"], ${ALL_PAYEE_ITEMS_SELECTOR}`,
+    ),
+  ];
+}
+
+function itemName(e: Element) {
+  return firstOrIncorrect(e.getAttribute('data-testid'));
+}
+
+function highlightedItemNames() {
+  return renderedItems()
+    .filter(e => e.hasAttribute('data-highlighted'))
+    .map(itemName);
+}
+
 describe('PayeeAutocomplete.getPayeeSuggestions', () => {
   const queryClient = createTestQueryClient();
 
   beforeEach(() => {
+    vi.mocked(usePayees).mockReset();
+    vi.mocked(useAccounts).mockReset();
     vi.mocked(useNearbyPayees).mockReturnValue(mockNearbyPayeesResult([]));
     queryClient.setQueryData(payeeQueries.listCommon().queryKey, []);
   });
@@ -467,6 +551,138 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
       visited.push(highlightedNames());
     }
     expect(visited).toStrictEqual(allNames.map(name => [name]));
+  });
+
+  test('arrow keys highlight the create-payee item first, then the matches', async () => {
+    const nearbyPayees = [
+      makeNearbyPayee('Corner Shop', 0.3),
+      makeNearbyPayee('Bakery', 1.2),
+    ];
+    const payees = [
+      makePayee('Alice'),
+      makePayee('Cora', { favorite: true }),
+      makePayee('Coral'),
+    ];
+    vi.mocked(useNearbyPayees).mockReturnValue(
+      mockNearbyPayeesResult(nearbyPayees),
+    );
+
+    const autocomplete = renderPayeeAutocomplete({
+      payees,
+      renderCreatePayeeButton: renderCreatePayeeButtonWithMarker,
+    });
+    await clickAutocomplete(autocomplete);
+    await userEvent.type(autocomplete.querySelector('input')!, 'cor');
+    await waitForAutocomplete();
+
+    const allNames = renderedItems().map(itemName);
+    expect(allNames).toStrictEqual(['create', 'Corner Shop', 'Cora', 'Coral']);
+
+    // Walk back to the first item, then step down through every item.
+    for (let i = 0; i < allNames.length; i++) {
+      await userEvent.keyboard('{ArrowUp}');
+    }
+    expect(highlightedItemNames()).toStrictEqual(['create']);
+
+    const visited: string[][] = [];
+    for (let i = 1; i < allNames.length; i++) {
+      await userEvent.keyboard('{ArrowDown}');
+      visited.push(highlightedItemNames());
+    }
+    expect(visited).toStrictEqual(allNames.slice(1).map(name => [name]));
+  });
+
+  test('arrow keys highlight the create-payee item when nothing matches', async () => {
+    const autocomplete = renderPayeeAutocomplete({
+      renderCreatePayeeButton: renderCreatePayeeButtonWithMarker,
+    });
+    await clickAutocomplete(autocomplete);
+    await userEvent.type(autocomplete.querySelector('input')!, 'Zzz');
+    await waitForAutocomplete();
+
+    expect(renderedItems().map(itemName)).toStrictEqual(['create']);
+    await userEvent.keyboard('{ArrowDown}');
+    expect(highlightedItemNames()).toStrictEqual(['create']);
+  });
+
+  test('arrow keys skip an empty suggested section between nearby and payees', async () => {
+    const nearbyPayees = [
+      makeNearbyPayee('Coffee Shop', 0.3),
+      makeNearbyPayee('Grocery Store', 1.2),
+    ];
+    const payees: PayeeEntity[] = [
+      makePayee('Alice'),
+      makePayee('Bob'),
+      {
+        id: 'transfer-id',
+        name: 'Bank of Montreal',
+        favorite: false,
+        transfer_acct: accounts[0].id,
+      },
+    ];
+    vi.mocked(useNearbyPayees).mockReturnValue(
+      mockNearbyPayeesResult(nearbyPayees),
+    );
+
+    await clickAutocomplete(renderPayeeAutocomplete({ payees }));
+
+    expect(
+      extractPayeesAndHeaderNames(screen, ALL_PAYEE_ITEMS_SELECTOR),
+    ).not.toContain('Suggested Payees');
+    const allNames = renderedItems().map(itemName);
+    expect(allNames).toStrictEqual([
+      'Coffee Shop',
+      'Grocery Store',
+      'Alice',
+      'Bob',
+      'Bank of Montreal',
+    ]);
+
+    const visited: string[][] = [];
+    for (let i = 0; i < allNames.length; i++) {
+      await userEvent.keyboard('{ArrowDown}');
+      visited.push(highlightedItemNames());
+    }
+    expect(visited).toStrictEqual(allNames.map(name => [name]));
+  });
+
+  test('falls back to an empty list when the payee and account hooks have no data', async () => {
+    vi.mocked(usePayees).mockReturnValue(mockPendingQueryResult());
+    vi.mocked(useAccounts).mockReturnValue(mockPendingQueryResult());
+
+    await clickAutocomplete(
+      renderPayeeAutocomplete({ payees: undefined, accounts: undefined }),
+    );
+
+    expect(screen.getByLabelText('Payee')).toBeInTheDocument();
+    expect(renderedItems()).toStrictEqual([]);
+  });
+
+  test('uses the hook data when payees and accounts are omitted', async () => {
+    vi.mocked(usePayees).mockReturnValue(
+      mockQueryResult([makePayee('Hook Payee')]),
+    );
+    vi.mocked(useAccounts).mockReturnValue(mockQueryResult(accounts));
+
+    await clickAutocomplete(
+      renderPayeeAutocomplete({ payees: undefined, accounts: undefined }),
+    );
+
+    expect(renderedItems().map(itemName)).toStrictEqual(['Hook Payee']);
+  });
+
+  test('does not use the hook data when empty lists are passed explicitly', async () => {
+    vi.mocked(usePayees).mockReturnValue(
+      mockQueryResult([makePayee('Hook Payee')]),
+    );
+    vi.mocked(useAccounts).mockReturnValue(mockQueryResult(accounts));
+
+    await clickAutocomplete(
+      renderPayeeAutocomplete({ payees: [], accounts: [] }),
+    );
+
+    expect(screen.getByLabelText('Payee')).toBeInTheDocument();
+    expect(renderedItems()).toStrictEqual([]);
   });
 
   test('ranks an exact payee match above a longer tied substring match', async () => {
