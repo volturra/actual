@@ -6,6 +6,7 @@ import { SpreadsheetProvider, useSpreadsheet } from '#hooks/useSpreadsheet';
 
 import { createCustomSpreadsheet } from './custom-spreadsheet';
 import { fetchSpreadsheetQueryData } from './fetchSpreadsheetQueryData';
+import { createGroupedSpreadsheet } from './grouped-spreadsheet';
 
 vi.mock('@actual-app/core/platform/client/connection', () => ({
   send: vi.fn().mockResolvedValue({ filters: [] }),
@@ -75,5 +76,52 @@ it.each([
     expect(data.intervalData.map(interval => interval.totalDebts)).toEqual([
       -50, -25,
     ]);
+  },
+);
+
+it.each(['Category', 'Group', 'Payee', 'Account', 'Interval', 'Tag'])(
+  'does not mutate the shared rows when grouping by %s',
+  async groupBy => {
+    // The graph and the table share these rows, so neither may change them.
+    // Writing to a frozen row throws in strict mode.
+    const rows = [
+      { ...transaction },
+      { ...transaction, amount: -50, payee: 'other', date: '2026-02' },
+      { ...transaction, amount: 300, notes: '#red', date: '2026-02' },
+      { ...transaction, amount: 200, account: 'other', notes: '' },
+    ];
+    const assets = rows.filter(row => row.amount > 0);
+    const debts = rows.filter(row => row.amount < 0);
+    [...rows, assets, debts].forEach(value => Object.freeze(value));
+    vi.mocked(fetchSpreadsheetQueryData).mockResolvedValue({ assets, debts });
+    const { result } = renderHook(useSpreadsheet, {
+      wrapper: SpreadsheetProvider,
+    });
+    const options: Parameters<typeof createCustomSpreadsheet>[0] = {
+      startDate: '2026-01',
+      endDate: '2026-02',
+      interval: 'Monthly',
+      categories: { list: [], grouped: [] },
+      conditions: [],
+      conditionsOp: 'and',
+      showEmpty: true,
+      showOffBudget: false,
+      showHiddenCategories: false,
+      showUncategorized: true,
+      trimIntervals: false,
+      groupBy,
+      balanceTypeOp: 'totalTotals',
+      tags: [{ id: 'red', tag: 'red' }],
+    };
+
+    const setGraphData = vi.fn();
+    const setTableData = vi.fn();
+    await Promise.all([
+      createCustomSpreadsheet(options)(result.current, setGraphData),
+      createGroupedSpreadsheet(options)(result.current, setTableData),
+    ]);
+
+    expect(setGraphData).toHaveBeenCalledTimes(1);
+    expect(setTableData).toHaveBeenCalledTimes(1);
   },
 );

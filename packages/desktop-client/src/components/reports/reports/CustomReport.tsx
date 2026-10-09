@@ -425,8 +425,12 @@ function CustomReportInner({
     async function run() {
       onApplyFilterConditions(report.conditions, report.conditionsOp);
 
-      const earliestTransaction = await send('get-earliest-transaction');
-      const latestTransaction = await send('get-latest-transaction');
+      // The report waits for these dates before it loads, so fall back to
+      // today if a lookup fails instead of loading forever.
+      const [earliestTransaction, latestTransaction] = await Promise.all([
+        send('get-earliest-transaction').catch(() => null),
+        send('get-latest-transaction').catch(() => null),
+      ]);
       const currentDay = monthUtils.currentDay();
       const earliestTransactionDate = earliestTransaction?.date ?? currentDay;
       const latestTransactionDate = latestTransaction?.date ?? currentDay;
@@ -592,8 +596,18 @@ function CustomReportInner({
     firstDayOfWeekIdx,
     dateFormat,
   ]);
-  const graphData = useReport('default', getGraphData);
-  const groupedData = useReport('grouped', getGroupData);
+  // The effect above re-applies the filter conditions and sets the date range
+  // once the earliest and latest transactions are known. Anything loaded
+  // before then would be thrown away, so wait for it.
+  const isDateRangeResolved = latestTransactionDate !== '';
+  const graphData = useReport(
+    'default',
+    isDateRangeResolved ? getGraphData : null,
+  );
+  const groupedData = useReport(
+    'grouped',
+    isDateRangeResolved ? getGroupData : null,
+  );
 
   const data: DataEntity | null = graphData
     ? { ...graphData, groupedData }
