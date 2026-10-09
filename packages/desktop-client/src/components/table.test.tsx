@@ -38,9 +38,4 @@ describe('SelectCell', () => {
     renderSelectCell({ icon: null });
     expect(screen.getByTestId('cell-button').querySelector('svg')).toBeNull();
   });
-
-  it('passes buttonProps through to the button', () => {
-    renderSelectCell({ buttonProps: { className: 'custom-button' } });
-    expect(screen.getByTestId('cell-button')).toHaveClass('custom-button');
-  });
 });

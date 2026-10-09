@@ -643,17 +643,13 @@ export function SelectCell({
   onSelect,
   onEdit,
   icon: iconProp,
-  buttonProps: buttonPropsProp,
+  buttonProps = {},
   ...props
 }: SelectCellProps) {
-  // Defaults are applied here rather than in the destructuring because
-  // React Compiler cannot lower a JSX element used as a destructuring
-  // default, and babel-plugin-react-compiler 1.0 skips any function with a
-  // destructuring default under Babel 8 (which no longer counts
-  // AssignmentPattern as an LVal).
+  // In the body because React Compiler cannot compile a JSX default.
   const icon =
+    // null hides icon
     iconProp === undefined ? <SvgCheckmark width={6} height={6} /> : iconProp;
-  const buttonProps = buttonPropsProp ?? {};
   return (
     <Cell
       {...props}
@@ -969,8 +965,8 @@ export const Table = forwardRef(
       headers,
       contentHeader,
       loading,
-      rowHeight: rowHeightProp,
-      backgroundColor: backgroundColorProp,
+      rowHeight = ROW_HEIGHT,
+      backgroundColor = theme.tableBackground,
       renderItem,
       renderEmpty,
       getItemKey,
@@ -985,14 +981,6 @@ export const Table = forwardRef(
     },
     ref,
   ) => {
-    // Defaults are applied here rather than in the destructuring because
-    // babel-plugin-react-compiler 1.0 skips any function with a
-    // destructuring default under Babel 8 (which no longer counts
-    // AssignmentPattern as an LVal). The same applies to the AutoSizer
-    // render prop below.
-    const rowHeight = rowHeightProp ?? ROW_HEIGHT;
-    const backgroundColor = backgroundColorProp ?? theme.tableBackground;
-
     if (!navigator) {
       navigator = {
         onEdit: () => {},
@@ -1063,8 +1051,7 @@ export const Table = forwardRef(
       },
     }));
 
-    // Declared before the layout effect that uses it: React Compiler bails
-    // out when a function is referenced before its declaration.
+    // Above the effect: React Compiler rejects use before declaration.
     function saveScrollDelayed() {
       saveScrollWidth(
         scrollContainer.current?.offsetParent
@@ -1207,9 +1194,7 @@ export const Table = forwardRef(
             getEmptyContent(renderEmpty)
           ) : (
             <AutoSizer
-              renderProp={size => {
-                const width = size.width ?? 0;
-                const height = size.height ?? 0;
+              renderProp={({ width = 0, height = 0 }) => {
                 if (width === 0 || height === 0) {
                   return null;
                 }

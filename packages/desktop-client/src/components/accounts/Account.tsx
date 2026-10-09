@@ -144,8 +144,7 @@ function AllTransactions({
     splitsExpandedDispatch,
   ]);
 
-  // A new constant rather than `transactions ??= []`: React Compiler cannot
-  // compile `??=`.
+  // A const, not `??=`, which React Compiler cannot compile.
   const transactions = transactionsProp ?? EMPTY_TRANSACTIONS;
 
   const runningBalance = useMemo(() => {

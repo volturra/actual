@@ -1,6 +1,6 @@
 ---
-category: Enhancements
+category: Maintenance
 authors: [volturra]
 ---
 
-Make the transaction register and payee picker do less redundant rendering work.
+Let React Compiler optimize the transaction register table and payee picker.

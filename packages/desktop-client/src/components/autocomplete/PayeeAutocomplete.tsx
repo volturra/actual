@@ -174,21 +174,12 @@ function PayeeList({
   highlightedIndex,
   embedded,
   inputValue,
-  renderCreatePayeeButton: renderCreatePayeeButtonProp,
-  renderPayeeItemGroupHeader: renderPayeeItemGroupHeaderProp,
-  renderPayeeItem: renderPayeeItemProp,
+  renderCreatePayeeButton = defaultRenderCreatePayeeButton,
+  renderPayeeItemGroupHeader = defaultRenderPayeeItemGroupHeader,
+  renderPayeeItem = defaultRenderPayeeItem,
   footer,
   onForgetLocation,
 }: PayeeListProps) {
-  // Defaults are applied here rather than in the destructuring because
-  // babel-plugin-react-compiler 1.0 skips any function with a destructuring
-  // default under Babel 8 (which no longer counts AssignmentPattern as an
-  // LVal).
-  const renderCreatePayeeButton =
-    renderCreatePayeeButtonProp ?? defaultRenderCreatePayeeButton;
-  const renderPayeeItemGroupHeader =
-    renderPayeeItemGroupHeaderProp ?? defaultRenderPayeeItemGroupHeader;
-  const renderPayeeItem = renderPayeeItemProp ?? defaultRenderPayeeItem;
   const { t } = useTranslation();
 
   // If the "new payee" item exists, create it as a special-cased item
@@ -221,10 +212,7 @@ function PayeeList({
         },
       );
 
-      // Assign indexes in render order. Each group starts where the
-      // previous one ended, rather than incrementing a shared counter inside
-      // the callbacks: React Compiler cannot compile an update expression
-      // (`i++`) on a variable captured by a lambda.
+      // Assign indexes in render order; offsets, as React Compiler rejects `i++` here.
       const newPayeeWithIndex = result.newPayee
         ? { ...result.newPayee, highlightedIndex: 0 }
         : null;
@@ -356,10 +344,6 @@ function PayeeList({
   );
 }
 
-const EMPTY_PAYEES: PayeeEntity[] = [];
-const EMPTY_NEARBY_PAYEES: NearbyPayeeEntity[] = [];
-const EMPTY_ACCOUNTS: AccountEntity[] = [];
-
 export type PayeeAutocompleteProps = ComponentProps<
   typeof Autocomplete<PayeeAutocompleteItem>
 > & {
@@ -385,55 +369,39 @@ export type PayeeAutocompleteProps = ComponentProps<
 export function PayeeAutocomplete({
   value,
   inputProps,
-  showInactivePayees: showInactivePayeesProp,
-  showMakeTransfer: showMakeTransferProp,
-  showManagePayees: showManagePayeesProp,
-  clearOnBlur: clearOnBlurProp,
+  showInactivePayees = false,
+  showMakeTransfer = true,
+  showManagePayees = false,
+  clearOnBlur = true,
   closeOnBlur,
   embedded,
   onUpdate,
   onSelect,
   onManagePayees,
-  renderCreatePayeeButton: renderCreatePayeeButtonProp,
-  renderPayeeItemGroupHeader: renderPayeeItemGroupHeaderProp,
-  renderPayeeItem: renderPayeeItemProp,
+  renderCreatePayeeButton = defaultRenderCreatePayeeButton,
+  renderPayeeItemGroupHeader = defaultRenderPayeeItemGroupHeader,
+  renderPayeeItem = defaultRenderPayeeItem,
   accounts: accountsProp,
   payees: payeesProp,
   nearbyPayees: nearbyPayeesProp,
   ...props
 }: PayeeAutocompleteProps) {
-  // Defaults are applied here rather than in the destructuring, because
-  // babel-plugin-react-compiler 1.0 skips any function with a destructuring
-  // default under Babel 8 (which no longer counts AssignmentPattern as an
-  // LVal). The fallback lists are new constants rather than reassigned
-  // props, because React Compiler does not support destructuring a variable
-  // that is reassigned later (a "context variable").
-  const showInactivePayees = showInactivePayeesProp ?? false;
-  const showMakeTransfer = showMakeTransferProp ?? true;
-  const showManagePayees = showManagePayeesProp ?? false;
-  const clearOnBlur = clearOnBlurProp ?? true;
-  const renderCreatePayeeButton =
-    renderCreatePayeeButtonProp ?? defaultRenderCreatePayeeButton;
-  const renderPayeeItemGroupHeader =
-    renderPayeeItemGroupHeaderProp ?? defaultRenderPayeeItemGroupHeader;
-  const renderPayeeItem = renderPayeeItemProp ?? defaultRenderPayeeItem;
-
   const { t } = useTranslation();
   const { data: commonPayees } = useCommonPayees();
-  const { data: retrievedPayees } = usePayees();
+  const { data: retrievedPayees = [] } = usePayees();
   const { isGranted } = useLocationPermission();
-  const { data: retrievedNearbyPayees } = useNearbyPayees({
+  const { data: retrievedNearbyPayees = [] } = useNearbyPayees({
     enabled: isGranted,
   });
-  const payees = payeesProp || retrievedPayees || EMPTY_PAYEES;
+  // Consts, not reassigned props, which React Compiler cannot destructure.
+  const payees = payeesProp || retrievedPayees;
   const createPayeeMutation = useCreatePayeeMutation();
   const deletePayeeLocationMutation = useDeletePayeeLocationMutation();
 
-  const nearbyPayees =
-    nearbyPayeesProp || retrievedNearbyPayees || EMPTY_NEARBY_PAYEES;
+  const nearbyPayees = nearbyPayeesProp || retrievedNearbyPayees;
 
-  const { data: cachedAccounts } = useAccounts();
-  const accounts = accountsProp || cachedAccounts || EMPTY_ACCOUNTS;
+  const { data: cachedAccounts = [] } = useAccounts();
+  const accounts = accountsProp || cachedAccounts;
 
   const [focusTransferPayees, setFocusTransferPayees] = useState(false);
   const [rawPayee, setRawPayee] = useState('');
