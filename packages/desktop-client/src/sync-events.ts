@@ -12,6 +12,7 @@ import {
   uploadBudget,
 } from './budgetfiles/budgetfilesSlice';
 import { pushModal } from './modals/modalsSlice';
+import { notesQueries } from './notes';
 import { addNotification } from './notifications/notificationsSlice';
 import type { Notification } from './notifications/notificationsSlice';
 import { payeeQueries } from './payees';
@@ -137,6 +138,13 @@ export function listenForSyncEvent(store: AppStore, queryClient: QueryClient) {
       if (tables.includes('account_groups')) {
         void queryClient.invalidateQueries({
           queryKey: accountGroupQueries.lists(),
+        });
+      }
+
+      // Covers local edits, undo/redo and changes synced from other devices
+      if (tables.includes('notes')) {
+        void queryClient.invalidateQueries({
+          queryKey: notesQueries.lists(),
         });
       }
     } else if (event.type === 'error') {

@@ -1,14 +1,9 @@
-import { useMemo } from 'react';
-
-import { q } from '@actual-app/core/shared/query';
 import type { NoteEntity } from '@actual-app/core/types/models';
+import { useQuery } from '@tanstack/react-query';
 
-import { useQuery } from './useQuery';
+import { notesQueries } from '#notes';
 
-export function useNotes(id: string) {
-  const { data } = useQuery<NoteEntity>(
-    () => q('notes').filter({ id }).select('*'),
-    [id],
-  );
-  return useMemo(() => (data && data.length > 0 ? data[0].note : null), [data]);
+export function useNotes(id: NoteEntity['id']) {
+  const { data } = useQuery(notesQueries.detail(id));
+  return data ?? null;
 }
