@@ -94,6 +94,7 @@ import type { AppDispatch } from '#redux/store';
 import { updateNewTransactions } from '#transactions/transactionsSlice';
 
 import { AccountEmptyMessage } from './AccountEmptyMessage';
+import { getFilteredAmount } from './getFilteredAmount';
 import { AccountHeader } from './Header';
 
 type ConditionEntity = Partial<RuleConditionEntity> | TransactionFilterEntity;
@@ -537,7 +538,10 @@ class AccountInternal extends PureComponent<
         const balances = this.state.showBalances
           ? await this.calculateBalances()
           : null;
-        const filteredAmount = await this.getFilteredAmount();
+        const filteredAmount = await getFilteredAmount(
+          this.paged?.query,
+          isFiltered,
+        );
         this.setState(
           {
             transactions: data,
@@ -1045,17 +1049,6 @@ class AccountInternal extends PureComponent<
       query: this.makeRootTransactionsQuery().calculate({ $sum: '$amount' }),
     } as const;
   }
-
-  getFilteredAmount = async () => {
-    if (!this.paged) {
-      return 0;
-    }
-
-    const { data: amount } = await aqlQuery(
-      this.paged.query.calculate({ $sum: '$amount' }),
-    );
-    return amount;
-  };
 
   isNew = (id: TransactionEntity['id']) => {
     return this.props.newTransactions.includes(id);
