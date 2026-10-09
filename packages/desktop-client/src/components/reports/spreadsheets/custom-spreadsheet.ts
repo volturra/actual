@@ -31,8 +31,8 @@ import { calculateLegend } from './calculateLegend';
 import { fetchSpreadsheetQueryData } from './fetchSpreadsheetQueryData';
 import { filterEmptyRows } from './filterEmptyRows';
 import {
-  filterHiddenItems,
   filterReportTransactions,
+  sumItemAmountsByDate,
 } from './filterHiddenItems';
 import { recalculate } from './recalculate';
 import { sortData } from './sortData';
@@ -205,8 +205,24 @@ export function createCustomSpreadsheet({
     let netAssets = 0;
     let netDebts = 0;
 
-    const groupsByCategory =
-      groupByLabel === 'category' || groupByLabel === 'categoryGroup';
+    const amountsByItem = groupByList.map(item => ({
+      assets: sumItemAmountsByDate(
+        item,
+        assets,
+        groupByLabel,
+        showOffBudget,
+        showHiddenCategories,
+        showUncategorized,
+      ),
+      debts: sumItemAmountsByDate(
+        item,
+        debts,
+        groupByLabel,
+        showOffBudget,
+        showHiddenCategories,
+        showUncategorized,
+      ),
+    }));
 
     const intervalData = intervals.reduce(
       (arr: IntervalEntity[], intervalItem, index) => {
@@ -217,41 +233,15 @@ export function createCustomSpreadsheet({
         let perIntervalTotals = 0;
         const stacked: Record<string, number> = {};
 
-        groupByList.map(item => {
+        groupByList.map((item, itemIndex) => {
           let stackAmounts = 0;
 
-          const intervalAssets = filterHiddenItems(
-            item,
-            assets,
-            showOffBudget,
-            showHiddenCategories,
-            showUncategorized,
-            groupsByCategory,
-          )
-            .filter(
-              asset =>
-                asset.date === intervalItem &&
-                (asset[groupByLabel] === (item.id ?? null) ||
-                  (item.uncategorized_id && groupsByCategory)),
-            )
-            .reduce((a, v) => a + v.amount, 0);
+          const intervalAssets =
+            amountsByItem[itemIndex].assets.get(intervalItem) ?? 0;
           perIntervalAssets += intervalAssets;
 
-          const intervalDebts = filterHiddenItems(
-            item,
-            debts,
-            showOffBudget,
-            showHiddenCategories,
-            showUncategorized,
-            groupsByCategory,
-          )
-            .filter(
-              debt =>
-                debt.date === intervalItem &&
-                (debt[groupByLabel] === (item.id ?? null) ||
-                  (item.uncategorized_id && groupsByCategory)),
-            )
-            .reduce((a, v) => a + v.amount, 0);
+          const intervalDebts =
+            amountsByItem[itemIndex].debts.get(intervalItem) ?? 0;
           perIntervalDebts += intervalDebts;
 
           const netAmounts = intervalAssets + intervalDebts;
