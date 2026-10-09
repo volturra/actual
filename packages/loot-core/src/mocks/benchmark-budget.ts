@@ -2,11 +2,14 @@
  * A large, deterministic budget used as a basis for UI performance
  * benchmarking. Unlike the demo budget (`./budget.ts`) which only has a
  * handful of payees and a few hundred transactions, this one aims to look
- * like a power user's file: ~4 years of history, a dozen accounts, ~250
- * payees, ~100 categories, ~30k transactions, schedules, rules, tags,
- * templates, carryover, splits, transfers, reconciled history, etc.
+ * like a power user's file: ~4 years of history, a dozen accounts, ~1,500
+ * payees (a long tail of one-off local businesses), ~100 categories, ~30k
+ * transactions, schedules, rules, tags, goal templates, carryover, splits,
+ * transfers, statement-based reconciliation, saved reports, widgets and
+ * filters. It can be an envelope or a tracking budget.
  *
- * Everything is generated from a seeded PRNG, and dates are anchored to the
+ * Everything is generated from seeded PRNGs (one per section, so changing
+ * one section doesn't reshuffle the others), and dates are anchored to the
  * current month, so the dataset is identical on every run for a given day.
  */
 import { convertForInsert, schema, schemaConfig } from '#server/aql';
@@ -19,6 +22,8 @@ import { batchMessages, setSyncingMode } from '#server/sync';
 import * as monthUtils from '#shared/months';
 import type { Handlers } from '#types/handlers';
 import type {
+  CustomReportEntity,
+  NewDashboardWidgetEntity,
   NewRuleEntity,
   RecurConfig,
   RuleActionEntity,
@@ -103,6 +108,24 @@ function createRng(seed: number) {
 
 type Rng = ReturnType<typeof createRng>;
 
+/**
+ * Derives a seed from the global seed and a section name (FNV-1a), so each
+ * part of the dataset has its own random stream: changing how one section
+ * consumes random numbers doesn't reshuffle every section after it.
+ */
+function seedFor(name: string): number {
+  let hash = (0x811c9dc5 ^ SEED) >>> 0;
+  for (let i = 0; i < name.length; i++) {
+    hash ^= name.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash;
+}
+
+function sectionRng(name: string) {
+  return createRng(seedFor(name));
+}
+
 // ---------------------------------------------------------------------------
 // Static definitions
 // ---------------------------------------------------------------------------
@@ -182,6 +205,8 @@ type CategoryDef = {
   budget?: number;
   /** Ratio of budgeted vs expected spending; < 1 means regular overspending. */
   budgetRatio?: number;
+  /** Savings target in dollars; budgeting stops once it is reached. */
+  goal?: number;
 };
 
 type GroupDef = {
@@ -209,7 +234,7 @@ const GROUPS: GroupDef[] = [
       {
         name: 'Property Tax',
         carryover: true,
-        notes: '#template 4300 by 2027-11 repeat every year',
+        notes: '#template 4300 by {next:11} repeat every year',
       },
       { name: 'HOA Fees', carryover: true },
       { name: 'Home Insurance', carryover: true },
@@ -1088,21 +1113,31 @@ const GROUPS: GroupDef[] = [
   {
     name: 'Savings Goals',
     categories: [
-      { name: 'Emergency Fund', budget: 400, notes: '#goal 20000' },
+      {
+        name: 'Emergency Fund',
+        budget: 400,
+        goal: 20000,
+        notes: '#goal 20000',
+      },
       {
         name: 'Vacation Fund',
         budget: 300,
-        notes: '#template 3600 by 2027-06',
+        notes: '#template 3600 by {+6}',
       },
       { name: 'New Car Fund', budget: 250 },
       { name: 'Home Improvement Fund', budget: 150 },
       {
         name: 'Christmas Fund',
         budget: 100,
-        notes: '#template 1200 by 2026-12 repeat every year',
+        notes: '#template 1200 by {next:12} repeat every year',
       },
       { name: 'Retirement Contributions' },
       { name: 'Investments' },
+      {
+        name: 'General Savings',
+        notes:
+          'Whatever is left at the start of the month\n#template remainder',
+      },
     ],
   },
   {
@@ -1307,6 +1342,8 @@ type ScheduleDef = {
   raise?: number;
   paycheckSplit?: boolean;
   tag?: string;
+  /** Automatically add the transaction on its date. */
+  postsTransaction?: boolean;
 };
 
 const SCHEDULES: ScheduleDef[] = [
@@ -1636,6 +1673,7 @@ const SCHEDULES: ScheduleDef[] = [
     amount: -500,
     amountOp: 'is',
     recur: { kind: 'monthly', day: 2 },
+    postsTransaction: true,
   },
   {
     name: '401k Contribution',
@@ -1680,6 +1718,14 @@ const OTHER_PAYEES = [
   'Reimbursement',
 ];
 
+const ACCOUNT_NOTES: Partial<Record<AccountKey, string>> = {
+  checking: 'Main account, paychecks land here. Overdraft linked to savings.',
+  sapphire: 'Statement closes on the 15th, autopay from checking.',
+  amex: 'Groceries and streaming. Statement closes on the 3rd.',
+  cash: 'Wallet cash, topped up from the ATM twice a month.',
+  mortgage: '30 year fixed at 4.1%, refinanced 2015.',
+};
+
 const FAVORITE_PAYEES = [
   'Kroger',
   'Starbucks',
@@ -1707,6 +1753,138 @@ const NOTE_SNIPPETS = [
   'Coupon applied',
   'Kids came along',
 ];
+
+/** Share of discretionary transactions at one-off local businesses. */
+const LONG_TAIL_SHARE = 0.1;
+
+const LONG_TAIL_PLACES = [
+  'Blue Oak',
+  'Main Street',
+  'Riverside',
+  'Old Town',
+  'Maple Leaf',
+  'Golden Gate',
+  'Harbor View',
+  'Sunset',
+  'Lakeside',
+  'Pine Ridge',
+  'Copper Kettle',
+  'Red Barn',
+  'Silver Spoon',
+  'Green Valley',
+  'Hilltop',
+  'Union Square',
+  'Willow Creek',
+  'Brick Lane',
+  'Cedar Park',
+  'North Star',
+  'Iron Horse',
+  'Little Italy',
+  'Southside',
+  'Westend',
+  'Eastgate',
+  'Market Hall',
+  'Cobblestone',
+  'Lighthouse',
+  'Wildflower',
+  'Stone Bridge',
+  'Twin Pines',
+  'Juniper',
+  'Magnolia',
+  'Bayview',
+  'Crossroads',
+  'Midtown',
+  'Highland',
+  'Foxglove',
+  'Lantern',
+  'Orchard',
+  'Prairie',
+  'Railyard',
+  'Saltwater',
+  'Thistle',
+  'Elm Street',
+  'Canal Street',
+  'Mill Pond',
+  'Cypress',
+];
+
+const LONG_TAIL_OWNERS = [
+  'Maria',
+  'Tony',
+  'Rosie',
+  'Sal',
+  'Gina',
+  'Frank',
+  'Lucy',
+  'Hank',
+  'Mabel',
+  'Eddie',
+  'Nina',
+  'Gus',
+  'Vera',
+  'Marty',
+  'Dot',
+  'Ray',
+  'Bea',
+  'Lou',
+  'June',
+  'Walt',
+  'Iris',
+  'Otto',
+  'Pearl',
+  'Ike',
+];
+
+const LONG_TAIL_FOOD_KINDS = [
+  'Bistro',
+  'Grill',
+  'Kitchen',
+  'Diner',
+  'Cafe',
+  'Eatery',
+  'Tavern',
+  'Bakery',
+];
+
+const LONG_TAIL_SHOP_KINDS = [
+  'Shop',
+  'Store',
+  'Co.',
+  'Market',
+  'Supply',
+  'Outlet',
+  'Depot',
+  'Boutique',
+];
+
+/**
+ * A shuffled pool of made-up local businesses; each call returns the next
+ * name, so most of them appear only once or twice in the whole history.
+ */
+function createLongTailPayees(rng: Rng) {
+  function pool(kinds: string[]) {
+    const names: string[] = [];
+    for (const kind of kinds) {
+      for (const place of LONG_TAIL_PLACES) {
+        names.push(`${place} ${kind}`);
+      }
+      for (const owner of LONG_TAIL_OWNERS) {
+        names.push(`${owner}'s ${kind}`);
+      }
+    }
+    for (let i = names.length - 1; i > 0; i--) {
+      const j = rng.int(0, i);
+      [names[i], names[j]] = [names[j], names[i]];
+    }
+    return names;
+  }
+  const food = pool(LONG_TAIL_FOOD_KINDS);
+  const shops = pool(LONG_TAIL_SHOP_KINDS);
+  let foodIdx = 0;
+  let shopIdx = 0;
+  return (isFood: boolean) =>
+    isFood ? food[foodIdx++ % food.length] : shops[shopIdx++ % shops.length];
+}
 
 // ---------------------------------------------------------------------------
 // Generation (pure, no database access)
@@ -1760,7 +1938,17 @@ function weekday(date: string): number {
   return monthUtils._parse(date).getDay();
 }
 
+/** How some merchants show up on bank statements. */
+const BANK_CODES: Record<string, string> = {
+  Amazon: 'AMZN MKTP US',
+  'Amazon Prime': 'AMAZON PRIME',
+  Starbucks: 'SBUX',
+};
+
 function bankCode(payee: string): string {
+  if (BANK_CODES[payee]) {
+    return BANK_CODES[payee];
+  }
   return payee
     .toUpperCase()
     .replace(/[^A-Z0-9 ]/g, '')
@@ -1786,9 +1974,20 @@ function occurrences(
       });
       break;
     case 'semimonthly':
+      // Paydays on a weekend move to the Friday before (`skipWeekend` with
+      // `weekendSolveMode: 'before'` in the schedule)
       for (const month of months) {
-        dates.push(dateInMonth(month, recur.days[0]));
-        dates.push(dateInMonth(month, recur.days[1]));
+        for (const day of recur.days) {
+          const date = dateInMonth(month, day);
+          const dow = weekday(date);
+          dates.push(
+            dow === 6
+              ? monthUtils.subDays(date, 1)
+              : dow === 0
+                ? monthUtils.subDays(date, 2)
+                : date,
+          );
+        }
       }
       break;
     case 'yearly':
@@ -1869,8 +2068,14 @@ function allCategoryDefs(): CategoryDef[] {
 export function generateBenchmarkData(
   today: string = monthUtils.currentDay(),
 ): GeneratedBudget {
-  const rng = createRng(SEED);
-  const idRng = createRng(SEED ^ 0x5bd1e995);
+  let rng = sectionRng('start');
+  let idRng = sectionRng('ids:start');
+  /** Switches to the random streams of a named section. */
+  function section(name: string) {
+    rng = sectionRng(name);
+    idRng = sectionRng('ids:' + name);
+  }
+  const longTail = createLongTailPayees(sectionRng('long-tail'));
 
   const currentMonth = monthUtils.monthFromDate(today);
   const startMonth = monthUtils.subMonths(currentMonth, MONTHS_OF_HISTORY - 1);
@@ -1978,90 +2183,99 @@ export function generateBenchmarkData(
   }
 
   // Discretionary spending
-  for (const category of allCategoryDefs()) {
-    const spec = category.spend;
-    if (!spec) {
-      continue;
+  for (const group of GROUPS) {
+    for (const category of group.categories) {
+      const spec = category.spend;
+      if (!spec) {
+        continue;
+      }
+      section('spend:' + category.name);
+      // Small local businesses that only show up once or twice
+      const hasLongTail = !spec.fixedVolume && spec.payees.length > 2;
+      months.forEach((month, monthIdx) => {
+        if (
+          spec.activeMonths &&
+          (monthIdx < spec.activeMonths[0] || monthIdx >= spec.activeMonths[1])
+        ) {
+          return;
+        }
+        if (
+          spec.calendarMonths &&
+          !spec.calendarMonths.includes(Number(month.slice(5, 7)))
+        ) {
+          return;
+        }
+        const lambda = spec.perMonth * (spec.fixedVolume ? 1 : VOLUME);
+        const count = rng.poisson(lambda);
+        for (let i = 0; i < count; i++) {
+          const date = dateInMonth(month, rng.int(1, 31));
+          if (date > today) {
+            continue;
+          }
+          const account = resolveSpendAccount(spec.accounts, monthIdx);
+          const payee =
+            hasLongTail && rng.chance(LONG_TAIL_SHARE)
+              ? longTail(group.name === 'Food')
+              : rng.pick(spec.payees);
+          let amount = -rng.skewedCents(spec.min, spec.max);
+          // Occasional refunds
+          const isRefund = spec.split && rng.chance(0.02);
+          if (isRefund) {
+            amount = Math.round(-amount / 2);
+          }
+          const uncategorized =
+            rng.chance(0.012) ||
+            (monthUtils.differenceInCalendarDays(today, date) < 7 &&
+              rng.chance(0.25));
+
+          let children: GenChild[] | undefined;
+          if (spec.split && !isRefund && amount < -3000 && rng.chance(0.08)) {
+            const others = SPLIT_CATEGORIES.filter(c => c !== category.name);
+            const n = rng.int(2, 3);
+            children = [];
+            let remaining = amount;
+            for (let c = 0; c < n; c++) {
+              const childAmount =
+                c === n - 1
+                  ? remaining
+                  : Math.round(amount * (0.2 + 0.3 * rng.next()));
+              remaining -= childAmount;
+              children.push({
+                id: idRng.uuid(),
+                amount: childAmount,
+                category: c === 0 ? category.name : rng.pick(others),
+                notes: c === 0 ? undefined : makeNotes(undefined, childAmount),
+              });
+            }
+            // Costco runs often include gas, which gets its own payee
+            if (payee === 'Costco' && rng.chance(0.6)) {
+              const gas = -rng.cents(35, 70);
+              children.push({
+                id: idRng.uuid(),
+                amount: gas,
+                category: 'Fuel',
+                payee: 'Costco Gas',
+              });
+              amount += gas;
+            }
+          }
+
+          add({
+            account,
+            date,
+            amount,
+            payee,
+            category: children || uncategorized ? null : category.name,
+            notes: makeNotes(spec, amount),
+            children,
+          });
+        }
+      });
     }
-    months.forEach((month, monthIdx) => {
-      if (
-        spec.activeMonths &&
-        (monthIdx < spec.activeMonths[0] || monthIdx >= spec.activeMonths[1])
-      ) {
-        return;
-      }
-      if (
-        spec.calendarMonths &&
-        !spec.calendarMonths.includes(Number(month.slice(5, 7)))
-      ) {
-        return;
-      }
-      const lambda = spec.perMonth * (spec.fixedVolume ? 1 : VOLUME);
-      const count = rng.poisson(lambda);
-      for (let i = 0; i < count; i++) {
-        const date = dateInMonth(month, rng.int(1, 31));
-        if (date > today) {
-          continue;
-        }
-        const account = resolveSpendAccount(spec.accounts, monthIdx);
-        const payee = rng.pick(spec.payees);
-        let amount = -rng.skewedCents(spec.min, spec.max);
-        // Occasional refunds
-        const isRefund = spec.split && rng.chance(0.02);
-        if (isRefund) {
-          amount = Math.round(-amount / 2);
-        }
-        const uncategorized =
-          rng.chance(0.012) ||
-          (monthUtils.differenceInCalendarDays(today, date) < 7 &&
-            rng.chance(0.25));
-
-        let children: GenChild[] | undefined;
-        if (spec.split && !isRefund && amount < -3000 && rng.chance(0.08)) {
-          const others = SPLIT_CATEGORIES.filter(c => c !== category.name);
-          const n = rng.int(2, 3);
-          children = [];
-          let remaining = amount;
-          for (let c = 0; c < n; c++) {
-            const childAmount =
-              c === n - 1
-                ? remaining
-                : Math.round(amount * (0.2 + 0.3 * rng.next()));
-            remaining -= childAmount;
-            children.push({
-              id: idRng.uuid(),
-              amount: childAmount,
-              category: c === 0 ? category.name : rng.pick(others),
-              notes: c === 0 ? undefined : makeNotes(undefined, childAmount),
-            });
-          }
-          // Costco runs often include gas, which gets its own payee
-          if (payee === 'Costco' && rng.chance(0.6)) {
-            const gas = -rng.cents(35, 70);
-            children.push({
-              id: idRng.uuid(),
-              amount: gas,
-              category: 'Fuel',
-              payee: 'Costco Gas',
-            });
-            amount += gas;
-          }
-        }
-
-        add({
-          account,
-          date,
-          amount,
-          payee,
-          category: children || uncategorized ? null : category.name,
-          notes: makeNotes(spec, amount),
-          children,
-        });
-      }
-    });
   }
 
   // Travel bookings split across multiple payees
+  section('travel');
   months.forEach((month, monthIdx) => {
     if (monthIdx % 4 !== 1) {
       return;
@@ -2104,6 +2318,7 @@ export function generateBenchmarkData(
   });
 
   // Shared dinners settled via Splitwise
+  section('splitwise');
   months.forEach(month => {
     const count = rng.poisson(2);
     for (let i = 0; i < count; i++) {
@@ -2145,6 +2360,7 @@ export function generateBenchmarkData(
 
   // Schedules: bills, paychecks and recurring transfers
   for (const schedule of SCHEDULES) {
+    section('schedule:' + schedule.name);
     const bankAccount =
       schedule.account === 'checking' || schedule.account === 'joint';
     const endDay = bankAccount ? futureDay : today;
@@ -2213,6 +2429,7 @@ export function generateBenchmarkData(
   }
 
   // Other income
+  section('income');
   months.forEach(month => {
     const m = Number(month.slice(5, 7));
     if (m === 3) {
@@ -2252,10 +2469,15 @@ export function generateBenchmarkData(
     }
     const etsyCount = rng.poisson(2);
     for (let i = 0; i < etsyCount; i++) {
+      const date = dateInMonth(month, rng.int(1, 28));
+      const amount = rng.cents(40, 450);
+      if (date > today) {
+        continue;
+      }
       add({
         account: 'joint',
-        date: dateInMonth(month, rng.int(1, 28)),
-        amount: rng.cents(40, 450),
+        date,
+        amount,
         payee: 'Etsy Payout',
         category: 'Side Hustle',
       });
@@ -2263,6 +2485,7 @@ export function generateBenchmarkData(
   });
 
   // A few manually entered future transactions
+  section('future');
   for (let i = 1; i <= 4; i++) {
     add({
       account: 'checking',
@@ -2298,6 +2521,7 @@ export function generateBenchmarkData(
   }
 
   // ATM withdrawals to fund the cash account
+  section('atm');
   {
     const cashNet = monthlyNet('cash');
     months.forEach(month => {
@@ -2319,6 +2543,7 @@ export function generateBenchmarkData(
 
   // Credit card payments: pay last month's charges (and the starting debt)
   for (const card of ['sapphire', 'amex', 'discover', 'citi'] as const) {
+    section('card:' + card);
     const net = monthlyNet(card);
     const source: AccountKey =
       card === 'amex' || card === 'discover' ? 'joint' : 'checking';
@@ -2340,6 +2565,7 @@ export function generateBenchmarkData(
   }
 
   // Interest on investments, mortgage and house value
+  section('growth');
   {
     const balances = new Map<AccountKey, number>();
     const byMonth = new Map<string, GenTransaction[]>();
@@ -2420,6 +2646,7 @@ export function generateBenchmarkData(
 
   // Month-end sweeps to keep checking accounts in a sane range, plus
   // savings interest.
+  section('sweeps');
   {
     const checkingNet = monthlyNet('checking');
     const jointNet = monthlyNet('joint');
@@ -2541,6 +2768,7 @@ export function generateBenchmarkData(
     }
   }
 
+  section('budgets');
   const ratios = new Map<string, number>();
   for (const category of allCategoryDefs()) {
     const ratio = category.budgetRatio ?? 1 + rng.next() * 0.3;
@@ -2563,9 +2791,28 @@ export function generateBenchmarkData(
   for (const month of months) {
     const spending = new Map<string, number>();
     const goals = new Map<string, number>();
+    const spentThisMonth = spentByMonth.get(month);
     for (const category of allCategoryDefs()) {
-      if (category.budget != null) {
-        goals.set(category.name, category.budget * 100);
+      if (category.spend?.activeMonths) {
+        // One-off categories (since archived) were budgeted for what was
+        // actually spent while they were in use.
+        const spent = spentThisMonth?.get(category.name) ?? 0;
+        if (spent > 0) {
+          spending.set(category.name, Math.ceil(spent / 1000) * 1000);
+        }
+      } else if (category.budget != null) {
+        // Savings goals stop once the target is reached
+        const room =
+          category.goal != null
+            ? Math.max(
+                0,
+                category.goal * 100 - (balances.get(category.name) ?? 0),
+              )
+            : Infinity;
+        const amount = Math.min(category.budget * 100, room);
+        if (amount > 0) {
+          goals.set(category.name, amount);
+        }
       } else if (expected.has(category.name)) {
         const amount =
           (expected.get(category.name) ?? 0) *
@@ -2599,8 +2846,8 @@ export function generateBenchmarkData(
     available -= sum(spending) + sum(goals);
     if (available > 0) {
       goals.set(
-        'Emergency Fund',
-        (goals.get('Emergency Fund') ?? 0) +
+        'General Savings',
+        (goals.get('General Savings') ?? 0) +
           Math.floor(available / 1000) * 1000,
       );
     }
@@ -2662,15 +2909,90 @@ export function generateBenchmarkData(
 // Insertion
 // ---------------------------------------------------------------------------
 
-function cleared(date: string, today: string, rng: Rng) {
-  const age = monthUtils.differenceInCalendarDays(today, date);
-  if (age > 45) {
+/** Day of month each card's statement closes. */
+const STATEMENT_DAYS: Partial<Record<AccountKey, number>> = {
+  sapphire: 15,
+  amex: 3,
+  discover: 25,
+  citi: 10,
+};
+
+/**
+ * The last date each account was reconciled through, or null if it never
+ * is: cards are reconciled against their last statement (once it has been
+ * out for a few days), bank accounts once a month with a lag of a couple of
+ * weeks, and cash and tracking accounts never.
+ */
+function reconciledThrough(today: string): Map<AccountKey, string | null> {
+  const result = new Map<AccountKey, string | null>();
+  const currentMonth = monthUtils.monthFromDate(today);
+  for (const account of ACCOUNTS) {
+    let through: string | null = null;
+    const statementDay = STATEMENT_DAYS[account.key];
+    if (account.closed) {
+      through = today;
+    } else if (statementDay != null) {
+      const cutoff = monthUtils.subDays(today, 5);
+      for (let i = 0; i < 3 && !through; i++) {
+        const date = dateInMonth(
+          monthUtils.subMonths(currentMonth, i),
+          statementDay,
+        );
+        if (date <= cutoff) {
+          through = date;
+        }
+      }
+    } else if (account.key !== 'cash' && !account.offBudget) {
+      for (let i = 1; i < 4 && !through; i++) {
+        const end = monthUtils.getMonthEnd(
+          monthUtils.subMonths(currentMonth, i) + '-01',
+        );
+        if (monthUtils.addDays(end, 14) <= today) {
+          through = end;
+        }
+      }
+    }
+    result.set(account.key, through);
+  }
+  return result;
+}
+
+function clearedFlags(
+  date: string,
+  today: string,
+  through: string | null,
+  account: AccountDef,
+  rng: Rng,
+) {
+  if (through && date <= through) {
     return { cleared: true, reconciled: true };
   }
+  const age = monthUtils.differenceInCalendarDays(today, date);
   if (age < 0) {
     return { cleared: false, reconciled: false };
   }
+  if (account.offBudget || age > 30) {
+    return { cleared: true, reconciled: false };
+  }
   return { cleared: rng.chance(age < 4 ? 0.3 : 0.85), reconciled: false };
+}
+
+/**
+ * Template notes use placeholders for dates relative to the current month:
+ * `{+N}` is N months from now, `{next:M}` the next calendar month M.
+ */
+function resolveNotes(notes: string, currentMonth: string) {
+  return notes
+    .replace(/\{\+(\d+)\}/g, (_, n) =>
+      monthUtils.addMonths(currentMonth, Number(n)),
+    )
+    .replace(/\{next:(\d+)\}/g, (_, m) => {
+      let month = monthUtils.addMonths(currentMonth, 1);
+      while (Number(month.slice(5, 7)) !== Number(m)) {
+        month = monthUtils.addMonths(month, 1);
+      }
+      return month;
+    });
 }
 
 type Row = Record<string, string | number | boolean | null | undefined>;
@@ -2698,7 +3020,27 @@ function bulkInsert(table: string, rows: Row[]) {
   });
 }
 
-export async function createBenchmarkBudget(handlers: Handlers) {
+export type BenchmarkBudgetOptions = {
+  budgetType?: 'envelope' | 'tracking';
+};
+
+/** Ids of things the benchmark harness navigates to. */
+export type BenchmarkBudgetRefs = {
+  budgetType: 'envelope' | 'tracking';
+  currentMonth: string;
+  /** The last full month, which the budget page should open on. */
+  focusMonth: string;
+  accounts: Record<string, string>;
+  categories: Record<string, string>;
+  reports: Record<string, string>;
+  widgets: Record<string, string>;
+  filters: Record<string, string>;
+};
+
+export async function createBenchmarkBudget(
+  handlers: Handlers,
+  { budgetType = 'envelope' }: BenchmarkBudgetOptions = {},
+) {
   const startedAt = Date.now();
   const timings: Record<string, number> = {};
   let lap = startedAt;
@@ -2709,8 +3051,9 @@ export async function createBenchmarkBudget(handlers: Handlers) {
   }
 
   const today = monthUtils.currentDay();
+  const currentMonth = monthUtils.monthFromDate(today);
   const data = generateBenchmarkData(today);
-  const rng = createRng(SEED + 1);
+  const rng = sectionRng('cleared');
   mark('generate');
 
   setSyncingMode('import');
@@ -2808,7 +3151,7 @@ export async function createBenchmarkBudget(handlers: Handlers) {
 
   // Schedule ids are assigned up front so transactions can link to them
   const scheduleIds = new Map<string, string>();
-  const idRng = createRng(SEED + 2);
+  const idRng = sectionRng('ids:schedules');
   for (const schedule of SCHEDULES) {
     scheduleIds.set(schedule.name, idRng.uuid());
   }
@@ -2816,10 +3159,19 @@ export async function createBenchmarkBudget(handlers: Handlers) {
   // Transactions
   const rows: Row[] = [];
   let sortOrder = 1_000_000_000;
+  const reconciled = reconciledThrough(today);
+  const accountDefs = new Map(ACCOUNTS.map(a => [a.key, a]));
   for (const t of data.transactions) {
     sortOrder += 1024;
-    const flags = cleared(t.date, today, rng);
-    const offBudget = !!ACCOUNTS.find(a => a.key === t.account)?.offBudget;
+    const def = accountDefs.get(t.account) as AccountDef;
+    const flags = clearedFlags(
+      t.date,
+      today,
+      reconciled.get(t.account) ?? null,
+      def,
+      rng,
+    );
+    const offBudget = !!def.offBudget;
     const base: Row = {
       id: t.id,
       account: accountId(t.account),
@@ -2869,12 +3221,25 @@ export async function createBenchmarkBudget(handlers: Handlers) {
       convertForInsert(schema, schemaConfig, 'transactions', row),
     ),
   );
+  // The reconcile happened a few days after the statement / month end
+  for (const [key, through] of reconciled) {
+    if (through) {
+      const at = monthUtils.addDays(through, 3);
+      db.runQuery('UPDATE accounts SET last_reconciled = ? WHERE id = ?', [
+        String(monthUtils._parse(at < today ? at : today).getTime()),
+        accountId(key),
+      ]);
+    }
+  }
   mark('transactions');
 
   // Budget amounts, rollover flags and money held for next month. These are
   // written before the spreadsheet is loaded so it computes everything once.
   const dbMonth = (month: string) => Number(month.replace('-', ''));
   const budgetRows = new Map<string, Row>();
+  const templated = allCategoryDefs().filter(c =>
+    /#(template|goal)/.test(c.notes ?? ''),
+  );
   for (const [month, amounts] of data.budgets) {
     for (const [name, amount] of amounts) {
       const category = categoryId(name);
@@ -2885,6 +3250,23 @@ export async function createBenchmarkBudget(handlers: Handlers) {
         amount,
         carryover: 0,
       });
+    }
+    // What templates would have set as each month's goal: the budgeted
+    // amount, or the target for long-term `#goal`s.
+    for (const category of templated) {
+      const id = categoryId(category.name);
+      const key = `${dbMonth(month)}-${id}`;
+      const row = budgetRows.get(key) ?? {
+        id: key,
+        month: dbMonth(month),
+        category: id,
+        amount: 0,
+        carryover: 0,
+      };
+      const goal = /#goal (\d+)/.exec(category.notes ?? '');
+      row.goal = goal ? Number(goal[1]) * 100 : (row.amount as number);
+      row.long_goal = goal ? 1 : null;
+      budgetRows.set(key, row);
     }
   }
   const budgetMonths = monthUtils.rangeInclusive(
@@ -2912,11 +3294,26 @@ export async function createBenchmarkBudget(handlers: Handlers) {
       }
     }
   }
+  // Both budget types get the same amounts, so switching types later still
+  // shows a fully budgeted file.
   bulkInsert('zero_budgets', [...budgetRows.values()]);
+  bulkInsert('reflect_budgets', [...budgetRows.values()]);
   bulkInsert(
     'zero_budget_months',
     [...data.held].map(([month, buffered]) => ({ id: month, buffered })),
   );
+
+  // Synced prefs: goal templates on, and the budget type
+  const prefRows: Array<[string, string]> = [
+    ['flags.goalTemplatesEnabled', 'true'],
+    ['budgetType', budgetType],
+  ];
+  for (const [id, value] of prefRows) {
+    db.runQuery(
+      'INSERT OR REPLACE INTO preferences (id, value) VALUES (?, ?)',
+      [id, value],
+    );
+  }
   mark('budget');
 
   // Favorite payees
@@ -2932,6 +3329,9 @@ export async function createBenchmarkBudget(handlers: Handlers) {
   // Bust the cache and reload the spreadsheet
   setSyncingMode('disabled');
   await sheet.reloadSpreadsheet(db);
+  // Loading a budget sets the type from the prefs before creating the
+  // budget sheets; do the same here.
+  sheet.get().meta().budgetType = budgetType;
   await budget.createAllBudgets();
   // The spreadsheet was restored from its (still "clean") cache, so load the
   // budget amounts written above explicitly.
@@ -2951,6 +3351,14 @@ export async function createBenchmarkBudget(handlers: Handlers) {
           today,
         );
         const start = dates[0] ?? today;
+        // Amounts with a yearly raise are what they are this year
+        const yearsIn = Math.floor(
+          monthUtils.differenceInCalendarMonths(
+            today,
+            data.startMonth + '-01',
+          ) / 12,
+        );
+        const factor = Math.pow(1 + (schedule.raise ?? 0), yearsIn);
         const amountCond: RuleConditionEntity = Array.isArray(schedule.amount)
           ? {
               op: 'isbetween',
@@ -2963,7 +3371,7 @@ export async function createBenchmarkBudget(handlers: Handlers) {
           : {
               op: schedule.amountOp === 'isapprox' ? 'isapprox' : 'is',
               field: 'amount',
-              value: Math.round(schedule.amount * 100),
+              value: Math.round(schedule.amount * factor * 100),
             };
         const payee =
           typeof schedule.payee === 'string'
@@ -2973,7 +3381,7 @@ export async function createBenchmarkBudget(handlers: Handlers) {
           schedule: {
             id: scheduleIds.get(schedule.name),
             name: schedule.name,
-            posts_transaction: false,
+            posts_transaction: !!schedule.postsTransaction,
           },
           conditions: [
             { op: 'is', field: 'payee', value: payee ?? '' },
@@ -2987,6 +3395,15 @@ export async function createBenchmarkBudget(handlers: Handlers) {
           ],
         });
       }
+    }),
+  );
+  // A schedule that has run its course
+  await runMutator(() =>
+    handlers['schedule/update']({
+      schedule: {
+        id: scheduleIds.get('Tuition') ?? '',
+        completed: true,
+      },
     }),
   );
   mark('schedules');
@@ -3011,24 +3428,31 @@ export async function createBenchmarkBudget(handlers: Handlers) {
       if (category.notes) {
         await handlers['notes-save']({
           id: categoryId(category.name) ?? '',
-          note: category.notes,
+          note: resolveNotes(category.notes, currentMonth),
         });
       }
     }
     await storeNoteTemplates();
   });
 
-  // A custom report on the dashboard
+  // Account notes
   await runMutator(async () => {
-    const reportId = await handlers['report/create']({
+    for (const [key, note] of Object.entries(ACCOUNT_NOTES)) {
+      await handlers['notes-save']({
+        id: `account-${accountId(key as AccountKey)}`,
+        note,
+      });
+    }
+  });
+
+  // Saved custom reports and dashboard widgets
+  const reports: Record<string, string> = {};
+  const widgets: Record<string, string> = {};
+  const focusMonth = monthUtils.subMonths(currentMonth, 1);
+  await runMutator(async () => {
+    const baseReport = {
       id: '',
-      name: 'Spending by category (benchmark)',
-      startDate: monthUtils.subMonths(monthUtils.currentMonth(), 11),
-      endDate: monthUtils.currentMonth(),
       isDateStatic: false,
-      dateRange: 'Last 12 months',
-      mode: 'total',
-      groupBy: 'Category',
       interval: 'Monthly',
       balanceType: 'Payment',
       sortBy: 'desc',
@@ -3039,22 +3463,140 @@ export async function createBenchmarkBudget(handlers: Handlers) {
       showUncategorized: true,
       trimIntervals: false,
       showTrendLines: false,
-      graphType: 'BarGraph',
       conditions: [],
       conditionsOp: 'and',
+    } satisfies Partial<CustomReportEntity>;
+    reports.spendingByCategory = await handlers['report/create']({
+      ...baseReport,
+      name: 'Spending by category (benchmark)',
+      startDate: monthUtils.subMonths(currentMonth, 11) + '-01',
+      endDate: today,
+      dateRange: 'Last 12 months',
+      mode: 'total',
+      groupBy: 'Category',
+      graphType: 'BarGraph',
     });
+    reports.payeesAllTime = await handlers['report/create']({
+      ...baseReport,
+      name: 'Payees over time (benchmark)',
+      startDate: data.startMonth + '-01',
+      endDate: today,
+      dateRange: 'All time',
+      mode: 'time',
+      groupBy: 'Payee',
+      // Monthly intervals take minutes with this many payees: the custom
+      // report spreadsheet filters every row for each payee and interval.
+      interval: 'Yearly',
+      graphType: 'TableGraph',
+    });
+    reports.categoryLines = await handlers['report/create']({
+      ...baseReport,
+      name: 'Category trends (benchmark)',
+      startDate: monthUtils.subMonths(currentMonth, 23) + '-01',
+      endDate: today,
+      dateRange: 'Last 24 months',
+      mode: 'time',
+      groupBy: 'Category',
+      graphType: 'LineGraph',
+    });
+    reports.categoryStacked = await handlers['report/create']({
+      ...baseReport,
+      name: 'Monthly spending stacked (benchmark)',
+      startDate: monthUtils.subMonths(currentMonth, 11) + '-01',
+      endDate: today,
+      dateRange: 'Last 12 months',
+      mode: 'time',
+      groupBy: 'Category',
+      graphType: 'StackedBarGraph',
+    });
+
     const page = await db.first<{ id: string }>(
       'SELECT id FROM dashboard_pages WHERE tombstone = 0 LIMIT 1',
     );
-    if (page) {
-      await handlers['dashboard-add-widget']({
-        type: 'custom-report',
+    if (!page) {
+      return;
+    }
+    const newWidgets: NewDashboardWidgetEntity[] = [
+      ...Object.values(reports).map(
+        (id): NewDashboardWidgetEntity => ({
+          type: 'custom-report',
+          x: 0,
+          y: 0,
+          width: 4,
+          height: 2,
+          meta: { id },
+        }),
+      ),
+      {
+        type: 'spending-card',
+        x: 0,
+        y: 0,
         width: 4,
         height: 2,
-        meta: { id: reportId },
+        meta: {
+          name: 'Last month vs the month before',
+          compare: focusMonth,
+          compareTo: monthUtils.subMonths(focusMonth, 1),
+          isLive: false,
+          mode: 'single-month',
+        },
+      },
+      ...(
+        [
+          'calendar-card',
+          'summary-card',
+          'age-of-money-card',
+          'crossover-card',
+        ] as const
+      ).map(
+        (type): NewDashboardWidgetEntity => ({
+          type,
+          x: 0,
+          y: 0,
+          width: 4,
+          height: 2,
+          meta: null,
+        }),
+      ),
+    ];
+    for (const { x: _x, y: _y, ...widget } of newWidgets) {
+      await handlers['dashboard-add-widget']({
+        ...widget,
         dashboard_page_id: page.id,
       });
     }
+
+    const rows = await db.all<{ id: string; type: string; meta: string }>(
+      'SELECT id, type, meta FROM dashboard WHERE tombstone = 0 ORDER BY y, x',
+    );
+    for (const row of rows) {
+      if (row.type === 'spending-card' && !row.meta?.includes('compare')) {
+        // The default dashboard's spending card
+        widgets['spending-card-default'] ??= row.id;
+        continue;
+      }
+      widgets[row.type] ??= row.id;
+    }
+  });
+
+  // A saved transaction filter
+  const filters: Record<string, string> = {};
+  await runMutator(async () => {
+    filters.bigRestaurants = await handlers['filter-create']({
+      state: {
+        name: 'Big restaurant bills',
+        conditionsOp: 'and',
+        conditions: [
+          {
+            op: 'is',
+            field: 'category',
+            value: categoryId('Restaurants'),
+          },
+          { op: 'lte', field: 'amount', value: -5000 },
+        ],
+      },
+      filters: [],
+    });
   });
   await sheet.waitOnSpreadsheet();
   mark('extras');
@@ -3069,7 +3611,17 @@ export async function createBenchmarkBudget(handlers: Handlers) {
   stats.overspentCategoriesCurrentMonth = [...categoryIds.values()].filter(
     id => Number(sheet.getCellValue(sheetName, `leftover-${id}`) ?? 0) < 0,
   ).length;
-  return { timings, stats };
+  const refs: BenchmarkBudgetRefs = {
+    budgetType,
+    currentMonth,
+    focusMonth,
+    accounts: Object.fromEntries(ACCOUNTS.map(a => [a.name, accountId(a.key)])),
+    categories: Object.fromEntries(categoryIds),
+    reports,
+    widgets,
+    filters,
+  };
+  return { timings, stats, refs };
 }
 
 const STAT_QUERIES = {
@@ -3130,6 +3682,14 @@ const STAT_QUERIES = {
     "SELECT count(*) AS n FROM notes WHERE note LIKE '%#template%' OR note LIKE '%#goal%'",
   customReports: 'SELECT count(*) AS n FROM custom_reports WHERE tombstone = 0',
   dashboardWidgets: 'SELECT count(*) AS n FROM dashboard WHERE tombstone = 0',
+  budgetGoals: 'SELECT count(*) AS n FROM zero_budgets WHERE goal IS NOT NULL',
+  reconciledAccounts:
+    'SELECT count(*) AS n FROM accounts WHERE tombstone = 0 AND last_reconciled IS NOT NULL',
+  accountNotes: "SELECT count(*) AS n FROM notes WHERE id LIKE 'account-%'",
+  savedFilters:
+    'SELECT count(*) AS n FROM transaction_filters WHERE tombstone = 0',
+  completedSchedules:
+    'SELECT count(*) AS n FROM schedules WHERE tombstone = 0 AND completed = 1',
 };
 
 export async function getBenchmarkStats() {

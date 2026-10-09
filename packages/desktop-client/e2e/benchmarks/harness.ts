@@ -9,7 +9,15 @@
  *   the most, using a minimal fake React DevTools hook;
  * - total long-task time on the main thread;
  * - optionally (BENCHMARK_PROFILE=1) a CDP CPU profile of one extra,
- *   unmeasured repetition.
+ *   unmeasured repetition (and, with BENCHMARK_WORKER_PROFILE=1, one of the
+ *   backend worker too).
+ *
+ * A measurement ends once the page is quiet: no React commit, paint, long
+ * task or backend worker message for a while, and no backend request in
+ * flight. Before every measured repetition the harness also waits for the
+ * page to be quiet (unless BENCHMARK_NO_SETTLE=1), so work left over from
+ * setup isn't measured. BENCHMARK_TRACE=1 records a per-repetition event
+ * trace (inputs, commits, long tasks, backend requests) to `traces/`.
  *
  * Results are written as JSON to `test-results/benchmarks/` (which is kept
  * out of Playwright's own output directory so it isn't wiped between runs).
@@ -26,6 +34,11 @@ export const RESULTS_DIR =
 const PROFILE = !!process.env.BENCHMARK_PROFILE;
 const DEFAULT_REPS = Number(process.env.BENCHMARK_REPS) || 5;
 const DEFAULT_WARMUP = Number(process.env.BENCHMARK_WARMUP ?? 1);
+const TRACE = !!process.env.BENCHMARK_TRACE;
+const NO_SETTLE = !!process.env.BENCHMARK_NO_SETTLE;
+const WORKER_PROFILE = !!process.env.BENCHMARK_WORKER_PROFILE;
+/** Backend requests pending longer than this are subscriptions or hung. */
+const MAX_REQUEST_AGE_MS = 5000;
 /** The page must have no React commit / long task for this long. */
 const QUIET_MS = 250;
 /** Give up waiting for the page to settle after this long. */
@@ -40,7 +53,7 @@ const SETTLE_TIMEOUT_MS = 15_000;
  * has the PerformedWork flag (`flags & 1`). Subtrees that React bailed out
  * of (`child === alternate.child`) are skipped.
  */
-function installBenchmarkHooks() {
+function installBenchmarkHooks(traceEnabled: boolean) {
   type Bench = {
     measuring: boolean;
     counts: Record<string, number>;
@@ -53,6 +66,10 @@ function installBenchmarkHooks() {
     lastLongTaskEnd: number;
     longTaskMs: number;
     pendingPaints: number;
+    trace: Array<Record<string, unknown>>;
+    /** In-flight backend requests: id -> time sent. */
+    pendingRequests: Map<string, number>;
+    lastWorkerAt: number;
   };
   const bench: Bench = {
     // Measure from page load until the first scenario resets it, so the
@@ -68,8 +85,16 @@ function installBenchmarkHooks() {
     lastLongTaskEnd: 0,
     longTaskMs: 0,
     pendingPaints: 0,
+    trace: [],
+    pendingRequests: new Map(),
+    lastWorkerAt: 0,
   };
   (window as unknown as { __bench: Bench }).__bench = bench;
+  const trace = (entry: Record<string, unknown>) => {
+    if (traceEnabled && bench.measuring) {
+      bench.trace.push(entry);
+    }
+  };
 
   type Fiber = {
     tag: number;
@@ -153,8 +178,23 @@ function installBenchmarkHooks() {
       }
       bench.commits++;
       bench.lastCommitAt = performance.now();
+      const before = traceEnabled ? { ...bench.counts } : null;
+      const fibersBefore = bench.fibers;
       if (root.current.child) {
         walk(root.current.child);
+      }
+      if (before) {
+        trace({
+          c: Math.round(bench.lastCommitAt),
+          f: bench.fibers - fibersBefore,
+          n: Object.entries(bench.counts)
+            .map(([k, v]): [string, number] => [k, v - (before[k] || 0)])
+            .filter(e => e[1] > 0)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4)
+            .map(e => e.join('x'))
+            .join(' '),
+        });
       }
       onPainted();
     },
@@ -163,12 +203,99 @@ function installBenchmarkHooks() {
     onScheduleFiberRoot: noop,
   };
 
-  const onInput = () => {
-    if (bench.measuring && bench.inputAt == null) {
+  // Track requests to the backend worker (loot-core's connection sends
+  // `{ id, name, args }` and gets `{ type: 'reply' | 'error', id }` back, or
+  // `{ type: 'push' }` events) so the page isn't considered settled while a
+  // query is still in flight.
+  const requestNames = new Map<string, string>();
+  const trackOut = (msg: unknown) => {
+    const m = msg as { id?: unknown; name?: unknown } | null;
+    if (m && typeof m.id === 'string' && typeof m.name === 'string') {
+      bench.pendingRequests.set(m.id, performance.now());
+      requestNames.set(m.id, m.name);
+      bench.lastWorkerAt = performance.now();
+      trace({ c: Math.round(performance.now()), send: m.name });
+    }
+  };
+  const trackIn = (e: MessageEvent) => {
+    const d = e.data as { id?: string; type?: string; name?: string } | null;
+    if (!d || typeof d !== 'object') {
+      return;
+    }
+    if ((d.type === 'reply' || d.type === 'error') && d.id) {
+      if (bench.pendingRequests.delete(d.id)) {
+        bench.lastWorkerAt = performance.now();
+        trace({
+          c: Math.round(performance.now()),
+          reply: requestNames.get(d.id),
+        });
+        requestNames.delete(d.id);
+      }
+    } else if (d.type === 'push') {
+      bench.lastWorkerAt = performance.now();
+      trace({ c: Math.round(performance.now()), push: d.name });
+    }
+  };
+  type Listener = (this: unknown, e: MessageEvent) => unknown;
+  for (const proto of [Worker.prototype, MessagePort.prototype] as Array<{
+    postMessage: (...args: unknown[]) => void;
+    addEventListener: (...args: unknown[]) => void;
+  }>) {
+    const post = proto.postMessage;
+    proto.postMessage = function (this: unknown, ...args: unknown[]) {
+      trackOut(args[0]);
+      return post.apply(this, args);
+    };
+    const desc = Object.getOwnPropertyDescriptor(proto, 'onmessage');
+    if (desc?.set && desc.get) {
+      const { get, set } = desc;
+      Object.defineProperty(proto, 'onmessage', {
+        configurable: true,
+        get() {
+          return get.call(this);
+        },
+        set(fn: Listener | null) {
+          set.call(
+            this,
+            fn
+              ? function (this: unknown, e: MessageEvent) {
+                  trackIn(e);
+                  return fn.call(this, e);
+                }
+              : fn,
+          );
+        },
+      });
+    }
+    const add = proto.addEventListener;
+    proto.addEventListener = function (this: unknown, ...args: unknown[]) {
+      if (args[0] === 'message' && typeof args[1] === 'function') {
+        const fn = args[1] as Listener;
+        args[1] = function (this: unknown, e: MessageEvent) {
+          trackIn(e);
+          return fn.call(this, e);
+        };
+      }
+      return add.apply(this, args);
+    };
+  }
+
+  // Only these start the clock; the others are just traced
+  const INPUT_EVENTS = ['pointerdown', 'mousedown', 'keydown', 'wheel'];
+  const onInput = (e: Event) => {
+    trace({ ev: e.type, t: Math.round(performance.now()) });
+    if (
+      bench.measuring &&
+      bench.inputAt == null &&
+      INPUT_EVENTS.includes(e.type)
+    ) {
       bench.inputAt = performance.now();
     }
   };
-  for (const type of ['pointerdown', 'mousedown', 'keydown', 'wheel']) {
+  const tracedEvents = traceEnabled
+    ? ['mouseup', 'click', 'keyup', 'scroll', 'mousemove', 'pointerover']
+    : [];
+  for (const type of [...INPUT_EVENTS, ...tracedEvents]) {
     window.addEventListener(type, onInput, { capture: true, passive: true });
   }
 
@@ -178,6 +305,10 @@ function installBenchmarkHooks() {
         return;
       }
       for (const entry of list.getEntries()) {
+        trace({
+          lt: Math.round(entry.startTime),
+          d: Math.round(entry.duration),
+        });
         bench.longTaskMs += entry.duration;
         bench.lastLongTaskEnd = Math.max(
           bench.lastLongTaskEnd,
@@ -198,6 +329,9 @@ type RepResult = {
   longTaskMs: number;
   settled: boolean;
   counts: Record<string, number>;
+  trace?: unknown;
+  from?: number;
+  end?: number;
 };
 
 export type ScenarioResult = {
@@ -219,17 +353,29 @@ export type ScenarioResult = {
   error?: string;
 };
 
+/**
+ * A measured interaction. Every callback gets a repetition counter that
+ * never repeats within a run (warmups included), so edits can type a
+ * different value each time: typing the value a cell already has is a
+ * no-op for the app, which would measure nothing.
+ *
+ * Waits inside `run` must not use `expect(...)`: a failing `expect` poll
+ * takes an aria snapshot of the whole page, which is hundreds of ms of
+ * main-thread work inside the measured window. Use `locator.waitFor()`.
+ */
 export type Scenario = {
   name: string;
   reps?: number;
   /** Unmeasured repetitions before the measured ones (default 1). */
   warmup?: number;
   /** Runs before every repetition; not measured. */
-  setup?: () => Promise<void>;
+  setup?: (rep: number) => Promise<void>;
   /** The measured interaction. */
-  run: () => Promise<void>;
+  run: (rep: number) => Promise<void>;
   /** Runs after every repetition; not measured. */
-  teardown?: () => Promise<void>;
+  teardown?: (rep: number) => Promise<void>;
+  /** Best effort to undo the scenario's state changes if it fails. */
+  cleanup?: () => Promise<void>;
 };
 
 function median(values: number[]) {
@@ -252,17 +398,21 @@ function slug(name: string) {
 
 export class BenchmarkHarness {
   readonly page: Page;
-  readonly results: ScenarioResult[] = [];
+  readonly results: ScenarioResult[];
   readonly meta: Record<string, unknown> = {};
   private cdp: CDPSession | null = null;
+  private workerCdp: WorkerSession | null = null;
+  private repCounter = 0;
 
-  constructor(page: Page) {
+  /** `results` can be shared between harnesses (e.g. desktop and mobile). */
+  constructor(page: Page, results: ScenarioResult[] = []) {
     this.page = page;
+    this.results = results;
   }
 
-  static async install(page: Page) {
-    await page.addInitScript(installBenchmarkHooks);
-    return new BenchmarkHarness(page);
+  static async install(page: Page, results?: ScenarioResult[]) {
+    await page.addInitScript(installBenchmarkHooks, TRACE);
+    return new BenchmarkHarness(page, results);
   }
 
   /** Starts a measurement window; the measured action follows. */
@@ -278,6 +428,7 @@ export class BenchmarkHarness {
       bench.lastCommitAt = 0;
       bench.lastPaintAt = 0;
       bench.lastLongTaskEnd = 0;
+      bench.trace = [{ start: Math.round(bench.startAt) }];
       bench.measuring = true;
     });
   }
@@ -285,20 +436,27 @@ export class BenchmarkHarness {
   /** Waits for the page to go quiet and closes the measurement window. */
   async stop(): Promise<RepResult> {
     return this.page.evaluate(
-      ({ quietMs, timeoutMs }) => {
+      ({ quietMs, timeoutMs, maxRequestAgeMs }) => {
         const bench = (window as unknown as { __bench: BenchState }).__bench;
         const actionDoneAt = performance.now();
+        bench.trace.push({ actionDone: Math.round(actionDoneAt) });
         return new Promise<RepResult>(resolve => {
           const check = () => {
             const now = performance.now();
+            const inFlight = [...bench.pendingRequests.values()].some(
+              sentAt => now - sentAt < maxRequestAgeMs,
+            );
             const lastActivity = Math.max(
+              bench.lastWorkerAt,
               bench.lastCommitAt,
               bench.lastPaintAt,
               bench.lastLongTaskEnd,
               actionDoneAt,
             );
             const settled =
-              now - lastActivity >= quietMs && bench.pendingPaints === 0;
+              now - lastActivity >= quietMs &&
+              bench.pendingPaints === 0 &&
+              !inFlight;
             if (settled || now - actionDoneAt > timeoutMs) {
               bench.measuring = false;
               const from = bench.inputAt ?? bench.startAt;
@@ -315,6 +473,9 @@ export class BenchmarkHarness {
                 longTaskMs: Math.round(bench.longTaskMs),
                 settled,
                 counts: { ...bench.counts },
+                trace: bench.trace,
+                from: Math.round(from),
+                end: Math.round(end),
               });
               return;
             }
@@ -323,14 +484,41 @@ export class BenchmarkHarness {
           setTimeout(check, 50);
         });
       },
-      { quietMs: QUIET_MS, timeoutMs: SETTLE_TIMEOUT_MS },
+      {
+        quietMs: QUIET_MS,
+        timeoutMs: SETTLE_TIMEOUT_MS,
+        maxRequestAgeMs: MAX_REQUEST_AGE_MS,
+      },
     );
   }
 
+  /** Settles, then measures `action`. */
   async measureOnce(action: () => Promise<void>) {
+    await this.settle();
     await this.start();
     await action();
     return this.stop();
+  }
+
+  /**
+   * Waits until the page is quiet (no commits, paints or long tasks), with
+   * the same detection as a measurement, so work left over from setup (or
+   * the previous scenario) doesn't leak into the next measured window.
+   */
+  async settle() {
+    if (NO_SETTLE) {
+      return;
+    }
+    await this.start();
+    await this.stop();
+  }
+
+  private async runRep(scenario: Scenario) {
+    const rep = this.repCounter++;
+    await scenario.setup?.(rep);
+    const result = await this.measureOnce(() => scenario.run(rep));
+    await scenario.teardown?.(rep);
+    return result;
   }
 
   async run(scenario: Scenario): Promise<ScenarioResult> {
@@ -341,29 +529,36 @@ export class BenchmarkHarness {
 
     try {
       for (let i = 0; i < (scenario.warmup ?? DEFAULT_WARMUP); i++) {
-        await scenario.setup?.();
-        await this.measureOnce(scenario.run);
-        await scenario.teardown?.();
+        await this.runRep(scenario);
       }
       for (let i = 0; i < reps; i++) {
-        await scenario.setup?.();
-        repResults.push(await this.measureOnce(scenario.run));
-        await scenario.teardown?.();
+        repResults.push(await this.runRep(scenario));
       }
 
       if (PROFILE) {
-        await scenario.setup?.();
-        profile = await this.profileOnce(slug(scenario.name), scenario.run);
-        await scenario.teardown?.();
+        const rep = this.repCounter++;
+        await scenario.setup?.(rep);
+        profile = await this.profileOnce(slug(scenario.name), () =>
+          scenario.run(rep),
+        );
+        await scenario.teardown?.(rep);
       }
     } catch (e) {
-      error = (e instanceof Error ? e.message : String(e))
+      const lines = (e instanceof Error ? e.message : String(e))
         // oxlint-disable-next-line no-control-regex
         .replace(/\u001b\[[0-9;]*m/g, '')
-        .split('\n')[0];
+        .split('\n');
+      // The first line, plus what it was waiting for
+      error = [lines[0], lines.find(l => /waiting for|Locator:/.test(l))]
+        .filter(Boolean)
+        .map(l => l?.trim())
+        .join(' / ');
       // Try to get back to a known state for the next scenario
       await this.page.keyboard.press('Escape').catch(() => undefined);
       await this.page.keyboard.press('Escape').catch(() => undefined);
+      if (scenario.cleanup) {
+        await scenario.cleanup().catch(() => undefined);
+      }
     }
 
     const totals: Record<string, number> = {};
@@ -380,6 +575,22 @@ export class BenchmarkHarness {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 15);
 
+    if (TRACE) {
+      fs.mkdirSync(path.join(RESULTS_DIR, 'traces'), { recursive: true });
+      fs.writeFileSync(
+        path.join(RESULTS_DIR, 'traces', slug(scenario.name) + '.json'),
+        JSON.stringify(
+          repResults.map(r => ({
+            from: r.from,
+            end: r.end,
+            ms: r.ms,
+            trace: r.trace,
+          })),
+          null,
+          1,
+        ),
+      );
+    }
     const ms = repResults.map(r => r.ms);
     const result: ScenarioResult = {
       name: scenario.name,
@@ -408,11 +619,25 @@ export class BenchmarkHarness {
       this.cdp = await this.page.context().newCDPSession(this.page);
       await this.cdp.send('Profiler.enable');
       await this.cdp.send('Profiler.setSamplingInterval', { interval: 100 });
+      if (WORKER_PROFILE) {
+        this.workerCdp = await attachWorker(this.page);
+      }
     }
+    await this.settle();
     await this.cdp.send('Profiler.start');
+    await this.workerCdp?.send('Profiler.start');
     await this.measureOnce(action);
     const { profile } = await this.cdp.send('Profiler.stop');
     fs.mkdirSync(path.join(RESULTS_DIR, 'profiles'), { recursive: true });
+    if (this.workerCdp) {
+      const res = (await this.workerCdp.send('Profiler.stop')) as {
+        profile: unknown;
+      };
+      fs.writeFileSync(
+        path.join(RESULTS_DIR, 'profiles', `${name}.worker.cpuprofile`),
+        JSON.stringify(res.profile),
+      );
+    }
     const file = path.join(RESULTS_DIR, 'profiles', `${name}.cpuprofile`);
     fs.writeFileSync(file, JSON.stringify(profile));
     return path.relative(RESULTS_DIR, file);
@@ -444,6 +669,65 @@ export class BenchmarkHarness {
   }
 }
 
+type WorkerSession = {
+  send: (method: string, params?: object) => Promise<unknown>;
+};
+
+/**
+ * Attaches to the backend worker through a browser-level CDP session
+ * (Playwright's CDPSession can't target workers directly), using the
+ * non-flattened Target.sendMessageToTarget protocol.
+ */
+async function attachWorker(page: Page): Promise<WorkerSession | null> {
+  const browser = page.context().browser();
+  if (!browser) {
+    return null;
+  }
+  const session = await browser.newBrowserCDPSession();
+  const { targetInfos } = (await session.send('Target.getTargets')) as {
+    targetInfos: Array<{ targetId: string; type: string; url: string }>;
+  };
+  const workers = targetInfos.filter(
+    t => t.type === 'worker' || t.type === 'shared_worker',
+  );
+  const target = workers.find(t => /kcab|backend/i.test(t.url)) ?? workers[0];
+  if (!target) {
+    console.log('BENCH no worker target to profile');
+    return null;
+  }
+  const { sessionId } = (await session.send('Target.attachToTarget', {
+    targetId: target.targetId,
+    flatten: false,
+  })) as { sessionId: string };
+  let nextId = 1;
+  const pending = new Map<number, (result: unknown) => void>();
+  session.on('Target.receivedMessageFromTarget', event => {
+    const e = event as { sessionId: string; message: string };
+    if (e.sessionId !== sessionId) {
+      return;
+    }
+    const msg = JSON.parse(e.message) as { id?: number; result?: unknown };
+    const resolve = msg.id != null ? pending.get(msg.id) : undefined;
+    if (msg.id != null && resolve) {
+      pending.delete(msg.id);
+      resolve(msg.result);
+    }
+  });
+  const send = (method: string, params: object = {}) =>
+    new Promise<unknown>(resolve => {
+      const id = nextId++;
+      pending.set(id, resolve);
+      void session.send('Target.sendMessageToTarget', {
+        sessionId,
+        message: JSON.stringify({ id, method, params }),
+      });
+    });
+  await send('Profiler.enable');
+  await send('Profiler.setSamplingInterval', { interval: 100 });
+  console.log('BENCH profiling worker', target.url);
+  return { send };
+}
+
 type BenchState = {
   measuring: boolean;
   counts: Record<string, number>;
@@ -456,6 +740,9 @@ type BenchState = {
   lastLongTaskEnd: number;
   longTaskMs: number;
   pendingPaints: number;
+  trace: Array<Record<string, unknown>>;
+  pendingRequests: Map<string, number>;
+  lastWorkerAt: number;
 };
 
 export function formatResult(r: ScenarioResult) {
@@ -473,35 +760,67 @@ export function formatResult(r: ScenarioResult) {
   );
 }
 
+/** Mirrors `BenchmarkBudgetRefs` in loot-core's benchmark-budget.ts. */
+export type BenchmarkRefs = {
+  budgetType: 'envelope' | 'tracking';
+  currentMonth: string;
+  focusMonth: string;
+  accounts: Record<string, string>;
+  categories: Record<string, string>;
+  reports: Record<string, string>;
+  widgets: Record<string, string>;
+  filters: Record<string, string>;
+};
+
 type BenchmarkBudgetResult = {
   error?: string;
   timings?: Record<string, number>;
   stats?: Record<string, number>;
+  refs?: BenchmarkRefs;
 };
+
+const BENCHMARK_BUDGET_ID = '_benchmark-budget';
 
 /**
  * Creates the benchmark budget through the backend and reloads the page so
  * the app opens it like a regular "last opened" budget.
+ *
+ * Playwright pins "today" to the first of a month, which has next to no
+ * data, so the budget page is set to open on the last full month instead.
  */
-export async function createBenchmarkBudget(page: Page) {
+export async function createBenchmarkBudget(
+  page: Page,
+  { budgetType = 'envelope' }: { budgetType?: 'envelope' | 'tracking' } = {},
+) {
   await page.goto('/');
   await page.waitForFunction(() => '$send' in window);
   const started = Date.now();
-  const result = await page.evaluate(async () => {
+  const result = await page.evaluate(async type => {
     const send = (
       window as unknown as {
         $send: (name: string, args: unknown) => Promise<BenchmarkBudgetResult>;
       }
     ).$send;
-    return send('create-budget', { testMode: true, benchmarkMode: true });
-  });
+    return send('create-budget', {
+      testMode: true,
+      benchmarkMode: true,
+      benchmarkBudgetType: type,
+    });
+  }, budgetType);
   const wallMs = Date.now() - started;
-  if (result?.error) {
-    throw new Error('Failed to create benchmark budget: ' + result.error);
+  if (result?.error || !result?.refs) {
+    throw new Error(
+      'Failed to create benchmark budget: ' + (result?.error ?? 'no refs'),
+    );
   }
+  const refs = result.refs;
+  await page.evaluate(
+    ([key, month]) => localStorage.setItem(key, JSON.stringify(month)),
+    [`${BENCHMARK_BUDGET_ID}-budget.startMonth`, refs.focusMonth],
+  );
   // The budget is now open in the backend and is the "last opened" one, so
   // a reload opens it in the UI.
   await page.reload();
   await page.getByTestId('budget-table').waitFor({ timeout: 60_000 });
-  return { wallMs, timings: result?.timings, stats: result?.stats };
+  return { wallMs, timings: result.timings, stats: result.stats, refs };
 }

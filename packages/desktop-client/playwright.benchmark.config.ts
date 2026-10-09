@@ -22,5 +22,8 @@ export default defineConfig({
     ...baseConfig.use,
     trace: 'off',
     screenshot: 'off',
+    // Fail a stuck step (and so the scenario) instead of waiting forever
+    actionTimeout: 30_000,
+    navigationTimeout: 60_000,
   },
 });

@@ -411,6 +411,7 @@ async function createBudget({
   testMode,
   testBudgetId,
   benchmarkMode,
+  benchmarkBudgetType,
 }: {
   budgetName?: Budget['name'];
   avoidUpload?: boolean;
@@ -421,6 +422,8 @@ async function createBudget({
    * performance benchmarking (implies `testMode`).
    */
   benchmarkMode?: boolean;
+  /** Budget type of the benchmark budget (default envelope). */
+  benchmarkBudgetType?: 'envelope' | 'tracking';
 } = {}) {
   let id;
   if (benchmarkMode) {
@@ -478,9 +481,12 @@ async function createBudget({
   }
 
   if (benchmarkMode) {
-    const { timings, stats } = await createBenchmarkBudget(mainApp.handlers);
+    const { timings, stats, refs } = await createBenchmarkBudget(
+      mainApp.handlers,
+      { budgetType: benchmarkBudgetType },
+    );
     logger.log('Created benchmark budget', timings, stats);
-    return { timings, stats };
+    return { timings, stats, refs };
   } else if (testMode) {
     await createTestBudget(mainApp.handlers);
   }
