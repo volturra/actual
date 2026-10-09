@@ -146,6 +146,15 @@ async function execTransactionsGrouped(
     rows = await db.all<db.DbViewTransactionInternal>(rowSql, params);
   } else {
     // TODO: phew, what a doozy. write docs why it works this way
+    //
+    // The outer join to the view must be an inner join. SQLite can't
+    // flatten a view that is itself a join with a WHERE clause when it is
+    // on the right side of a LEFT JOIN, so it materializes the whole view
+    // (every transaction) before looking up the matched groups, which
+    // dominates the cost of every filtered or searched page. The inner join
+    // also drops groups whose parent isn't in the view (the grouping below
+    // would drop them anyway), so each page has exactly `limit` groups and
+    // PagedQuery's offset and end-of-data checks stay correct.
     const rowSql = `
       SELECT group_id, matched FROM (
         SELECT
@@ -160,7 +169,7 @@ async function execTransactionsGrouped(
           )
         GROUP BY group_id
       )
-      LEFT JOIN ${sqlPieces.from} ON ${sqlPieces.from}.id = group_id
+      JOIN ${sqlPieces.from} ON ${sqlPieces.from}.id = group_id
       ${sqlPieces.joins}
       ${sqlPieces.orderBy}
       ${sqlPieces.limit != null ? `LIMIT ${sqlPieces.limit}` : ''}
