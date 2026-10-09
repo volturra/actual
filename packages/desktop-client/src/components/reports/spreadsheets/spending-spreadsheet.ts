@@ -16,6 +16,7 @@ import { resolveSpendingAverageRange } from '#components/reports/spendingAverage
 import { fromDateRepr } from '#components/reports/util';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
 import { aqlQuery } from '#queries/aqlQuery';
+import { getEarliestTransaction, makeFiltersFromConditions } from '#reports';
 
 import {
   filterCategoriesByConditions,
@@ -91,9 +92,7 @@ export function createSpendingSpreadsheet({
     setData: (data: SpendingEntity) => void,
   ) => {
     const earliestTrans =
-      averageRange?.mode === 'all-time'
-        ? await send('get-earliest-transaction')
-        : null;
+      averageRange?.mode === 'all-time' ? await getEarliestTransaction() : null;
     const earliestMonth = earliestTrans
       ? monthUtils.monthFromDate(fromDateRepr(earliestTrans.date))
       : null;
@@ -105,7 +104,7 @@ export function createSpendingSpreadsheet({
     const averageMonths = new Set(resolvedAverageRange.months);
     const startDate = (resolvedAverageRange.startMonth ?? compareMonth) + '-01';
 
-    const { filters } = await send('make-filters-from-conditions', {
+    const { filters } = await makeFiltersFromConditions({
       conditions: conditions.filter(cond => !cond.customName),
     });
 

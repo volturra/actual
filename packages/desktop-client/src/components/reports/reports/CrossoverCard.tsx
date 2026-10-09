@@ -6,7 +6,6 @@ import { useResponsive } from '@actual-app/components/hooks/useResponsive';
 import { styles } from '@actual-app/components/styles';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type {
   AccountEntity,
@@ -26,6 +25,7 @@ import { useReport } from '#components/reports/useReport';
 import { useCategories } from '#hooks/useCategories';
 import { useFormat } from '#hooks/useFormat';
 import { useLocale } from '#hooks/useLocale';
+import { getEarliestTransaction } from '#reports';
 
 type CrossoverCardProps = {
   widgetId: string;
@@ -62,7 +62,7 @@ export function CrossoverCard({
       const previousMonth = monthUtils.subMonths(currentMonth, 1);
 
       // Fetch earliest transaction to build the valid range
-      const earliestTransactionData = await send('get-earliest-transaction');
+      const earliestTransactionData = await getEarliestTransaction();
       if (!isMounted) return;
 
       // Build allMonths list similar to Crossover.tsx

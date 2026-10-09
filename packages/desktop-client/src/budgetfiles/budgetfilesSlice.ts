@@ -12,6 +12,7 @@ import { resetApp, setAppState } from '#app/appSlice';
 import { closeModal, pushModal } from '#modals/modalsSlice';
 import { loadGlobalPrefs, loadPrefs } from '#prefs/prefsSlice';
 import { createAppAsyncThunk } from '#redux';
+import { forgetInFlightReportRequests } from '#reports/requestGeneration';
 import { signOut } from '#users/usersSlice';
 import { getDownloadError, getSyncError, getUnsafeZipError } from '#util/error';
 
@@ -57,9 +58,11 @@ export const loadBudget = createAppAsyncThunk(
   `${sliceName}/loadBudget`,
   async ({ id, options = {} }: LoadBudgetPayload, { dispatch }) => {
     dispatch(setAppState({ loadingText: t('Loading...') }));
+    forgetInFlightReportRequests();
 
     // Loading a budget may fail
     const { error } = await send('load-budget', { id, ...options });
+    forgetInFlightReportRequests();
 
     if (error) {
       const message = getSyncError(error, id);
@@ -103,6 +106,7 @@ export const closeBudget = createAppAsyncThunk(
     if (prefs && prefs.id) {
       dispatch(resetApp());
       queryClient.clear();
+      forgetInFlightReportRequests();
       dispatch(setAppState({ loadingText: t('Closing...') }));
       await send('close-budget');
       dispatch(setAppState({ loadingText: null }));
@@ -120,6 +124,7 @@ export const closeBudgetUI = createAppAsyncThunk(
     if (prefs && prefs.id) {
       dispatch(resetApp());
       queryClient.clear();
+      forgetInFlightReportRequests();
     }
   },
 );
@@ -160,6 +165,7 @@ export const createBudget = createAppAsyncThunk(
     } else {
       await send('create-budget', { testMode });
     }
+    forgetInFlightReportRequests();
 
     dispatch(closeModal());
 
@@ -219,6 +225,7 @@ export const duplicateBudget = createAppAsyncThunk(
         cloudSync,
         open: loadBudget,
       });
+      forgetInFlightReportRequests();
 
       dispatch(closeModal());
 
@@ -245,6 +252,7 @@ export const importBudget = createAppAsyncThunk(
   `${sliceName}/importBudget`,
   async ({ filepath, type }: ImportBudgetPayload, { dispatch }) => {
     const { error, meta } = await send('import-budget', { filepath, type });
+    forgetInFlightReportRequests();
     if (error) {
       const zipMeta = getUnsafeZipMeta(meta);
       throw new Error(zipMeta ? getUnsafeZipError(zipMeta) : error);

@@ -1,4 +1,3 @@
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type {
   AccountEntity,
@@ -26,6 +25,7 @@ import {
 import type { QueryDataEntity } from '#components/reports/ReportOptions';
 import { resolveTagScope } from '#components/reports/tagScope';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
+import { makeFiltersFromConditions } from '#reports';
 
 import { calculateLegend } from './calculateLegend';
 import { fetchSpreadsheetQueryData } from './fetchSpreadsheetQueryData';
@@ -126,7 +126,7 @@ export function createCustomSpreadsheet({
       return;
     }
 
-    const { filters } = await send('make-filters-from-conditions', {
+    const { filters } = await makeFiltersFromConditions({
       conditions: conditions.filter(cond => !cond.customName),
     });
     const conditionsOpKey = conditionsOp === 'or' ? '$or' : '$and';

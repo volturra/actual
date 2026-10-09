@@ -1,4 +1,3 @@
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { q } from '@actual-app/core/shared/query';
 import type {
@@ -9,6 +8,7 @@ import * as d from 'date-fns';
 
 import { runAll } from '#components/reports/util';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
+import { makeFiltersFromConditions } from '#reports';
 
 export type AgeOfMoneyData = {
   graphData: Array<{
@@ -488,7 +488,7 @@ export function createAgeOfMoneySpreadsheet({
     const fixedEnd = endDate > today ? today : endDate;
 
     const activeConditions = conditions.filter(cond => !cond.customName);
-    const { filters } = await send('make-filters-from-conditions', {
+    const { filters } = await makeFiltersFromConditions({
       conditions: activeConditions,
     });
     const conditionsOpKey = conditionsOp === 'or' ? '$or' : '$and';

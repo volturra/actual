@@ -11,6 +11,7 @@ import { t } from 'i18next';
 import { getColorScale } from '#components/reports/chart-theme';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
 import { aqlQuery } from '#queries/aqlQuery';
+import { makeFiltersFromConditions } from '#reports';
 
 type BudgetMonthCategory = {
   id: string;
@@ -380,7 +381,7 @@ export function createTransactionsSpreadsheet(
 ) {
   return async () => {
     // gather filters user has set
-    const { filters } = await send('make-filters-from-conditions', {
+    const { filters } = await makeFiltersFromConditions({
       conditions: conditions.filter(cond => !cond.customName),
     });
     const conditionsOpKey = conditionsOp === 'or' ? '$or' : '$and';

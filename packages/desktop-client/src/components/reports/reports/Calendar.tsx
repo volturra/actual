@@ -15,7 +15,6 @@ import {
 import { styles } from '@actual-app/components/styles';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { q } from '@actual-app/core/shared/query';
 import type { Query } from '@actual-app/core/shared/query';
@@ -67,6 +66,11 @@ import { useSyncedPref } from '#hooks/useSyncedPref';
 import { useTransactions } from '#hooks/useTransactions';
 import { addNotification } from '#notifications/notificationsSlice';
 import { useDispatch } from '#redux';
+import {
+  getEarliestTransaction,
+  getLatestTransaction,
+  makeFiltersFromConditions,
+} from '#reports';
 import { useUpdateDashboardWidgetMutation } from '#reports/mutations';
 
 const CHEVRON_HEIGHT = 42;
@@ -193,7 +197,7 @@ function CalendarInner({ widget, parameters }: CalendarInnerProps) {
   useEffect(() => {
     const conditionsOpKey = conditionsOp === 'or' ? '$or' : '$and';
 
-    send('make-filters-from-conditions', {
+    makeFiltersFromConditions({
       conditions: conditions.filter(cond => !cond.customName),
     })
       .then((data: { filters: unknown[] }) => {
@@ -249,14 +253,14 @@ function CalendarInner({ widget, parameters }: CalendarInnerProps) {
 
   useEffect(() => {
     async function run() {
-      const earliestTransaction = await send('get-earliest-transaction');
+      const earliestTransaction = await getEarliestTransaction();
       setEarliestTransaction(
         earliestTransaction
           ? earliestTransaction.date
           : monthUtils.currentDay(),
       );
 
-      const latestTransaction = await send('get-latest-transaction');
+      const latestTransaction = await getLatestTransaction();
       setLatestTransaction(
         latestTransaction ? latestTransaction.date : monthUtils.currentDay(),
       );

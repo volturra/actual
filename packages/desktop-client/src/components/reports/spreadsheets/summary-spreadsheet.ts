@@ -1,4 +1,3 @@
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { q } from '@actual-app/core/shared/query';
 import type {
@@ -10,6 +9,7 @@ import type { Locale } from 'date-fns';
 
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
 import { aqlQuery } from '#queries/aqlQuery';
+import { makeFiltersFromConditions } from '#reports';
 
 export function summarySpreadsheet(
   start: string,
@@ -31,7 +31,7 @@ export function summarySpreadsheet(
   ) => {
     let filters: unknown[] = [];
     try {
-      const response = await send('make-filters-from-conditions', {
+      const response = await makeFiltersFromConditions({
         conditions: conditions.filter(cond => !cond.customName),
       });
       filters = response.filters;
@@ -273,7 +273,7 @@ async function calculatePercentage(
     summaryContent.divisorConditionsOp === 'or' ? '$or' : '$and';
   let filters = [];
   try {
-    const response = await send('make-filters-from-conditions', {
+    const response = await makeFiltersFromConditions({
       conditions: summaryContent?.divisorConditions?.filter(
         cond => !cond.customName,
       ),

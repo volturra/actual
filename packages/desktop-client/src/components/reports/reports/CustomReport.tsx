@@ -9,7 +9,6 @@ import { styles } from '@actual-app/components/styles';
 import { Text } from '@actual-app/components/text';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type {
   balanceTypeOpType,
@@ -66,6 +65,7 @@ import { usePayees } from '#hooks/usePayees';
 import { useReport as useCustomReport } from '#hooks/useReport';
 import { useRuleConditionFilters } from '#hooks/useRuleConditionFilters';
 import { useSyncedPref } from '#hooks/useSyncedPref';
+import { getEarliestTransaction, getLatestTransaction } from '#reports';
 
 /**
  * Transform `selectedCategories` into `conditions`.
@@ -428,8 +428,8 @@ function CustomReportInner({
       // The report waits for these dates before it loads, so fall back to
       // today if a lookup fails instead of loading forever.
       const [earliestTransaction, latestTransaction] = await Promise.all([
-        send('get-earliest-transaction').catch(() => null),
-        send('get-latest-transaction').catch(() => null),
+        getEarliestTransaction().catch(() => null),
+        getLatestTransaction().catch(() => null),
       ]);
       const currentDay = monthUtils.currentDay();
       const earliestTransactionDate = earliestTransaction?.date ?? currentDay;

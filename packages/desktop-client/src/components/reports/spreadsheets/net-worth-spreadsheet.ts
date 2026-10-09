@@ -1,4 +1,3 @@
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { q } from '@actual-app/core/shared/query';
 import type {
@@ -14,6 +13,7 @@ import { getIntervalFormat } from '#components/reports/ReportOptions';
 import type { FormatType } from '#hooks/useFormat';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
 import { aqlQuery } from '#queries/aqlQuery';
+import { getEarliestTransaction, makeFiltersFromConditions } from '#reports';
 
 type Balance = {
   date: string;
@@ -62,7 +62,7 @@ export function createSpreadsheet(
     spreadsheet: ReturnType<typeof useSpreadsheet>,
     setData: (data: ReturnType<typeof recalculate>) => void,
   ) => {
-    const { filters } = await send('make-filters-from-conditions', {
+    const { filters } = await makeFiltersFromConditions({
       conditions: conditions.filter(cond => !cond.customName),
     });
     const conditionsOpKey = conditionsOp === 'or' ? '$or' : '$and';
@@ -86,7 +86,7 @@ export function createSpreadsheet(
     // If the earliest transaction is on or after the first day of the start
     // month, the prior period lookback would be empty (all zeros). Skip it to
     // avoid rendering an empty data point.
-    const earliestTransaction = await send('get-earliest-transaction');
+    const earliestTransaction = await getEarliestTransaction();
     if (
       earliestTransaction &&
       earliestTransaction.date >= monthUtils.firstDayOfMonth(start)
