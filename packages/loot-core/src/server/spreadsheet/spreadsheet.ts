@@ -20,6 +20,8 @@ export type Node = {
   value: string | number | boolean;
   sheet: unknown;
   query?: QueryState;
+  /** `query` serialized, to recognise the same query being sent again */
+  queryKey?: string;
   sql?: { sqlPieces: unknown; state: { dependencies: unknown[] } };
   dynamic?: boolean;
   _run?: unknown;
@@ -340,8 +342,24 @@ export class Spreadsheet {
         }
       } catch (e) {
         logger.log('Error while evaluating ' + name + ':', e);
-        // If an error happens, bail on the rest of the computations
+        // If an error happens, bail on the rest of the computations. The
+        // cells computed so far have new values, so still notify about them
+        // (`createQuery` no longer reruns an unchanged query to heal them).
+        const computed = this.computeQueue.slice(0, idx);
+        // Forget the query of every cell left uncomputed so the next
+        // `createQuery` for it runs it again.
+        for (const skipped of this.computeQueue.slice(idx)) {
+          const skippedNode = this.nodes.get(skipped);
+          if (skippedNode) {
+            skippedNode.queryKey = undefined;
+          }
+        }
+        // Clear the queue before notifying: `onFinish` listeners check
+        // `computedCount`, which `clearQueue` brings up to date
         this.clearQueue();
+        if (computed.length > 0) {
+          this.events.emit('change', { names: computed });
+        }
         return;
       }
 
@@ -360,6 +378,8 @@ export class Spreadsheet {
           err => {
             // TODO: use captureException here
             logger.warn(`Failed running ${node.name}!`, err);
+            // Let the next `createQuery` for this cell try again
+            node.queryKey = undefined;
             if (node.sql) {
               this.continueAfterQuery(idx + 1);
             } else {
@@ -538,15 +558,18 @@ export class Spreadsheet {
   createQuery(sheetName: string, cellName: string, query: QueryState): void {
     const name = resolveName(sheetName, cellName);
     const node = this._getNode(name);
+    // Every component binding the cell sends its query again, as a new
+    // object. The cell's value already stays up to date through
+    // `triggerDatabaseChanges`, so only a different query needs a rerun.
+    const queryKey = JSON.stringify(query);
 
-    if (node.query !== query) {
+    if (node.queryKey !== queryKey) {
+      // Compile before touching the node, so a query that fails to compile
+      // leaves the previous query, its SQL and its key consistent
+      const { sqlPieces, state } = compileQuery(query, schema, schemaConfig);
       node.query = query;
-      const { sqlPieces, state } = compileQuery(
-        node.query,
-        schema,
-        schemaConfig,
-      );
       node.sql = { sqlPieces, state };
+      node.queryKey = queryKey;
 
       this.transaction(() => {
         this._markDirty(name);
