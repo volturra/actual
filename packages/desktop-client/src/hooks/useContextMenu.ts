@@ -34,8 +34,9 @@ export function useContextMenu({
       e.preventDefault();
       const allItems = typeof items === 'function' ? items() : items;
       const visibleItems = allItems.filter(
-        item => item && (typeof item === 'symbol' || !item.hidden),
-      ) as ContextMenuItem[];
+        (item): item is ContextMenuItem =>
+          !!item && (typeof item === 'symbol' || !item.hidden),
+      );
       dispatch(addItems(visibleItems));
       dispatch(setContextMenuPosition({ x: e.clientX, y: e.clientY }));
     }

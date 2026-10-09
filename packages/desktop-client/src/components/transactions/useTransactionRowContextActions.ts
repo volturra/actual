@@ -1,8 +1,6 @@
-import { useMemo } from 'react';
 import type { RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { q } from '@actual-app/core/shared/query';
 import {
   extractScheduleConds,
   scheduleIsRecurring,
@@ -11,8 +9,8 @@ import { isPreviewId } from '@actual-app/core/shared/transactions';
 import type { TransactionEntity } from '@actual-app/core/types/models';
 
 import type { ContextMenuItem } from '#contextmenu/types';
+import { useCachedSchedules } from '#hooks/useCachedSchedules';
 import { useContextMenu } from '#hooks/useContextMenu';
-import { useSchedules } from '#hooks/useSchedules';
 import { useSelectedItems } from '#hooks/useSelected';
 import { pushModal } from '#modals/modalsSlice';
 import { useDispatch } from '#redux';
@@ -49,34 +47,20 @@ export function useTransactionRowContextActions({
   const dispatch = useDispatch();
   const selectedItems = useSelectedItems();
 
-  const selectedIds = useMemo(() => {
+  // Only the schedules are read during render: they come from the table's
+  // shared cache, so a selection change costs each row O(1). Everything that
+  // depends on the selection is computed when the menu opens.
+  const { schedules } = useCachedSchedules();
+
+  function getSelectedIds(): TransactionEntity['id'][] {
     const ids =
       selectedItems && selectedItems.size > 0
         ? selectedItems
         : [transaction.id];
     return Array.from(new Set(ids));
-  }, [transaction, selectedItems]);
+  }
 
-  const scheduleIds = useMemo(() => {
-    return selectedIds
-      .filter(id => isPreviewId(id))
-      .map(id => id.split('/')[1]);
-  }, [selectedIds]);
-
-  const scheduleQuery = useMemo(() => {
-    if (scheduleIds.length === 0) {
-      return undefined;
-    }
-    return q('schedules')
-      .filter({ id: { $oneof: scheduleIds } })
-      .select('*');
-  }, [scheduleIds]);
-
-  const { schedules: selectedSchedules } = useSchedules({
-    query: scheduleQuery,
-  });
-
-  function onViewSchedule() {
+  function onViewSchedule(selectedIds: TransactionEntity['id'][]) {
     const firstId = selectedIds[0];
     let scheduleId;
     if (isPreviewId(firstId)) {
@@ -96,15 +80,17 @@ export function useTransactionRowContextActions({
     }
   }
 
-  // Everything below reads every selected transaction, so it is computed
-  // only when the menu opens. Doing it during render made each visible row
-  // scan the whole selection whenever the selection changed (e.g. "select
-  // all").
+  // Everything below reads every selected item, so it is computed only when
+  // the menu opens. Doing it during render made each visible row scan the
+  // whole selection whenever the selection changed (e.g. "select all").
   function getMenuItems(): ContextMenuItem[] {
+    const selectedIds = getSelectedIds();
     const isPreviewSelected = selectedIds.some(id => isPreviewId(id));
     const isTransactionSelected = selectedIds.some(id => !isPreviewId(id));
 
     if (!isTransactionSelected) {
+      const scheduleIds = new Set(selectedIds.map(id => id.split('/')[1]));
+      const selectedSchedules = schedules.filter(s => scheduleIds.has(s.id));
       const canBeSkipped = selectedSchedules.every(s => {
         const { date: dateCond } = extractScheduleConds(s._conditions);
         return scheduleIsRecurring(dateCond);
@@ -118,7 +104,7 @@ export function useTransactionRowContextActions({
         {
           name: 'view-schedule',
           text: t('View Schedule'),
-          onClick: onViewSchedule,
+          onClick: () => onViewSchedule(selectedIds),
           hidden: selectedIds.length !== 1,
         },
         {
@@ -172,7 +158,7 @@ export function useTransactionRowContextActions({
       {
         name: 'view-schedule',
         text: t('View Schedule'),
-        onClick: onViewSchedule,
+        onClick: () => onViewSchedule(selectedIds),
         hidden: !(selectedIds.length === 1 && linked),
       },
       {

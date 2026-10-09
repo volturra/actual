@@ -8,8 +8,8 @@ import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ContextMenuItem } from '#contextmenu/types';
+import { useCachedSchedules } from '#hooks/useCachedSchedules';
 import { useContextMenu } from '#hooks/useContextMenu';
-import { useSchedules } from '#hooks/useSchedules';
 import { useSelectedItems } from '#hooks/useSelected';
 
 import { useTransactionRowContextActions } from './useTransactionRowContextActions';
@@ -26,8 +26,8 @@ vi.mock('#hooks/useSelected', () => ({
   useSelectedItems: vi.fn(),
 }));
 
-vi.mock('#hooks/useSchedules', () => ({
-  useSchedules: vi.fn(),
+vi.mock('#hooks/useCachedSchedules', () => ({
+  useCachedSchedules: vi.fn(),
 }));
 
 function makeTransaction(
@@ -82,14 +82,16 @@ const oneOffSchedule = {
 function renderRow({
   id,
   selected = [],
+  selection = new Set(selected),
   schedules = [],
 }: {
   id: string;
   selected?: string[];
+  selection?: Set<string>;
   schedules?: ScheduleEntity[];
 }) {
-  vi.mocked(useSelectedItems).mockReturnValue(new Set(selected));
-  vi.mocked(useSchedules).mockReturnValue({
+  vi.mocked(useSelectedItems).mockReturnValue(selection);
+  vi.mocked(useCachedSchedules).mockReturnValue({
     schedules,
     statuses: new Map(),
     statusLabels: new Map(),
@@ -166,6 +168,79 @@ describe('useTransactionRowContextActions', () => {
 
     visibleNames();
     expect(getTransaction).toHaveBeenCalled();
+  });
+
+  it('does not iterate the selection during render', () => {
+    // "Select all" re-renders every visible row, so any per-row work that
+    // walks the selection makes it rows x selected.
+    let iterations = 0;
+    class CountingSet extends Set<string> {
+      override [Symbol.iterator]() {
+        iterations++;
+        return super[Symbol.iterator]();
+      }
+      override forEach(...args: Parameters<Set<string>['forEach']>): void {
+        iterations++;
+        super.forEach(...args);
+      }
+    }
+    const selection = new CountingSet(transactions.map(t => t.id));
+    iterations = 0;
+
+    const { rerender, visibleNames } = renderRow({
+      id: 'plain-1',
+      selection,
+    });
+    rerender();
+    expect(iterations).toBe(0);
+
+    visibleNames();
+    expect(iterations).toBeGreaterThan(0);
+  });
+
+  it('treats selected ids that are not loaded like unlinked transactions', () => {
+    // "Select all" can select transactions beyond the loaded page, which
+    // getTransaction cannot find.
+    const { visibleNames, click, handlers } = renderRow({
+      id: 'linked-1',
+      selected: ['linked-1', 'not-loaded'],
+    });
+
+    expect(visibleNames()).toEqual([
+      'duplicate',
+      'delete',
+      'link-schedule',
+      'create-rule',
+    ]);
+
+    click('duplicate');
+    expect(handlers.onDuplicate).toHaveBeenCalledWith([
+      'linked-1',
+      'not-loaded',
+    ]);
+  });
+
+  it('does not offer unsplit when a selected split is not loaded', () => {
+    const { visibleNames } = renderRow({
+      id: 'parent',
+      selected: ['parent', 'child-1', 'not-loaded'],
+    });
+
+    expect(visibleNames()).toEqual(['delete', 'link-schedule', 'create-rule']);
+  });
+
+  it('only uses the cached schedules that are selected', () => {
+    const { visibleNames } = renderRow({
+      id: 'preview/recurring/2024-02-01',
+      schedules: [recurringSchedule, oneOffSchedule],
+    });
+
+    expect(visibleNames()).toEqual([
+      'view-schedule',
+      'post-transaction',
+      'post-transaction-today',
+      'skip',
+    ]);
   });
 
   it('acts on the row itself when nothing is selected', () => {
