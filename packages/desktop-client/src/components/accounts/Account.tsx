@@ -116,9 +116,11 @@ type AllTransactionsProps = {
   ) => ReactElement;
 };
 
+const EMPTY_TRANSACTIONS: TransactionEntity[] = [];
+
 function AllTransactions({
   account,
-  transactions,
+  transactions: transactionsProp,
   balances,
   showBalances,
   filtered,
@@ -142,7 +144,7 @@ function AllTransactions({
     splitsExpandedDispatch,
   ]);
 
-  transactions ??= [];
+  const transactions = transactionsProp ?? EMPTY_TRANSACTIONS;
 
   const runningBalance = useMemo(() => {
     if (!showBalances) {

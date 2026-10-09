@@ -642,10 +642,16 @@ export function SelectCell({
   style,
   onSelect,
   onEdit,
-  icon = <SvgCheckmark width={6} height={6} />,
-  buttonProps = {},
+  icon: iconProp,
+  buttonProps: buttonPropsProp,
   ...props
 }: SelectCellProps) {
+  // Defaults are applied here rather than in the destructuring so React
+  // Compiler can compile this component (it bails out on JSX and, without
+  // the yarn patch, on any destructuring default).
+  const icon =
+    iconProp === undefined ? <SvgCheckmark width={6} height={6} /> : iconProp;
+  const buttonProps = buttonPropsProp ?? {};
   return (
     <Cell
       {...props}
@@ -961,8 +967,8 @@ export const Table = forwardRef(
       headers,
       contentHeader,
       loading,
-      rowHeight = ROW_HEIGHT,
-      backgroundColor = theme.tableBackground,
+      rowHeight: rowHeightProp,
+      backgroundColor: backgroundColorProp,
       renderItem,
       renderEmpty,
       getItemKey,
@@ -977,6 +983,12 @@ export const Table = forwardRef(
     },
     ref,
   ) => {
+    // Defaults are applied here rather than in the destructuring so React
+    // Compiler can compile this component (without the yarn patch it bails
+    // out on any destructuring default).
+    const rowHeight = rowHeightProp ?? ROW_HEIGHT;
+    const backgroundColor = backgroundColorProp ?? theme.tableBackground;
+
     if (!navigator) {
       navigator = {
         onEdit: () => {},
@@ -1047,6 +1059,15 @@ export const Table = forwardRef(
       },
     }));
 
+    function saveScrollDelayed() {
+      saveScrollWidth(
+        scrollContainer.current?.offsetParent
+          ? scrollContainer.current?.offsetParent.clientWidth
+          : 0,
+        scrollContainer.current ? scrollContainer.current.clientWidth : 0,
+      );
+    }
+
     useLayoutEffect(() => {
       // We wait for the list to mount because AutoSizer needs to run
       // before it's mounted
@@ -1063,15 +1084,6 @@ export const Table = forwardRef(
         return () => clearTimeout(timeout);
       }
     });
-
-    function saveScrollDelayed() {
-      saveScrollWidth(
-        scrollContainer.current?.offsetParent
-          ? scrollContainer.current?.offsetParent.clientWidth
-          : 0,
-        scrollContainer.current ? scrollContainer.current.clientWidth : 0,
-      );
-    }
 
     function renderRow({ index, style, key }) {
       const item = items[index];
@@ -1189,7 +1201,9 @@ export const Table = forwardRef(
             getEmptyContent(renderEmpty)
           ) : (
             <AutoSizer
-              renderProp={({ width = 0, height = 0 }) => {
+              renderProp={size => {
+                const width = size.width ?? 0;
+                const height = size.height ?? 0;
                 if (width === 0 || height === 0) {
                   return null;
                 }

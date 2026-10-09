@@ -417,6 +417,58 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
     ).toStrictEqual(['Payees']);
   });
 
+  test('arrow keys highlight items in render order across all sections', async () => {
+    const nearbyPayees = [
+      makeNearbyPayee('Coffee Shop', 0.3),
+      makeNearbyPayee('Grocery Store', 1.2),
+    ];
+    const payees: PayeeEntity[] = [
+      makePayee('Alice'),
+      makePayee('Bob'),
+      makePayee('Eve', { favorite: true }),
+      {
+        id: 'transfer-id',
+        name: 'Bank of Montreal',
+        favorite: false,
+        transfer_acct: accounts[0].id,
+      },
+    ];
+    vi.mocked(useNearbyPayees).mockReturnValue(
+      mockNearbyPayeesResult(nearbyPayees),
+    );
+
+    await clickAutocomplete(renderPayeeAutocomplete({ payees }));
+
+    const items = () => [
+      ...screen
+        .getByTestId('autocomplete')
+        .querySelectorAll(ALL_PAYEE_ITEMS_SELECTOR),
+    ];
+    const highlightedNames = () =>
+      items()
+        .filter(e => e.hasAttribute('data-highlighted'))
+        .map(e => firstOrIncorrect(e.getAttribute('data-testid')));
+    const allNames = items().map(e =>
+      firstOrIncorrect(e.getAttribute('data-testid')),
+    );
+
+    expect(allNames).toStrictEqual([
+      'Coffee Shop',
+      'Grocery Store',
+      'Eve',
+      'Alice',
+      'Bob',
+      'Bank of Montreal',
+    ]);
+
+    const visited: string[][] = [];
+    for (let i = 0; i < allNames.length; i++) {
+      await userEvent.keyboard('{ArrowDown}');
+      visited.push(highlightedNames());
+    }
+    expect(visited).toStrictEqual(allNames.map(name => [name]));
+  });
+
   test('ranks an exact payee match above a longer tied substring match', async () => {
     // Payees are already alpha-sorted, so 'AAA Google' is listed first;
     // a stable sort on a tied fzf score would otherwise leave it ahead of

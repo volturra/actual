@@ -174,12 +174,20 @@ function PayeeList({
   highlightedIndex,
   embedded,
   inputValue,
-  renderCreatePayeeButton = defaultRenderCreatePayeeButton,
-  renderPayeeItemGroupHeader = defaultRenderPayeeItemGroupHeader,
-  renderPayeeItem = defaultRenderPayeeItem,
+  renderCreatePayeeButton: renderCreatePayeeButtonProp,
+  renderPayeeItemGroupHeader: renderPayeeItemGroupHeaderProp,
+  renderPayeeItem: renderPayeeItemProp,
   footer,
   onForgetLocation,
 }: PayeeListProps) {
+  // Defaults are applied here rather than in the destructuring so React
+  // Compiler can compile this component (without the yarn patch it bails
+  // out on any destructuring default).
+  const renderCreatePayeeButton =
+    renderCreatePayeeButtonProp ?? defaultRenderCreatePayeeButton;
+  const renderPayeeItemGroupHeader =
+    renderPayeeItemGroupHeaderProp ?? defaultRenderPayeeItemGroupHeader;
+  const renderPayeeItem = renderPayeeItemProp ?? defaultRenderPayeeItem;
   const { t } = useTranslation();
 
   // If the "new payee" item exists, create it as a special-cased item
@@ -188,7 +196,6 @@ function PayeeList({
 
   const { newPayee, suggestedPayees, payees, transferPayees, nearbyPayees } =
     useMemo(() => {
-      let currentIndex = 0;
       const result = items.reduce(
         (acc, item) => {
           if (item.id === 'new') {
@@ -213,29 +220,37 @@ function PayeeList({
         },
       );
 
-      // assign indexes in render order
+      // Assign indexes in render order. Each group starts where the
+      // previous one ended (no counter mutated inside the callbacks, which
+      // React Compiler cannot compile).
       const newPayeeWithIndex = result.newPayee
-        ? { ...result.newPayee, highlightedIndex: currentIndex++ }
+        ? { ...result.newPayee, highlightedIndex: 0 }
         : null;
 
-      const nearbyPayeesWithIndex = result.nearbyPayees.map(item => ({
+      const nearbyOffset = newPayeeWithIndex ? 1 : 0;
+      const nearbyPayeesWithIndex = result.nearbyPayees.map((item, i) => ({
         ...item,
-        highlightedIndex: currentIndex++,
+        highlightedIndex: nearbyOffset + i,
       }));
 
-      const suggestedPayeesWithIndex = result.suggestedPayees.map(item => ({
+      const suggestedOffset = nearbyOffset + nearbyPayeesWithIndex.length;
+      const suggestedPayeesWithIndex = result.suggestedPayees.map(
+        (item, i) => ({
+          ...item,
+          highlightedIndex: suggestedOffset + i,
+        }),
+      );
+
+      const payeesOffset = suggestedOffset + suggestedPayeesWithIndex.length;
+      const payeesWithIndex = result.payees.map((item, i) => ({
         ...item,
-        highlightedIndex: currentIndex++,
+        highlightedIndex: payeesOffset + i,
       }));
 
-      const payeesWithIndex = result.payees.map(item => ({
+      const transferOffset = payeesOffset + payeesWithIndex.length;
+      const transferPayeesWithIndex = result.transferPayees.map((item, i) => ({
         ...item,
-        highlightedIndex: currentIndex++,
-      }));
-
-      const transferPayeesWithIndex = result.transferPayees.map(item => ({
-        ...item,
-        highlightedIndex: currentIndex++,
+        highlightedIndex: transferOffset + i,
       }));
 
       return {
@@ -339,6 +354,10 @@ function PayeeList({
   );
 }
 
+const EMPTY_PAYEES: PayeeEntity[] = [];
+const EMPTY_NEARBY_PAYEES: NearbyPayeeEntity[] = [];
+const EMPTY_ACCOUNTS: AccountEntity[] = [];
+
 export type PayeeAutocompleteProps = ComponentProps<
   typeof Autocomplete<PayeeAutocompleteItem>
 > & {
@@ -364,44 +383,52 @@ export type PayeeAutocompleteProps = ComponentProps<
 export function PayeeAutocomplete({
   value,
   inputProps,
-  showInactivePayees = false,
-  showMakeTransfer = true,
-  showManagePayees = false,
-  clearOnBlur = true,
+  showInactivePayees: showInactivePayeesProp,
+  showMakeTransfer: showMakeTransferProp,
+  showManagePayees: showManagePayeesProp,
+  clearOnBlur: clearOnBlurProp,
   closeOnBlur,
   embedded,
   onUpdate,
   onSelect,
   onManagePayees,
-  renderCreatePayeeButton = defaultRenderCreatePayeeButton,
-  renderPayeeItemGroupHeader = defaultRenderPayeeItemGroupHeader,
-  renderPayeeItem = defaultRenderPayeeItem,
-  accounts,
-  payees,
-  nearbyPayees,
+  renderCreatePayeeButton: renderCreatePayeeButtonProp,
+  renderPayeeItemGroupHeader: renderPayeeItemGroupHeaderProp,
+  renderPayeeItem: renderPayeeItemProp,
+  accounts: accountsProp,
+  payees: payeesProp,
+  nearbyPayees: nearbyPayeesProp,
   ...props
 }: PayeeAutocompleteProps) {
+  // Defaults are applied here rather than in the destructuring, and the
+  // fallback lists are new constants rather than reassigned props, so React
+  // Compiler can compile this component.
+  const showInactivePayees = showInactivePayeesProp ?? false;
+  const showMakeTransfer = showMakeTransferProp ?? true;
+  const showManagePayees = showManagePayeesProp ?? false;
+  const clearOnBlur = clearOnBlurProp ?? true;
+  const renderCreatePayeeButton =
+    renderCreatePayeeButtonProp ?? defaultRenderCreatePayeeButton;
+  const renderPayeeItemGroupHeader =
+    renderPayeeItemGroupHeaderProp ?? defaultRenderPayeeItemGroupHeader;
+  const renderPayeeItem = renderPayeeItemProp ?? defaultRenderPayeeItem;
+
   const { t } = useTranslation();
   const { data: commonPayees } = useCommonPayees();
-  const { data: retrievedPayees = [] } = usePayees();
+  const { data: retrievedPayees } = usePayees();
   const { isGranted } = useLocationPermission();
-  const { data: retrievedNearbyPayees = [] } = useNearbyPayees({
+  const { data: retrievedNearbyPayees } = useNearbyPayees({
     enabled: isGranted,
   });
-  if (!payees) {
-    payees = retrievedPayees;
-  }
+  const payees = payeesProp || retrievedPayees || EMPTY_PAYEES;
   const createPayeeMutation = useCreatePayeeMutation();
   const deletePayeeLocationMutation = useDeletePayeeLocationMutation();
 
-  if (!nearbyPayees) {
-    nearbyPayees = retrievedNearbyPayees;
-  }
+  const nearbyPayees =
+    nearbyPayeesProp || retrievedNearbyPayees || EMPTY_NEARBY_PAYEES;
 
-  const { data: cachedAccounts = [] } = useAccounts();
-  if (!accounts) {
-    accounts = cachedAccounts;
-  }
+  const { data: cachedAccounts } = useAccounts();
+  const accounts = accountsProp || cachedAccounts || EMPTY_ACCOUNTS;
 
   const [focusTransferPayees, setFocusTransferPayees] = useState(false);
   const [rawPayee, setRawPayee] = useState('');
