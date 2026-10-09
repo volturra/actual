@@ -714,7 +714,7 @@ describe('grouped transactions with filters on an incomplete parent', () => {
 
     // The parent exists in `transactions` but has no date, so
     // `v_transactions_internal` leaves it out
-    await db.runQuery(
+    db.runQuery(
       `INSERT INTO transactions (id, acct, amount, date, isParent, isChild, tombstone)
        VALUES ('orphan', 'acct1', -100, NULL, 1, 0, 0)`,
     );
