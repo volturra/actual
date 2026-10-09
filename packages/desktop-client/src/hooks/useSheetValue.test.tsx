@@ -1,5 +1,11 @@
+import { Profiler } from 'react';
+
+import { send } from '@actual-app/core/platform/client/connection';
+import { q } from '@actual-app/core/shared/query';
 import { act, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { Binding } from '#spreadsheet';
 
 import { SheetNameProvider } from './useSheetName';
 import { useSheetValue } from './useSheetValue';
@@ -55,14 +61,17 @@ function emitCellsChanged(cells: CellValue[]) {
 
 type Spreadsheet = ReturnType<typeof useSpreadsheet>;
 
+type CellBinding = Binding<'envelope-budget', 'to-budget'>;
+
 type CellProps = {
+  binding?: CellBinding;
   onChange?: (result: { name: string; value: unknown }) => void;
   onRender: (value: unknown) => void;
 };
 
-function Cell({ onChange, onRender }: CellProps) {
+function Cell({ binding = 'to-budget', onChange, onRender }: CellProps) {
   const value = useSheetValue<'envelope-budget', 'to-budget'>(
-    'to-budget',
+    binding,
     onChange,
   );
   onRender(value);
@@ -72,8 +81,11 @@ function Cell({ onChange, onRender }: CellProps) {
 type HostProps = {
   sheet: string;
   show?: boolean;
+  budgetId?: string;
+  binding?: CellBinding;
   onChange?: CellProps['onChange'];
   onRender: CellProps['onRender'];
+  onCommit: () => void;
   onSpreadsheet: (spreadsheet: Spreadsheet) => void;
 };
 
@@ -85,47 +97,60 @@ function SpreadsheetSpy({ onSpreadsheet }: Pick<HostProps, 'onSpreadsheet'>) {
 function Host({
   sheet,
   show = true,
+  budgetId,
+  binding,
   onChange,
   onRender,
+  onCommit,
   onSpreadsheet,
 }: HostProps) {
   return (
-    <SpreadsheetProvider>
+    <SpreadsheetProvider budgetId={budgetId}>
       <SpreadsheetSpy onSpreadsheet={onSpreadsheet} />
       {show && (
         <SheetNameProvider name={sheet}>
-          <Cell onChange={onChange} onRender={onRender} />
+          <Profiler id="cell" onRender={onCommit}>
+            <Cell binding={binding} onChange={onChange} onRender={onRender} />
+          </Profiler>
         </SheetNameProvider>
       )}
     </SpreadsheetProvider>
   );
 }
 
-function setup(initialProps: { sheet: string; show?: boolean }) {
+type RerenderProps = Partial<
+  Pick<HostProps, 'sheet' | 'show' | 'budgetId' | 'binding' | 'onChange'>
+>;
+
+function setup(initialProps: { sheet: string } & RerenderProps) {
   // Every value the hook returned, in render order.
   const renders: unknown[] = [];
+  // Number of commits of the cell's subtree.
+  const commits = { count: 0 };
   let spreadsheet: Spreadsheet | undefined;
   const onRender = (value: unknown) => {
     renders.push(value);
+  };
+  const onCommit = () => {
+    commits.count++;
   };
   const onSpreadsheet = (instance: Spreadsheet) => {
     spreadsheet = instance;
   };
 
-  const props = { ...initialProps, onRender, onSpreadsheet };
+  const props = { ...initialProps, onRender, onCommit, onSpreadsheet };
   const result = render(<Host {...props} />);
 
   return {
     renders,
+    commits,
     getSpreadsheet() {
       if (!spreadsheet) {
         throw new Error('Spreadsheet not rendered');
       }
       return spreadsheet;
     },
-    rerender(
-      nextProps: Partial<Pick<HostProps, 'sheet' | 'show' | 'onChange'>>,
-    ) {
+    rerender(nextProps: RerenderProps) {
       Object.assign(props, nextProps);
       result.rerender(<Host {...props} />);
     },
@@ -141,6 +166,7 @@ describe('useSheetValue', () => {
   beforeEach(() => {
     mocks.pendingGets.clear();
     mocks.cellsChangedListeners.clear();
+    vi.mocked(send).mockClear();
   });
 
   it('renders null until the value arrives on a cache miss', async () => {
@@ -314,5 +340,119 @@ describe('useSheetValue', () => {
     expect(
       getSpreadsheet().getCachedValue('budget202401', 'to-budget')?.value,
     ).toBe(150);
+  });
+
+  it('commits a cached month change exactly once', async () => {
+    const { commits, getSpreadsheet, rerender } = setup({
+      sheet: 'budget202401',
+    });
+    await resolveGetCell('budget202401!to-budget', 100);
+    getSpreadsheet().prewarmCache('budget202402!to-budget', {
+      name: 'budget202402!to-budget',
+      value: 200,
+    });
+    commits.count = 0;
+
+    rerender({ sheet: 'budget202402' });
+
+    expect(commits.count).toBe(1);
+
+    // The fetched value is the same, so it does not commit again.
+    await resolveGetCell('budget202402!to-budget', 200);
+    expect(commits.count).toBe(1);
+  });
+
+  it('re-binds a binding with the same name but a different query', async () => {
+    const firstQuery = q('transactions').filter({ account: 'a' });
+    const secondQuery = q('transactions').filter({ account: 'b' });
+    const { renders, rerender } = setup({
+      sheet: 'budget202401',
+      binding: { name: 'to-budget', query: firstQuery },
+    });
+    await resolveGetCell('budget202401!to-budget', 100);
+    expect(lastOf(renders)).toBe(100);
+
+    rerender({ binding: { name: 'to-budget', query: secondQuery } });
+
+    // The new query is registered and the cell is fetched again.
+    expect(send).toHaveBeenLastCalledWith('get-cell', {
+      sheetName: 'budget202401',
+      name: 'to-budget',
+    });
+    expect(send).toHaveBeenCalledWith('create-query', {
+      sheetName: 'budget202401',
+      name: 'to-budget',
+      query: secondQuery.serialize(),
+    });
+    await resolveGetCell('budget202401!to-budget', 200);
+    expect(lastOf(renders)).toBe(200);
+  });
+
+  it('does not cache changes to cells that are neither cached nor observed', () => {
+    const { getSpreadsheet } = setup({ sheet: 'budget202401' });
+
+    emitCellsChanged([{ name: 'budget202405!to-budget', value: 500 }]);
+
+    expect(
+      getSpreadsheet().getCachedValue('budget202405', 'to-budget'),
+    ).toBeUndefined();
+  });
+
+  it('renders the binding default when re-binding to an uncached cell', async () => {
+    const { renders, rerender } = setup({
+      sheet: 'budget202401',
+      binding: { name: 'to-budget', value: 42 },
+    });
+    expect(renders).toEqual([42]);
+    await resolveGetCell('budget202401!to-budget', 100);
+    renders.length = 0;
+
+    rerender({ sheet: 'budget202402' });
+
+    expect(renders).not.toContain(100);
+    expect(renders.every(value => value === 42)).toBe(true);
+    expect(renders.length).toBeGreaterThan(0);
+
+    await resolveGetCell('budget202402!to-budget', 200);
+    expect(lastOf(renders)).toBe(200);
+  });
+
+  it('does not leak cached values from one budget to the next', async () => {
+    const { renders, getSpreadsheet, rerender } = setup({
+      sheet: 'budget202401',
+      budgetId: 'budget-a',
+    });
+    await resolveGetCell('budget202401!to-budget', 100);
+    getSpreadsheet().prewarmCache('budget202402!to-budget', {
+      name: 'budget202402!to-budget',
+      value: 200,
+    });
+
+    // Budget A closes while a request is still in flight.
+    rerender({ sheet: 'budget202402', show: false });
+    rerender({ sheet: 'budget202403', show: true });
+    rerender({ show: false, budgetId: undefined });
+    expect(
+      getSpreadsheet().getCachedValue('budget202401', 'to-budget'),
+    ).toBeUndefined();
+    expect(
+      getSpreadsheet().getCachedValue('budget202402', 'to-budget'),
+    ).toBeUndefined();
+
+    // Budget B opens and renders the same cells.
+    renders.length = 0;
+    rerender({ sheet: 'budget202401', show: true, budgetId: 'budget-b' });
+    expect(renders).toEqual([null]);
+
+    // A late reply for budget A is ignored.
+    await resolveGetCell('budget202403!to-budget', 300);
+    expect(
+      getSpreadsheet().getCachedValue('budget202403', 'to-budget'),
+    ).toBeUndefined();
+
+    // Budget B's own value still arrives.
+    await resolveGetCell('budget202401!to-budget', 1000);
+    expect(lastOf(renders)).toBe(1000);
+    expect(renders).not.toContain(100);
   });
 });

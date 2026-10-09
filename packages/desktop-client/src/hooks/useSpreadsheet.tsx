@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { listen, send } from '@actual-app/core/platform/client/connection';
@@ -85,6 +85,18 @@ function makeSpreadsheet() {
       binding: Binding,
     ): CellCacheValue | undefined {
       return LRUValueCache.get(resolveBindingName(sheetName, binding));
+    }
+
+    /**
+     * Forgets every cached cell value and pending request, e.g. when the
+     * open budget changes, so the next budget never renders the previous
+     * budget's values. Replies to requests made before this are ignored.
+     */
+    clear(): void {
+      LRUValueCache.clear();
+      for (const name of Object.keys(cellCache)) {
+        delete cellCache[name];
+      }
     }
 
     prewarmCache(name: string, value: CellCacheValue): void {
@@ -178,11 +190,25 @@ function makeSpreadsheet() {
 }
 
 type SpreadsheetProviderProps = {
+  // The id of the open budget, if any. Cell values are cached per budget.
+  budgetId?: string | undefined;
   children: ReactNode;
 };
 
-export function SpreadsheetProvider({ children }: SpreadsheetProviderProps) {
+export function SpreadsheetProvider({
+  budgetId,
+  children,
+}: SpreadsheetProviderProps) {
   const spreadsheet = useMemo(() => makeSpreadsheet(), []);
+
+  const [cachedBudgetId, setCachedBudgetId] = useState(budgetId);
+  if (cachedBudgetId !== budgetId) {
+    // Clear during render, before any cell of the new budget binds (child
+    // effects run before this component's effects), so neither the cached
+    // values nor late replies of the previous budget reach it.
+    spreadsheet.clear();
+    setCachedBudgetId(budgetId);
+  }
 
   useEffect(() => {
     return spreadsheet.listen();
