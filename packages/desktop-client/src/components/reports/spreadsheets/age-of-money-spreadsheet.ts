@@ -94,6 +94,8 @@ export function calculateAgeOfMoney(
   const ages: Array<{ date: string; age: number }> = [];
   let currentBucketIdx = 0;
   let insufficientData = false;
+  // Day numbers per distinct date string, so each date is parsed once.
+  const dayNumbers = new Map<string, number | null>();
 
   for (const expense of sortedExpenses) {
     // Expense amounts are negative, so we work with absolute value
@@ -125,14 +127,72 @@ export function calculateAgeOfMoney(
 
     // Calculate age if we had a bucket to draw from
     if (lastBucketDate) {
-      const expenseDate = d.parseISO(expense.date);
-      const bucketDate = d.parseISO(lastBucketDate);
-      const ageInDays = d.differenceInDays(expenseDate, bucketDate);
+      const ageInDays = differenceInDays(
+        expense.date,
+        lastBucketDate,
+        dayNumbers,
+      );
       ages.push({ date: expense.date, age: Math.max(0, ageInDays) });
     }
   }
 
   return { ages, insufficientData };
+}
+
+const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Convert a `YYYY-MM-DD` date to a whole number of days since the epoch,
+ * caching the result per date string. The difference of two day numbers
+ * equals date-fns `differenceInDays` of the same dates parsed with
+ * `parseISO`, but costs far less per row. Dates that match the pattern but
+ * do not exist (e.g. 2024-02-30) give NaN, as date-fns does. Other formats
+ * give null so the caller can fall back to date-fns.
+ */
+function toDayNumber(
+  date: string,
+  cache: Map<string, number | null>,
+): number | null {
+  const cached = cache.get(date);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  let dayNumber: number | null = null;
+  const match = DATE_PATTERN.exec(date);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]) - 1;
+    const day = Number(match[3]);
+    const utc = new Date(0);
+    utc.setUTCFullYear(year, month, day);
+    const isValid =
+      utc.getUTCFullYear() === year &&
+      utc.getUTCMonth() === month &&
+      utc.getUTCDate() === day;
+    dayNumber = isValid ? Math.round(utc.getTime() / MS_PER_DAY) : NaN;
+  }
+
+  cache.set(date, dayNumber);
+  return dayNumber;
+}
+
+/**
+ * Whole days from `fromDate` to `toDate`, matching
+ * `d.differenceInDays(d.parseISO(toDate), d.parseISO(fromDate))`.
+ */
+function differenceInDays(
+  toDate: string,
+  fromDate: string,
+  cache: Map<string, number | null>,
+): number {
+  const to = toDayNumber(toDate, cache);
+  const from = toDayNumber(fromDate, cache);
+  if (to === null || from === null) {
+    return d.differenceInDays(d.parseISO(toDate), d.parseISO(fromDate));
+  }
+  return to - from;
 }
 
 /**
@@ -156,13 +216,12 @@ export function getPeriodKey(
   date: string,
   granularity: AgeOfMoneyGranularity,
 ): string {
-  const parsed = d.parseISO(date);
   switch (granularity) {
     case 'daily':
       return date; // YYYY-MM-DD
     case 'weekly': {
       // Use start of week (Monday) as key
-      const weekStart = d.startOfWeek(parsed, { weekStartsOn: 1 });
+      const weekStart = d.startOfWeek(d.parseISO(date), { weekStartsOn: 1 });
       return d.format(weekStart, 'yyyy-MM-dd');
     }
     case 'monthly':
@@ -255,23 +314,33 @@ export function calculateGraphData(
   const periods = generatePeriods(startDate, endDate, granularity);
   const result: Array<{ date: string; ageOfMoney: number }> = [];
 
-  // Group ages by period
+  // Group ages by period. Consecutive ages usually share a date, so the
+  // period key is only recomputed when the date changes.
   const agesByPeriod: Record<string, number[]> = {};
+  let lastDate: string | null = null;
+  let periodAges: number[] = [];
   for (const { date, age } of ages) {
-    const periodKey = getPeriodKey(date, granularity);
-    if (!agesByPeriod[periodKey]) {
-      agesByPeriod[periodKey] = [];
+    if (date !== lastDate) {
+      lastDate = date;
+      const periodKey = getPeriodKey(date, granularity);
+      if (!agesByPeriod[periodKey]) {
+        agesByPeriod[periodKey] = [];
+      }
+      periodAges = agesByPeriod[periodKey];
     }
-    agesByPeriod[periodKey].push(age);
+    periodAges.push(age);
   }
 
   // Calculate cumulative rolling average (last 10 expenses up to each period)
-  let allAgesUpToPeriod: number[] = [];
+  const allAgesUpToPeriod: number[] = [];
 
   for (const period of periods) {
     // Add ages from this period
-    if (agesByPeriod[period]) {
-      allAgesUpToPeriod = allAgesUpToPeriod.concat(agesByPeriod[period]);
+    const agesInPeriod = agesByPeriod[period];
+    if (agesInPeriod) {
+      for (const age of agesInPeriod) {
+        allAgesUpToPeriod.push(age);
+      }
     }
 
     // Calculate average of last 10 ages
