@@ -202,6 +202,8 @@ function desktopScenarios(page: Page, refs: BenchmarkRefs): Scenario[] {
     name: 'app: load + open budget',
     reps: 3,
     warmup: 0,
+    // A reload reopens the current page, so start from the budget
+    setup: toBudgetPage,
     run: async () => {
       await page.reload();
       await budgetTable.waitFor({ timeout: 60_000 });
@@ -858,11 +860,12 @@ async function runMobile(
           .waitFor();
       },
     },
-    // Last: reloading can leave the mobile page on a blank screen
     {
       name: 'mobile: load + open budget',
       reps: 3,
       warmup: 0,
+      // A reload reopens the current page, so start from the budget
+      setup: toBudgetPage,
       run: async () => {
         await page.reload();
         await budgetTable.waitFor({ timeout: 60_000 });
