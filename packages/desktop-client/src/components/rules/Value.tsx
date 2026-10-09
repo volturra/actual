@@ -28,14 +28,18 @@ type ValueProps<T> = {
   style?: CSSProperties;
 };
 
+// Kept out of the parameter list so React Compiler can compile `Value`
+function describeByName(item: { name?: string }) {
+  return item.name;
+}
+
 export function Value<T>({
   value,
   field,
   valueIsRaw,
   inline = false,
   data: dataProp,
-  // @ts-expect-error fix this later
-  describe = x => x.name,
+  describe,
   style,
 }: ValueProps<T>) {
   const { t } = useTranslation();
@@ -128,7 +132,7 @@ export function Value<T>({
           if (data && Array.isArray(data)) {
             const item = data.find(item => item.id === value);
             if (item) {
-              return describe(item);
+              return describe ? describe(item) : describeByName(item);
             } else {
               return t('(deleted)');
             }
