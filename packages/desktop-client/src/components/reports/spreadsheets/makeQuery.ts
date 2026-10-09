@@ -66,7 +66,9 @@ export function makeQuery(
  * Those bounds are widened to whole months or years here and compared with
  * the plain `date` column. Comparing `$month` or `$year` of the date instead
  * would wrap the column in a SQL function, which stops SQLite from using the
- * date index.
+ * date index. Dates are stored as YYYYMMDD integers, so bounds with day
+ * (and month) 00 and 99 cover every stored date of the month or year,
+ * including out-of-range ones like 2024-01-00 that the API accepts.
  */
 function dateRangeFilters(
   startDate: string,
@@ -75,14 +77,14 @@ function dateRangeFilters(
 ): ObjectExpression[] {
   if (interval === 'Monthly') {
     return [
-      { date: { $gte: monthUtils.monthFromDate(startDate) + '-01' } },
-      { date: { $lt: monthUtils.nextMonth(endDate) + '-01' } },
+      { date: { $gte: monthUtils.getMonth(startDate) + '-00' } },
+      { date: { $lte: monthUtils.getMonth(endDate) + '-99' } },
     ];
   }
   if (interval === 'Yearly') {
     return [
-      { date: { $gte: monthUtils.getYear(startDate) + '-01-01' } },
-      { date: { $lt: monthUtils.addYears(endDate, 1) + '-01-01' } },
+      { date: { $gte: monthUtils.getYear(startDate) + '-00-00' } },
+      { date: { $lte: monthUtils.getYear(endDate) + '-99-99' } },
     ];
   }
   return [{ date: { $gte: startDate } }, { date: { $lte: endDate } }];

@@ -36,7 +36,7 @@ function compiledDateFilter(
   interval: string,
 ) {
   const where = whereClause(startDate, endDate, interval);
-  const bounds = [...where.matchAll(/\.date (>=|<=|<) (\d{8})\b/g)].map(
+  const bounds = [...where.matchAll(/\.date (>=|<=) (\d{8})\b/g)].map(
     ([, op, bound]) => ({
       op,
       bound: `${bound.slice(0, 4)}-${bound.slice(4, 6)}-${bound.slice(6)}`,
@@ -45,7 +45,7 @@ function compiledDateFilter(
   expect(bounds).toHaveLength(2);
   return (date: string) =>
     bounds.every(({ op, bound }) =>
-      op === '>=' ? date >= bound : op === '<=' ? date <= bound : date < bound,
+      op === '>=' ? date >= bound : date <= bound,
     );
 }
 
@@ -104,15 +104,15 @@ describe('makeQuery', () => {
       const where = whereClause('2025-02-14', '2025-07-09', interval);
 
       expect(where).not.toMatch(/SUBSTR/i);
-      expect(where).toMatch(/\.date >= \d{8} AND \S+\.date <=? \d{8}/);
+      expect(where).toMatch(/\.date >= \d{8} AND \S+\.date <= \d{8}/);
     },
   );
 
   it.each([
-    ['Monthly', '2025-02-14', '2025-07-09', '>= 20250201', '< 20250801'],
-    ['Monthly', '2024-12-31', '2025-12-31', '>= 20241201', '< 20260101'],
-    ['Monthly', '2024-02-29', '2024-02-29', '>= 20240201', '< 20240301'],
-    ['Yearly', '2023-07-01', '2025-06-30', '>= 20230101', '< 20260101'],
+    ['Monthly', '2025-02-14', '2025-07-09', '>= 20250200', '<= 20250799'],
+    ['Monthly', '2024-12-31', '2025-12-31', '>= 20241200', '<= 20251299'],
+    ['Monthly', '2024-02-29', '2024-02-29', '>= 20240200', '<= 20240299'],
+    ['Yearly', '2023-07-01', '2025-06-30', '>= 20230000', '<= 20259999'],
     ['Daily', '2025-02-14', '2025-07-09', '>= 20250214', '<= 20250709'],
     ['Weekly', '2025-02-09', '2025-07-12', '>= 20250209', '<= 20250712'],
   ])(
@@ -128,7 +128,12 @@ describe('makeQuery', () => {
   it.each(intervals)(
     'keeps the same days as comparing whole intervals for %s reports',
     interval => {
-      const days = monthUtils.dayRangeInclusive('2022-11-01', '2025-02-28');
+      const days = [
+        ...monthUtils.dayRangeInclusive('2022-11-01', '2025-02-28'),
+        // Out-of-range days and months that the API can still store
+        ...['2023-01-00', '2023-02-31', '2023-12-32', '2023-13-05'],
+        ...['2024-00-00', '2024-02-30', '2024-99-99'],
+      ];
       for (const startDate of dateEdges) {
         for (const endDate of dateEdges) {
           const actual = compiledDateFilter(startDate, endDate, interval);
