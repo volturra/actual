@@ -7,35 +7,39 @@ import { generateCategoryGroups } from '@actual-app/core/mocks';
 import type { CategoryGroupEntity } from '@actual-app/core/types/models';
 import { render, screen } from '@testing-library/react';
 
+import type * as Sort from '#components/sort';
 import { TestProviders } from '#mocks';
 
 import { BudgetCategories } from './BudgetCategories';
 import { MonthsContext } from './MonthsContext';
 
-const sidebarRenders = vi.hoisted(() => new Map<string, number>());
+const rowRuns = vi.hoisted(() => new Map<string, number>());
 
-function countRender(id: string) {
-  sidebarRenders.set(id, (sidebarRenders.get(id) ?? 0) + 1);
-}
+// Every category row and expense group row calls `useDraggable` with its
+// item, so this counts how often each row component actually runs.
+vi.mock('#components/sort', async importOriginal => {
+  const actual = await importOriginal<typeof Sort>();
+  return {
+    ...actual,
+    useDraggable: (args: Parameters<typeof actual.useDraggable>[0]) => {
+      const { id } = args.item as { id: string };
+      rowRuns.set(id, (rowRuns.get(id) ?? 0) + 1);
+      return actual.useDraggable(args);
+    },
+  };
+});
 
-// The sidebars render once per row render, so they count row renders without
-// pulling in the notes queries and menus of the real components.
+// Keep the notes queries and menus of the real sidebars out of the test.
 vi.mock('./SidebarCategory', () => ({
-  SidebarCategory: ({
-    category,
-  }: {
-    category: { id: string; name: string };
-  }) => {
-    countRender(category.id);
-    return <div>{category.name}</div>;
-  },
+  SidebarCategory: ({ category }: { category: { name: string } }) => (
+    <div>{category.name}</div>
+  ),
 }));
 
 vi.mock('./SidebarGroup', () => ({
-  SidebarGroup: ({ group }: { group: { id: string; name: string } }) => {
-    countRender(group.id);
-    return <div>{group.name}</div>;
-  },
+  SidebarGroup: ({ group }: { group: { name: string } }) => (
+    <div>{group.name}</div>
+  ),
 }));
 
 vi.mock('./IncomeHeader', () => ({ IncomeHeader: () => null }));
@@ -78,7 +82,7 @@ function renderCategories(categoryGroups: CategoryGroupEntity[]) {
 
 describe('BudgetCategories', () => {
   beforeEach(() => {
-    sidebarRenders.clear();
+    rowRuns.clear();
   });
 
   it('only re-renders the rows whose data changed', () => {
@@ -93,12 +97,16 @@ describe('BudgetCategories', () => {
     ]);
     const { rerender } = renderCategories([bills, food, income]);
 
-    const allIds = [bills, food, income].flatMap(group => [
-      group.id,
-      ...(group.categories ?? []).map(cat => cat.id),
-    ]);
-    expect([...sidebarRenders.keys()].sort()).toEqual([...allIds].sort());
-    sidebarRenders.clear();
+    // Income groups have no drag handle, so they are not counted.
+    const draggableIds = [
+      bills.id,
+      ...(bills.categories ?? []).map(cat => cat.id),
+      food.id,
+      ...(food.categories ?? []).map(cat => cat.id),
+      ...(income.categories ?? []).map(cat => cat.id),
+    ];
+    expect([...rowRuns.keys()].sort()).toEqual([...draggableIds].sort());
+    rowRuns.clear();
 
     // A sync or rename replaces one category (and its group) with new
     // objects and keeps every other object as it was.
@@ -112,8 +120,10 @@ describe('BudgetCategories', () => {
     expect(screen.getByText('Mortgage')).toBeInTheDocument();
     // The changed group re-renders, and so do its categories, which receive
     // the group as a prop. Food and Income keep their objects and skip.
-    expect([...sidebarRenders.keys()].sort()).toEqual(
-      [bills.id, rent.id, power.id].sort(),
-    );
+    expect(Object.fromEntries(rowRuns)).toEqual({
+      [bills.id]: 1,
+      [rent.id]: 1,
+      [power.id]: 1,
+    });
   });
 });
