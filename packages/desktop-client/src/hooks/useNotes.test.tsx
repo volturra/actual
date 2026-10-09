@@ -8,6 +8,7 @@ import type { NoteEntity } from '@actual-app/core/types/models';
 import type { QueryClient } from '@tanstack/react-query';
 import { act, render, renderHook, screen } from '@testing-library/react';
 
+import { resetApp } from '#app/appSlice';
 import {
   configureTestAppStore,
   createTestQueryClient,
@@ -27,6 +28,7 @@ vi.mock(
 describe('useNotes', () => {
   let notes: NoteEntity[];
   let queryCount: number;
+  let serverHandlers: Parameters<typeof initServer>[0];
   let queryClient: QueryClient;
   let store: ReturnType<typeof configureTestAppStore>;
   let unlisten: () => void;
@@ -40,12 +42,14 @@ describe('useNotes', () => {
       { id: 'cat-1-2024-01', note: 'category month note' },
     ];
     queryCount = 0;
-    initServer({
+    serverHandlers = {
       query: async () => {
         queryCount++;
         return { data: notes.map(n => ({ ...n })), dependencies: ['notes'] };
       },
-    });
+      'close-budget': async () => 'ok',
+    };
+    initServer(serverHandlers);
     queryClient = createTestQueryClient();
     store = configureTestAppStore({ queryClient });
     store.dispatch(mergeLocalPrefs({ id: 'budget-a' }));
@@ -222,6 +226,19 @@ describe('useNotes', () => {
     expect(result.current).toBe('changed while unmounted');
   });
 
+  it('ignores sync events while no budget is loaded', async () => {
+    renderHook(() => useNotes('cat-1'), { wrapper });
+    await flush();
+    expect(queryCount).toBe(1);
+
+    // Leaves the query cache alone, unlike closeBudget
+    store.dispatch(resetApp());
+    expect(store.getState().prefs.local.id).toBeUndefined();
+    await pushSync('applied');
+    await pushSync('success');
+    expect(queryCount).toBe(1);
+  });
+
   it('does not show notes from a previously open budget', async () => {
     const { result, unmount } = renderHook(() => useNotes('cat-1'), {
       wrapper,
@@ -230,8 +247,18 @@ describe('useNotes', () => {
     expect(result.current).toBe('first');
     unmount();
 
-    // Closing a budget clears the query cache (see closeBudget)
-    queryClient.clear();
+    // setupTests loads the redux slices (through #mocks) before this file's
+    // connection mock applies, so load a fresh budgetfilesSlice that uses
+    // the mock, as prefsSlice.test.ts does
+    vi.resetModules();
+    const connection =
+      await import('@actual-app/core/platform/client/connection');
+    connection.initServer(serverHandlers);
+    const { closeBudget } = await import('#budgetfiles/budgetfilesSlice');
+
+    await act(() => store.dispatch(closeBudget()));
+    expect(store.getState().prefs.local.id).toBeUndefined();
+    store.dispatch(mergeLocalPrefs({ id: 'budget-b' }));
     notes = [{ id: 'cat-1', note: 'other budget' }];
 
     const reopened = renderHook(() => useNotes('cat-1'), { wrapper });

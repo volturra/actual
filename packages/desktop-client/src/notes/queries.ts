@@ -11,8 +11,11 @@ export const notesQueries = {
   lists: () => [...notesQueries.all(), 'lists'],
   // One shared query of the whole notes table instead of one query per
   // note id: the budget page alone shows a notes button per category and
-  // month. The table only holds account, category, group and month notes
-  // (transaction notes live on transactions), so it stays small.
+  // month. The table holds account, category, group and month notes
+  // (transaction notes live on transactions), so it grows with category ×
+  // month notes (`${categoryId}-${month}`), and rows are never deleted:
+  // undo leaves null notes and deleting a category leaves its notes
+  // behind. Each row is small, though.
   list: () =>
     queryOptions<NotesById>({
       queryKey: [...notesQueries.lists()],
