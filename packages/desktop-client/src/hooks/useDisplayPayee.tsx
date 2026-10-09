@@ -38,7 +38,7 @@ export function DisplayPayeeProvider({
         .select('*'),
     [transactions],
   );
-  const { transactions: queriedSubtransactions = [] } = useTransactions({
+  const { transactions: queriedSubtransactions } = useTransactions({
     query: subtransactionsQuery,
     options: { pageSize: transactions.length * 5 },
   });
@@ -46,32 +46,46 @@ export function DisplayPayeeProvider({
   // Preview and other not-yet-saved split transactions have subtransactions
   // that only exist in-memory (never persisted), so the query above can't
   // find them. Merge those in from the transactions we were already given.
-  const allSubtransactions = useMemo(() => {
+  const subtransactionsByParent = useMemo(() => {
     const localChildren = transactions.filter(t => t.is_child);
     const localIds = new Set(localChildren.map(t => t.id));
-    return [
-      ...queriedSubtransactions.filter(st => !localIds.has(st.id)),
+    const byParent = new Map<TransactionEntity['id'], TransactionEntity[]>();
+    for (const st of [
+      ...(queriedSubtransactions ?? []).filter(st => !localIds.has(st.id)),
       ...localChildren,
-    ];
+    ]) {
+      if (st.parent_id) {
+        const siblings = byParent.get(st.parent_id);
+        if (siblings) {
+          siblings.push(st);
+        } else {
+          byParent.set(st.parent_id, [st]);
+        }
+      }
+    }
+    return byParent;
   }, [queriedSubtransactions, transactions]);
 
-  const { data: accounts = [] } = useAccounts();
-  const { data: payeesById = {} } = usePayeesById();
+  const { data: accountsData } = useAccounts();
+  const { data: payeesByIdData } = usePayeesById();
 
   const displayPayees = useMemo(() => {
+    const payeesById = payeesByIdData ?? {};
+    const accountsById = new Map(
+      (accountsData ?? []).map(account => [account.id, account]),
+    );
     return transactions.reduce(
       (acc, transaction) => {
-        const subtransactions = allSubtransactions.filter(
-          st => st.parent_id === transaction.id,
-        );
+        const subtransactions =
+          subtransactionsByParent.get(transaction.id) ?? [];
 
         if (subtransactions.length === 0) {
           acc[transaction.id] = getPrettyPayee({
             t,
             transaction,
             payee: payeesById[transaction?.payee || ''],
-            transferAccount: accounts.find(
-              a => a.id === payeesById[transaction?.payee || '']?.transfer_acct,
+            transferAccount: accountsById.get(
+              payeesById[transaction?.payee || '']?.transfer_acct ?? '',
             ),
           });
 
@@ -119,10 +133,9 @@ export function DisplayPayeeProvider({
           t,
           transaction: mostCommonPayeeTransaction,
           payee: mostCommonPayee,
-          transferAccount: accounts.find(
-            a =>
-              a.id ===
-              payeesById[mostCommonPayeeTransaction.payee || '']?.transfer_acct,
+          transferAccount: accountsById.get(
+            payeesById[mostCommonPayeeTransaction.payee || '']?.transfer_acct ??
+              '',
           ),
           numHiddenPayees: numDistinctPayees - 1,
         });
@@ -131,10 +144,12 @@ export function DisplayPayeeProvider({
       },
       {} as Record<TransactionEntity['id'], string>,
     );
-  }, [transactions, allSubtransactions, payeesById, accounts, t]);
+  }, [transactions, subtransactionsByParent, payeesByIdData, accountsData, t]);
+
+  const contextValue = useMemo(() => ({ displayPayees }), [displayPayees]);
 
   return (
-    <DisplayPayeeContext.Provider value={{ displayPayees }}>
+    <DisplayPayeeContext.Provider value={contextValue}>
       {children}
     </DisplayPayeeContext.Provider>
   );
