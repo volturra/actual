@@ -80,6 +80,7 @@
     "#components/reports/spreadsheets/cash-flow-spreadsheet": "./src/components/reports/spreadsheets/cash-flow-spreadsheet.tsx",
     "#components/reports/spreadsheets/*": "./src/components/reports/spreadsheets/*.ts",
     "#components/reports/useDashboardWidgetCopyMenu": "./src/components/reports/useDashboardWidgetCopyMenu.ts",
+    "#components/reports/useMonthNameFormatFit": "./src/components/reports/useMonthNameFormatFit.ts",
     "#components/reports/useReport": "./src/components/reports/useReport.ts",
     "#components/reports/util": "./src/components/reports/util.ts",
     "#components/schedules": "./src/components/schedules/index.tsx",

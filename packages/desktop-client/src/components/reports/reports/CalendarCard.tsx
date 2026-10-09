@@ -1,11 +1,5 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
-import type { Dispatch, Ref, SetStateAction } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 
 import { Block } from '@actual-app/components/block';
@@ -24,7 +18,6 @@ import * as monthUtils from '@actual-app/core/shared/months';
 import type { CalendarWidget } from '@actual-app/core/types/models';
 import type { SyncedPrefs } from '@actual-app/core/types/prefs';
 import { format as formatDate } from 'date-fns';
-import { debounce } from 'es-toolkit/compat';
 
 import { FinancialText } from '#components/FinancialText';
 import { PrivacyFilter } from '#components/PrivacyFilter';
@@ -36,10 +29,10 @@ import { ReportCardName } from '#components/reports/ReportCardName';
 import { calculateTimeRange } from '#components/reports/reportRanges';
 import { calendarSpreadsheet } from '#components/reports/spreadsheets/calendar-spreadsheet';
 import type { CalendarDataType } from '#components/reports/spreadsheets/calendar-spreadsheet';
+import { useMonthNameFormatFit } from '#components/reports/useMonthNameFormatFit';
 import { useReport } from '#components/reports/useReport';
 import { useFormat } from '#hooks/useFormat';
 import type { FormatType } from '#hooks/useFormat';
-import { useMergedRefs } from '#hooks/useMergedRefs';
 import { useNavigate } from '#hooks/useNavigate';
 import { useResizeObserver } from '#hooks/useResizeObserver';
 
@@ -54,7 +47,7 @@ type CalendarCardProps = {
 export function CalendarCard({
   widgetId,
   isEditing,
-  meta = {},
+  meta,
   onMetaChange,
   firstDayOfWeekIdx,
 }: CalendarCardProps) {
@@ -128,8 +121,6 @@ export function CalendarCard({
   }, [data]);
 
   const [monthNameFormats, setMonthNameFormats] = useState<string[]>([]);
-  const [selectedMonthNameFormat, setSelectedMonthNameFormat] =
-    useState<string>('MMMM yyyy');
 
   useEffect(() => {
     if (data) {
@@ -141,18 +132,14 @@ export function CalendarCard({
     }
   }, [data]);
 
-  useEffect(() => {
-    if (monthNameFormats.length) {
-      setSelectedMonthNameFormat(
-        monthNameFormats.reduce(
-          (a, b) => ((a?.length ?? 0) <= (b?.length ?? 0) ? a : b),
-          'MMMM yyyy',
-        ),
-      );
-    } else {
-      setSelectedMonthNameFormat('MMMM yyyy');
-    }
-  }, [monthNameFormats]);
+  // Each month reports the longest format that fits it; show every month in
+  // the shortest of those so they all fit and match. `reduce` skips the holes
+  // left for months that haven't been measured yet.
+  const selectedMonthNameFormat = monthNameFormats.reduce(
+    (shortest, monthFormat) =>
+      shortest.length <= monthFormat.length ? shortest : monthFormat,
+    'MMMM yyyy',
+  );
 
   const calendarLenSize = useMemo(() => {
     if (!data) {
@@ -345,70 +332,8 @@ function CalendarCardInner({
   format,
 }: CalendarCardInnerProps) {
   const { t } = useTranslation();
-  const [monthNameVisible, setMonthNameVisible] = useState(true);
-  const monthFormatSizeContainers = useRef<(HTMLSpanElement | null)[]>(
-    new Array(5),
-  );
-  const monthNameContainerRef = useRef<HTMLDivElement>(null);
-
-  const measureMonthFormats = useCallback(() => {
-    const measurements = monthFormatSizeContainers.current.map(container => ({
-      width: container?.clientWidth ?? 0,
-      format: container?.getAttribute('data-format') ?? '',
-    }));
-    return measurements;
-  }, []);
-
-  const debouncedResizeCallback = useMemo(
-    () =>
-      debounce(() => {
-        const measurements = measureMonthFormats();
-        const containerWidth = monthNameContainerRef.current?.clientWidth ?? 0;
-
-        const suitableFormat = measurements.find(m => containerWidth > m.width);
-        if (suitableFormat) {
-          if (
-            monthNameContainerRef.current &&
-            containerWidth > suitableFormat.width
-          ) {
-            setMonthNameFormats(prev => {
-              if (prev[index] === suitableFormat.format) return prev;
-              const newArray = [...prev];
-              newArray[index] = suitableFormat.format;
-              return newArray;
-            });
-
-            setMonthNameVisible(true);
-            return;
-          }
-        }
-
-        if (
-          monthNameContainerRef.current &&
-          monthNameContainerRef.current.scrollWidth >
-            monthNameContainerRef.current.clientWidth
-        ) {
-          setMonthNameVisible(false);
-        } else {
-          setMonthNameVisible(true);
-        }
-      }, 20),
-    [measureMonthFormats, monthNameContainerRef, index, setMonthNameFormats],
-  );
-
-  const monthNameResizeRef = useResizeObserver(debouncedResizeCallback);
-
-  useEffect(() => {
-    const toCancel = debouncedResizeCallback;
-    return () => {
-      toCancel.cancel();
-    };
-  }, [debouncedResizeCallback]);
-
-  const mergedRef = useMergedRefs(
-    monthNameContainerRef,
-    monthNameResizeRef,
-  ) as Ref<HTMLDivElement>;
+  const { monthNameVisible, monthNameRef, setFormatSizeContainer } =
+    useMonthNameFormatFit(index, setMonthNameFormats);
 
   const navigate = useNavigate();
 
@@ -430,7 +355,7 @@ function CalendarCardInner({
         }}
       >
         <View
-          ref={mergedRef}
+          ref={monthNameRef}
           style={{
             color: theme.pageTextSubdued,
             fontWeight: 'bold',
@@ -543,9 +468,7 @@ function CalendarCardInner({
         {monthFormats.map((item, idx) => (
           <span
             key={item.format}
-            ref={node => {
-              if (node) monthFormatSizeContainers.current[idx] = node;
-            }}
+            ref={node => setFormatSizeContainer(idx, node)}
             style={{ position: 'fixed', top: -9999, left: -9999 }}
             data-format={item.format}
           >
