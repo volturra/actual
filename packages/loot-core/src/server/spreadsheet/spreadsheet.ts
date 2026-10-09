@@ -38,6 +38,14 @@ export class Spreadsheet {
   graph;
   nodes: Map<string, Node>;
   running;
+  // While query cells are being recomputed, the worker gives other requests
+  // a turn between them. This holds the pending resume while it does.
+  pausedComputation: {
+    idx: number;
+    timer: ReturnType<typeof setTimeout>;
+  } | null;
+  // Set once the sheet is closed; any query cells still to run are dropped
+  unloaded: boolean;
   saveCache;
   setCacheStatus;
   transactionDepth;
@@ -51,6 +59,8 @@ export class Spreadsheet {
     this.setCacheStatus = setCacheStatus;
     this.dirtyCells = [];
     this.computeQueue = [];
+    this.pausedComputation = null;
+    this.unloaded = false;
     this.events = mitt();
     this._meta = {
       createdMonths: new Set(),
@@ -147,8 +157,63 @@ export class Spreadsheet {
     void Promise.resolve().then(() => {
       if (!this.running) {
         this.runComputations();
+      } else if (this.pausedComputation && !this.onlyQueriesQueued()) {
+        // Other cells were queued while query cells were giving way. Compute
+        // them now, before any other request runs, like an idle sheet would.
+        this.resumeComputations();
       }
     });
+  }
+
+  /**
+   * Whether this run computes nothing but query cells. Nothing in the sheet
+   * depends on query cells (only the client binds them) and they aren't
+   * cached, so other requests can run in between them without seeing a
+   * half-updated sheet or a stale cache.
+   */
+  onlyQueriesQueued(): boolean {
+    return this.computeQueue.every(name => this.getNode(name).sql != null);
+  }
+
+  /**
+   * Continue with the cell at `idx` after an SQL query cell finished. Each
+   * query cell can take a while (a full scan of transactions), and computing
+   * them all in one go blocks every other request, so let pending requests
+   * through first when that is safe.
+   */
+  continueAfterQuery(idx: number): void {
+    if (idx < this.computeQueue.length && this.onlyQueriesQueued()) {
+      if (this.unloaded) {
+        // The query that just finished was in flight when the sheet was
+        // closed. Don't run the rest against whatever database is open now.
+        this.stopComputations();
+        return;
+      }
+      this.pausedComputation = {
+        idx,
+        timer: setTimeout(() => this.resumeComputations(), 0),
+      };
+    } else {
+      this.runComputations(idx);
+    }
+  }
+
+  resumeComputations(): void {
+    const paused = this.pausedComputation;
+    if (paused) {
+      clearTimeout(paused.timer);
+      this.pausedComputation = null;
+      this.runComputations(paused.idx);
+    }
+  }
+
+  stopComputations(): void {
+    if (this.pausedComputation) {
+      clearTimeout(this.pausedComputation.timer);
+      this.pausedComputation = null;
+    }
+    this.running = false;
+    this.computeQueue = [];
   }
 
   runComputations(idx = 0) {
@@ -198,7 +263,11 @@ export class Spreadsheet {
         result.then(
           value => {
             node.value = value;
-            this.runComputations(idx + 1);
+            if (node.sql) {
+              this.continueAfterQuery(idx + 1);
+            } else {
+              this.runComputations(idx + 1);
+            }
           },
           err => {
             // TODO: use captureException here
@@ -290,6 +359,11 @@ export class Spreadsheet {
   }
 
   unload() {
+    this.unloaded = true;
+    // Only query cells are left, so there is nothing to cache or notify
+    if (this.pausedComputation) {
+      this.stopComputations();
+    }
     this.events.all.clear();
   }
 
