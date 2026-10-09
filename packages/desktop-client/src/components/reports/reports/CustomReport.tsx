@@ -427,12 +427,10 @@ function CustomReportInner({
 
       // The report waits for these dates before it loads, so fall back to
       // today if a lookup fails instead of loading forever.
-      const earliestTransaction = await send('get-earliest-transaction').catch(
-        () => null,
-      );
-      const latestTransaction = await send('get-latest-transaction').catch(
-        () => null,
-      );
+      const [earliestTransaction, latestTransaction] = await Promise.all([
+        send('get-earliest-transaction').catch(() => null),
+        send('get-latest-transaction').catch(() => null),
+      ]);
       const currentDay = monthUtils.currentDay();
       const earliestTransactionDate = earliestTransaction?.date ?? currentDay;
       const latestTransactionDate = latestTransaction?.date ?? currentDay;

@@ -36,7 +36,8 @@ type SpreadsheetQueryData = {
 const inFlightQueries = new Map<string, Promise<SpreadsheetQueryData>>();
 
 // Bumped whenever the data may have changed, so a call made after a sync or
-// an undo never joins a call whose queries ran against the old data.
+// an undo never joins a call whose queries ran against the old data. This is
+// a narrow guard: it only matters while a call is still in flight.
 let dataGeneration = 0;
 let isListening = false;
 

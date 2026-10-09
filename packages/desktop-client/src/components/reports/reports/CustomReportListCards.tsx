@@ -88,12 +88,10 @@ function CustomReportListCardsInner({
     async function run() {
       // The card waits for these dates before it loads, so fall back to today
       // if a lookup fails instead of loading forever.
-      const earliestTrans = await send('get-earliest-transaction').catch(
-        () => null,
-      );
-      const latestTrans = await send('get-latest-transaction').catch(
-        () => null,
-      );
+      const [earliestTrans, latestTrans] = await Promise.all([
+        send('get-earliest-transaction').catch(() => null),
+        send('get-latest-transaction').catch(() => null),
+      ]);
       setEarliestTransaction(
         earliestTrans ? earliestTrans.date : monthUtils.currentDay(),
       );
