@@ -5,8 +5,10 @@ import type { Query } from '#shared/query';
 import * as aql from './exec';
 import { schema, schemaConfig } from './schema';
 
-// Runs the grouped query shapes used by the Net Worth report
-// (desktop-client net-worth-spreadsheet.ts) against the real engine.
+// The queries below are copies of the grouped query shapes the Net Worth
+// report builds (desktop-client net-worth-spreadsheet.ts), run against the
+// real engine. They are not imported from it, so keep them in sync when the
+// report's queries change.
 
 beforeEach(global.emptyDatabase());
 
