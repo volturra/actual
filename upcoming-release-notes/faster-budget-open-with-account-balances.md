@@ -3,4 +3,4 @@ category: Enhancements
 authors: [volturra]
 ---
 
-Show the budget sooner when opening a large budget, instead of waiting for all account balances to be calculated first
+Keep the app responsive while account balances are calculated after opening a large budget.

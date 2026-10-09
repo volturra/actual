@@ -75,18 +75,15 @@ export class Spreadsheet {
     idx: number;
     cancel: () => void;
   } | null;
-  // Index in `computeQueue` of the first cell that hasn't started computing
-  pendingFrom: number;
-  // How many cells that aren't query cells were queued in this run
-  nonQueryCount: number;
+  // Query cells in `computeQueue` that haven't started computing yet
+  pendingQueries: Set<string>;
+  // Whether this run queued any cell that isn't a query cell
+  queuedOtherCells: boolean;
+  // Whether cells were queued after this run started
+  extended: boolean;
   // Total number of queued cells that finished (or were dropped) so far,
   // across runs. `onFinish` uses it to wait for the cells queued before it.
   computedCount: number;
-  // When a query-only run is extended, the cells queued before that end
-  // here. They are reported in their own `change` once computed, so that
-  // data changing over and over while the run gives way doesn't hold off
-  // `change` forever.
-  segmentEnd: number | null;
   // Set once the sheet is closed; any query cells still to run are dropped
   unloaded: boolean;
   saveCache;
@@ -103,10 +100,10 @@ export class Spreadsheet {
     this.dirtyCells = [];
     this.computeQueue = [];
     this.pausedComputation = null;
-    this.pendingFrom = 0;
-    this.nonQueryCount = 0;
+    this.pendingQueries = new Set();
+    this.queuedOtherCells = false;
+    this.extended = false;
     this.computedCount = 0;
-    this.segmentEnd = null;
     this.unloaded = false;
     this.events = mitt();
     this._meta = {
@@ -201,22 +198,20 @@ export class Spreadsheet {
     // depends on query cells, so this doesn't change the order of anything.
     // A query cell that is computing (or done) may have read stale data, so
     // queue it again.
-    const pending = new Set(this.computeQueue.slice(this.pendingFrom));
-    const added = cellNames.filter(
-      name => !(pending.has(name) && this.getNode(name).sql != null),
-    );
-
-    if (
-      this.running &&
-      this.segmentEnd == null &&
-      this.nonQueryCount === 0 &&
-      added.length > 0
-    ) {
-      this.segmentEnd = this.computeQueue.length;
+    const added = cellNames.filter(name => {
+      if (this.getNode(name).sql == null) {
+        this.queuedOtherCells = true;
+        return true;
+      }
+      if (this.pendingQueries.has(name)) {
+        return false;
+      }
+      this.pendingQueries.add(name);
+      return true;
+    });
+    if (this.running && added.length > 0) {
+      this.extended = true;
     }
-    this.nonQueryCount += added.filter(
-      name => this.getNode(name).sql == null,
-    ).length;
     this.computeQueue = this.computeQueue.concat(added);
 
     // Begin running on the next tick so we guarantee that it doesn't finish
@@ -240,29 +235,7 @@ export class Spreadsheet {
    * half-updated sheet or a stale cache.
    */
   onlyQueriesQueued(): boolean {
-    return this.nonQueryCount === 0;
-  }
-
-  /**
-   * If the run reached the end of a segment (see `segmentEnd`), report its
-   * cells and drop them from the queue. Returns the index of the next cell
-   * in the shortened queue.
-   */
-  finishSegment(idx: number): number {
-    if (this.segmentEnd == null || idx < this.segmentEnd) {
-      return idx;
-    }
-
-    const names = this.computeQueue.slice(0, this.segmentEnd);
-    this.computeQueue = this.computeQueue.slice(this.segmentEnd);
-    this.computedCount += names.length;
-    this.pendingFrom = Math.max(0, this.pendingFrom - names.length);
-    this.segmentEnd = null;
-
-    // Segments only hold query cells, which aren't cached, so the cache
-    // status stays as it is until the whole run is done
-    this.events.emit('change', { names });
-    return idx - names.length;
+    return !this.queuedOtherCells;
   }
 
   /**
@@ -272,13 +245,22 @@ export class Spreadsheet {
    * through first when that is safe.
    */
   continueAfterQuery(idx: number): void {
-    idx = this.finishSegment(idx);
     if (idx < this.computeQueue.length && this.onlyQueriesQueued()) {
       if (this.unloaded) {
         // The query that just finished was in flight when the sheet was
         // closed. Don't run the rest against whatever database is open now.
         this.stopComputations();
         return;
+      }
+      if (this.extended) {
+        // Report what's done so far, so data that keeps changing while the
+        // run gives way can't hold off `change` forever
+        const names = this.computeQueue.slice(0, idx);
+        this.computeQueue = this.computeQueue.slice(idx);
+        this.computedCount += names.length;
+        this.extended = false;
+        idx = 0;
+        this.events.emit('change', { names });
       }
       this.pausedComputation = {
         idx,
@@ -310,9 +292,9 @@ export class Spreadsheet {
     this.computedCount += this.computeQueue.length;
     this.running = false;
     this.computeQueue = [];
-    this.pendingFrom = 0;
-    this.nonQueryCount = 0;
-    this.segmentEnd = null;
+    this.pendingQueries.clear();
+    this.queuedOtherCells = false;
+    this.extended = false;
   }
 
   runComputations(idx = 0) {
@@ -326,9 +308,8 @@ export class Spreadsheet {
     this.running = true;
 
     while (idx < this.computeQueue.length) {
-      idx = this.finishSegment(idx);
       const name = this.computeQueue[idx];
-      this.pendingFrom = idx + 1;
+      this.pendingQueries.delete(name);
       let node;
       let result;
 
@@ -465,7 +446,7 @@ export class Spreadsheet {
     }
 
     // Wait for the cells queued so far. A run that gives way between query
-    // cells can report them in several `change`s (see `segmentEnd`).
+    // cells can report them in several `change`s.
     const target = this.computedCount + this.computeQueue.length;
     const remove = this.addEventListener('change', (...args) => {
       if (this.computedCount < target) {
@@ -479,6 +460,12 @@ export class Spreadsheet {
 
   unload() {
     this.unloaded = true;
+    const pendingChange = this.running || this.computeQueue.length > 0;
+    if (pendingChange && this.onlyQueriesQueued()) {
+      // Query cells aren't cached, so the cache is up to date even though
+      // they'll never finish. Mark it as such, as finishing the run would.
+      this.markCacheSafe();
+    }
     // Only query cells are left, so there is nothing to cache or notify
     if (this.pausedComputation) {
       this.stopComputations();

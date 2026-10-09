@@ -303,6 +303,25 @@ describe('Spreadsheet', () => {
       expect(spreadsheet.getValue(second)).toBe(null);
     });
 
+    test('mark the cache safe when unloaded with only query cells left', async () => {
+      await insertTransactions();
+      const setCacheStatus = vi.fn();
+      const spreadsheet = new Spreadsheet(undefined, setCacheStatus);
+      // A sync changes data behind a cache barrier, which ends while the
+      // query cells it queued are still giving way
+      spreadsheet.startCacheBarrier();
+      spreadsheet.transaction(() => {
+        spreadsheet.createQuery('account', 'balance-1', balanceQuery('1'));
+        spreadsheet.createQuery('account', 'balance-2', balanceQuery('2'));
+      });
+      await waitUntil(() => spreadsheet.pausedComputation != null);
+      spreadsheet.endCacheBarrier();
+      expect(setCacheStatus).toHaveBeenLastCalledWith({ clean: false });
+
+      spreadsheet.unload();
+      expect(setCacheStatus).toHaveBeenLastCalledWith({ clean: true });
+    });
+
     test('stop once the query in flight when unloaded finishes', async () => {
       await insertTransactions();
       const spreadsheet = new Spreadsheet();
