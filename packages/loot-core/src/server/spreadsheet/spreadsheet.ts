@@ -188,9 +188,15 @@ export class Spreadsheet {
         }
       } catch (e) {
         logger.log('Error while evaluating ' + name + ':', e);
-        // If an error happens, bail on the rest of the computations. Forget
-        // the query of every cell left uncomputed so the next `createQuery`
-        // for it runs it again.
+        // If an error happens, bail on the rest of the computations. The
+        // cells computed so far have new values, so still notify about them
+        // (`createQuery` no longer reruns an unchanged query to heal them).
+        const computed = this.computeQueue.slice(0, idx);
+        if (computed.length > 0) {
+          this.events.emit('change', { names: computed });
+        }
+        // Forget the query of every cell left uncomputed so the next
+        // `createQuery` for it runs it again.
         for (const skipped of this.computeQueue.slice(idx)) {
           const skippedNode = this.nodes.get(skipped);
           if (skippedNode) {
@@ -376,14 +382,11 @@ export class Spreadsheet {
     const queryKey = JSON.stringify(query);
 
     if (node.queryKey !== queryKey) {
+      // Compile before touching the node, so a query that fails to compile
+      // leaves the previous query, its SQL and its key consistent
+      const { sqlPieces, state } = compileQuery(query, schema, schemaConfig);
       node.query = query;
-      const { sqlPieces, state } = compileQuery(
-        node.query,
-        schema,
-        schemaConfig,
-      );
       node.sql = { sqlPieces, state };
-      // Only once it compiled, so a query that failed to compile is retried
       node.queryKey = queryKey;
 
       this.transaction(() => {

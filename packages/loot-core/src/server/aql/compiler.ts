@@ -1032,6 +1032,8 @@ export type SchemaConfig = {
     | ((name: string, config: { withDead; isJoin; tableOptions }) => string);
   tableFilters?: (name: string) => unknown[];
   customizeQuery?: (queryState: QueryState) => QueryState;
+  /** Extra tables a query on (or joining) `name` reads through its view */
+  tableDependencies?: (name: string) => string[];
   views?: Record<
     string,
     {
@@ -1088,6 +1090,7 @@ export function compileQuery(
     tableViews = {},
     tableFilters = () => [],
     customizeQuery = queryState => queryState,
+    tableDependencies = () => [],
   } = schemaConfig;
 
   const internalTableFilters = name => {
@@ -1189,6 +1192,14 @@ export function compileQuery(
     }
 
     throw e;
+  }
+
+  for (const dependency of [...state.dependencies]) {
+    for (const extra of tableDependencies(dependency)) {
+      if (!state.dependencies.includes(extra)) {
+        state.dependencies.push(extra);
+      }
+    }
   }
 
   const sqlPieces: SqlPieces = {

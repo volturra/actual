@@ -298,6 +298,87 @@ describe('Spreadsheet query cells', () => {
     expect(spreadsheet.getValue('g!balance')).toBe(-15832);
   });
 
+  function insertAndNotify(spreadsheet: Spreadsheet, amount: number) {
+    const [transaction] = generateTransaction({
+      amount,
+      account: '1',
+      date: '2017-01-20',
+    });
+    return db.insertTransaction(transaction).then(() => {
+      spreadsheet.triggerDatabaseChanges(
+        new Map(),
+        new Map([['transactions', new Map([[transaction.id, transaction]])]]),
+      );
+    });
+  }
+
+  test('a later error still reports query cells computed before it', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    // Depends on the query cell, so it is computed after it
+    spreadsheet.createDynamic('g', 'broken', {
+      initialValue: 0,
+      dependencies: ['balance'],
+      run: () => {
+        throw new Error('broken cell');
+      },
+    });
+    await finished(spreadsheet);
+
+    const computed = trackComputed(spreadsheet);
+    await insertAndNotify(spreadsheet, -1000);
+    await finished(spreadsheet);
+
+    expect(computed).toEqual(['g!balance']);
+    expect(spreadsheet.getValue('g!balance')).toBe(-16832);
+  });
+
+  test('a query that fails to compile leaves the previous one bound', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+
+    const invalid = q('transactions')
+      .filter({ not_a_field: 1 })
+      .select(['id'])
+      .serialize();
+    expect(() => spreadsheet.createQuery('g', 'balance', invalid)).toThrow();
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+
+    await insertAndNotify(spreadsheet, -1000);
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(-16832);
+  });
+
+  test('binding again reruns a query whose run failed', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+
+    const view = 'v_transactions_internal_alive';
+    const { sql } = await db.first<{ sql: string }>(
+      'SELECT sql FROM sqlite_master WHERE name = ?',
+      [view],
+    );
+    db.execQuery(`DROP VIEW ${view}`);
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(null);
+
+    db.execQuery(sql);
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+  });
+
   test('a category merge reruns transaction query cells', async () => {
     const spreadsheet = new Spreadsheet();
     await insertTransactions();
@@ -315,6 +396,24 @@ describe('Spreadsheet query cells', () => {
         ['category_mapping', new Map([['cat1', { id: 'cat1' }]])],
         ['categories', new Map([['cat1', { id: 'cat1' }]])],
       ]),
+    );
+    await finished(spreadsheet);
+
+    expect(spreadsheet.getValue('g!cat2')).toBe(-15832);
+  });
+
+  test('a mapping-only write reruns transaction query cells', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+
+    spreadsheet.createQuery('g', 'cat2', sumQuery({ category: 'cat2' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!cat2')).toBe(-12632);
+
+    await db.update('category_mapping', { id: 'cat1', transferId: 'cat2' });
+    spreadsheet.triggerDatabaseChanges(
+      new Map(),
+      new Map([['category_mapping', new Map([['cat1', { id: 'cat1' }]])]]),
     );
     await finished(spreadsheet);
 

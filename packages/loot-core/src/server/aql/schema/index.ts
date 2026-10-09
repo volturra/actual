@@ -227,6 +227,12 @@ export const schema = {
 };
 
 export const schemaConfig: SchemaConfig = {
+  // The transaction views resolve categories and payees through these
+  // mappings, so writing only a mapping (as a merge does) changes results
+  tableDependencies(name) {
+    return name === 'transactions' ? ['category_mapping', 'payee_mapping'] : [];
+  },
+
   // Note: these views *must* represent the underlying table that we
   // are mapping here. The compiler makes optimizations with this
   // assumption
