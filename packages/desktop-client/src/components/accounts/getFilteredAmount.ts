@@ -11,11 +11,8 @@ export async function getFilteredAmount(
   query: Query | undefined,
   isFiltered: boolean,
 ): Promise<number | null> {
-  if (!isFiltered) {
+  if (!isFiltered || !query) {
     return null;
-  }
-  if (!query) {
-    return 0;
   }
 
   const { data } = await aqlQuery(query.calculate({ $sum: '$amount' }));

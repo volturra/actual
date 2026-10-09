@@ -483,14 +483,47 @@ describe('pagedQuery', () => {
 
     // refetchUpToRow does not count either
     await paged.refetchUpToRow(data[30].id, { field: 'date', order: 'desc' });
-    tracer.expectNow(
-      'server-query',
-      expect.objectContaining({ filterExpressions: [{ id: data[30].id }] }),
-    );
-    tracer.expectNow('server-query', expect.anything());
-    tracer.expectNow('server-query', expect.anything());
-    tracer.expectNow('data', expect.anything());
+    expect(paged.data).toContainEqual(select(data[30], ['id', 'date']));
     expect(paged.hasNext).toBe(true);
+
+    const sentQueries = vi
+      .mocked(connection.send)
+      .mock.calls.filter(([name]) => name === 'query')
+      .map(([, args]) => args);
+    expect(sentQueries.length).toBeGreaterThan(0);
+    expect(sentQueries).not.toContainEqual(
+      expect.objectContaining({
+        selectExpressions: [{ result: { $count: '*' } }],
+      }),
+    );
+  });
+
+  it('pagedQuery applies optimistic updates to its data', async () => {
+    const data = mockPagingServer(30);
+    tracer.start();
+
+    const query = q('transactions').select('id');
+    const paged = pagedQuery(query, {
+      onData: (data, prevData) => tracer.event('data', { data, prevData }),
+      options: { pageCount: 20 },
+    });
+
+    await tracer.expect('server-query', ['id']);
+    await tracer.expect('data', ({ data }) => expect(data.length).toBe(20));
+
+    const firstPage = paged.data;
+    paged.optimisticUpdate(rows => [{ id: 'new' }, ...rows.slice(1)]);
+
+    const expected = [{ id: 'new' }, ...selectData(data, ['id']).slice(1, 20)];
+    expect(paged.data).toEqual(expected);
+    tracer.expectNow('data', ({ data, prevData }) => {
+      expect(data).toEqual(expected);
+      expect(prevData).toBe(firstPage);
+    });
+
+    // An optimistic update is local only: nothing is sent to the server
+    const p = Promise.race([tracer.wait('server-query'), wait(100)]);
+    expect(await p).toEqual('wait(100)');
   });
 
   it('pagedQuery only runs `fetchNext` once at a time', async () => {
