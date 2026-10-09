@@ -690,3 +690,96 @@ describe('grouped transactions with filters', () => {
     ]);
   });
 });
+
+describe('grouped transactions with filters on an incomplete parent', () => {
+  async function setup() {
+    await db.insertAccount({ id: 'acct1', name: 'Checking' });
+    await db.insertPayee({ id: 'cafe', name: 'Cafe' });
+
+    const base = { account: 'acct1', amount: -100, payee: 'cafe' };
+    await insertTransactions([
+      { ...base, id: 't1', date: '2024-01-01' },
+      { ...base, id: 't2', date: '2024-01-02' },
+      { ...base, id: 't3', date: '2024-01-03' },
+      { ...base, id: 't4', date: '2024-01-04' },
+      // A child whose parent is excluded from the view below
+      {
+        ...base,
+        id: 'orphan-a',
+        date: '2024-01-05',
+        is_child: true,
+        parent_id: 'orphan',
+      },
+    ]);
+
+    // The parent exists in `transactions` but has no date, so
+    // `v_transactions_internal` leaves it out
+    await db.runQuery(
+      `INSERT INTO transactions (id, acct, amount, date, isParent, isChild, tombstone)
+       VALUES ('orphan', 'acct1', -100, NULL, 1, 0, 0)`,
+    );
+  }
+
+  function query() {
+    return q('transactions')
+      .options({ splits: 'grouped' })
+      .filter({ account: 'acct1', payee: 'cafe' })
+      .orderBy({ date: 'asc' })
+      .select('*');
+  }
+
+  async function ids(query) {
+    const { data } = await aqlQuery(query.serialize());
+    return data.map(t => t.id);
+  }
+
+  it('does not return the group or let it use up a limit slot', async () => {
+    await setup();
+    expect(await ids(query())).toEqual(['t1', 't2', 't3', 't4']);
+    expect(await ids(query().limit(2))).toEqual(['t1', 't2']);
+  });
+
+  it('pages without duplicating or skipping rows', async () => {
+    await setup();
+    // Same shape as PagedQuery: the next page starts at the number of
+    // rows already loaded, and a short page means the end was reached
+    const pageCount = 2;
+    const page1 = await ids(query().limit(pageCount));
+    const page2 = await ids(query().limit(pageCount).offset(page1.length));
+    const page3 = await ids(
+      query()
+        .limit(pageCount)
+        .offset(page1.length + page2.length),
+    );
+
+    expect(page1).toHaveLength(pageCount);
+    expect(page2).toHaveLength(pageCount);
+    expect(page3).toEqual([]);
+    expect([...page1, ...page2]).toEqual(['t1', 't2', 't3', 't4']);
+  });
+
+  it('does not materialize the transactions view', async () => {
+    await setup();
+    const allSpy = vi.spyOn(db, 'all');
+    try {
+      await aqlQuery(query().limit(2).serialize());
+      const call = allSpy.mock.calls.find(([sql]) =>
+        sql.includes('GROUP_CONCAT'),
+      );
+      expect(call).toBeDefined();
+
+      const [rowSql, params] = call;
+      const plan = await db.all<{ detail: string }>(
+        `EXPLAIN QUERY PLAN ${rowSql}`,
+        params,
+      );
+      const details = plan.map(row => row.detail);
+      expect(details.length).toBeGreaterThan(0);
+      expect(details).not.toContainEqual(
+        expect.stringContaining('MATERIALIZE v_transactions_internal'),
+      );
+    } finally {
+      allSpy.mockRestore();
+    }
+  });
+});
