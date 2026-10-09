@@ -23,6 +23,9 @@ async function getCell({
   sheetName: string;
   name: string;
 }) {
+  // Query cells are computed one at a time, with other requests running in
+  // between, so mid-run this can return null (not computed yet) or an old
+  // value for one. Its final value is sent to the client through `change`.
   const node = sheet.get()._getNode(resolveName(sheetName, name));
   return { name: node.name, value: node.value };
 }
