@@ -2,13 +2,10 @@
 import { styles } from '@actual-app/components/styles';
 import type { CSSProperties } from '@actual-app/components/styles';
 import { theme } from '@actual-app/components/theme';
-import { send } from '@actual-app/core/platform/client/connection';
-import * as monthUtils from '@actual-app/core/shared/months';
 import {
   currencyToAmount,
   integerToCurrency,
 } from '@actual-app/core/shared/util';
-import type { Handlers } from '@actual-app/core/types/handlers';
 import type {
   CategoryEntity,
   CategoryGroupEntity,
@@ -19,7 +16,7 @@ import { t } from 'i18next';
 import type { DropPosition } from '#components/sort';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
 
-import { getValidMonthBounds } from './MonthsContext';
+import { getMonthValues, getPrewarmMonths } from './initialBudgetData';
 
 export function addToBeBudgetedGroup(groups: CategoryGroupEntity[]) {
   return [
@@ -183,12 +180,7 @@ export async function prewarmMonth(
   spreadsheet: ReturnType<typeof useSpreadsheet>,
   month: string,
 ) {
-  const method: keyof Handlers =
-    budgetType === 'tracking'
-      ? 'tracking-budget-month'
-      : 'envelope-budget-month';
-
-  const values = await send(method, { month });
+  const values = await getMonthValues(budgetType, month);
 
   for (const value of values) {
     spreadsheet.prewarmCache(value.name, value);
@@ -201,14 +193,7 @@ export async function prewarmAllMonths(
   bounds: { start: string; end: string },
   startMonth: string,
 ) {
-  const numMonths = 3;
-
-  bounds = getValidMonthBounds(
-    bounds,
-    monthUtils.subMonths(startMonth, 1),
-    monthUtils.addMonths(startMonth, numMonths + 1),
-  );
-  const months = monthUtils.rangeInclusive(bounds.start, bounds.end);
+  const months = getPrewarmMonths(bounds, startMonth);
 
   await Promise.all(
     months.map(month => prewarmMonth(budgetType, spreadsheet, month)),

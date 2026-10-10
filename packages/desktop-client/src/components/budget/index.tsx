@@ -24,6 +24,7 @@ import {
 import { useCategories } from '#hooks/useCategories';
 import { useGlobalPref } from '#hooks/useGlobalPref';
 import { useLocalPref } from '#hooks/useLocalPref';
+import { useMetadataPref } from '#hooks/useMetadataPref';
 import { useNavigate } from '#hooks/useNavigate';
 import { SheetNameProvider } from '#hooks/useSheetName';
 import { useSpreadsheet } from '#hooks/useSpreadsheet';
@@ -32,6 +33,7 @@ import { useSyncedPref } from '#hooks/useSyncedPref';
 import { AutoSizingBudgetTable } from './DynamicBudgetTable';
 import * as envelopeBudget from './envelope/EnvelopeBudgetComponents';
 import { EnvelopeBudgetProvider } from './envelope/EnvelopeBudgetContext';
+import { takeInitialBudgetData } from './initialBudgetData';
 import * as trackingBudget from './tracking/TrackingBudgetComponents';
 import { TrackingBudgetProvider } from './tracking/TrackingBudgetContext';
 import { prewarmAllMonths, prewarmMonth } from './util';
@@ -40,6 +42,7 @@ export function Budget() {
   const currentMonth = monthUtils.currentMonth();
   const spreadsheet = useSpreadsheet();
   const navigate = useNavigate();
+  const [budgetId] = useMetadataPref('id');
   const [summaryCollapsed, setSummaryCollapsedPref] = useLocalPref(
     'budget.summaryCollapsed',
   );
@@ -58,15 +61,30 @@ export function Budget() {
 
   const init = useEffectEvent(() => {
     async function run() {
-      const { start, end } = await send('get-budget-bounds');
-      setBounds({ start, end });
-
-      await prewarmAllMonths(
+      // Requested when the budget was loaded, ahead of other requests
+      const preloaded = await takeInitialBudgetData({
+        budgetId,
         budgetType,
-        spreadsheet,
-        { start, end },
         startMonth,
-      );
+      });
+      if (preloaded) {
+        setBounds(preloaded.bounds);
+        for (const values of preloaded.monthValues) {
+          for (const value of values) {
+            spreadsheet.prewarmCache(value.name, value);
+          }
+        }
+      } else {
+        const { start, end } = await send('get-budget-bounds');
+        setBounds({ start, end });
+
+        await prewarmAllMonths(
+          budgetType,
+          spreadsheet,
+          { start, end },
+          startMonth,
+        );
+      }
 
       setInitialized(true);
     }

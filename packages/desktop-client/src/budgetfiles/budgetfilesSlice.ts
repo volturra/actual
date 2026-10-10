@@ -9,6 +9,10 @@ import type { PayloadAction } from '@reduxjs/toolkit';
 import { t } from 'i18next';
 
 import { resetApp, setAppState } from '#app/appSlice';
+import {
+  forgetInitialBudgetData,
+  preloadInitialBudgetData,
+} from '#components/budget/initialBudgetData';
 import { closeModal, pushModal } from '#modals/modalsSlice';
 import { loadGlobalPrefs, loadPrefs } from '#prefs/prefsSlice';
 import { createAppAsyncThunk } from '#redux';
@@ -59,6 +63,7 @@ export const loadBudget = createAppAsyncThunk(
   async ({ id, options = {} }: LoadBudgetPayload, { dispatch }) => {
     dispatch(setAppState({ loadingText: t('Loading...') }));
     forgetInFlightReportRequests();
+    forgetInitialBudgetData();
 
     // Loading a budget may fail
     const { error } = await send('load-budget', { id, ...options });
@@ -91,6 +96,9 @@ export const loadBudget = createAppAsyncThunk(
         alert(message);
       }
     } else {
+      // Before anything else, so the budget page doesn't wait behind the
+      // requests of everything that renders before it
+      preloadInitialBudgetData(id);
       dispatch(closeModal());
       await dispatch(loadPrefs());
     }
@@ -107,6 +115,7 @@ export const closeBudget = createAppAsyncThunk(
       dispatch(resetApp());
       queryClient.clear();
       forgetInFlightReportRequests();
+      forgetInitialBudgetData();
       dispatch(setAppState({ loadingText: t('Closing...') }));
       await send('close-budget');
       dispatch(setAppState({ loadingText: null }));
@@ -125,6 +134,7 @@ export const closeBudgetUI = createAppAsyncThunk(
       dispatch(resetApp());
       queryClient.clear();
       forgetInFlightReportRequests();
+      forgetInitialBudgetData();
     }
   },
 );
@@ -166,6 +176,7 @@ export const createBudget = createAppAsyncThunk(
       await send('create-budget', { testMode });
     }
     forgetInFlightReportRequests();
+    forgetInitialBudgetData();
 
     dispatch(closeModal());
 
@@ -226,6 +237,7 @@ export const duplicateBudget = createAppAsyncThunk(
         open: loadBudget,
       });
       forgetInFlightReportRequests();
+      forgetInitialBudgetData();
 
       dispatch(closeModal());
 
@@ -253,6 +265,7 @@ export const importBudget = createAppAsyncThunk(
   async ({ filepath, type }: ImportBudgetPayload, { dispatch }) => {
     const { error, meta } = await send('import-budget', { filepath, type });
     forgetInFlightReportRequests();
+    forgetInitialBudgetData();
     if (error) {
       const zipMeta = getUnsafeZipMeta(meta);
       throw new Error(zipMeta ? getUnsafeZipError(zipMeta) : error);

@@ -9,7 +9,7 @@ import * as monthUtils from '@actual-app/core/shared/months';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SpreadsheetProvider } from '#hooks/useSpreadsheet';
+import { SpreadsheetProvider, useSpreadsheet } from '#hooks/useSpreadsheet';
 import { resetTestProviders, TestProviders } from '#mocks';
 
 import { Budget } from './index';
@@ -49,19 +49,33 @@ vi.mock('./DynamicBudgetTable', () => ({
 
 // Each `prewarmMonth` call waits until the test resolves it
 const prewarms = vi.hoisted(() => [] as Array<() => void>);
+const prewarmAllMonths = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock('./util', () => ({
-  prewarmAllMonths: () => Promise.resolve(),
+  prewarmAllMonths,
   prewarmMonth: () =>
     new Promise<void>(resolve => {
       prewarms.push(resolve);
     }),
 }));
 
+// What the budget file actions requested when the budget was loaded
+const takeInitialBudgetData = vi.hoisted(() =>
+  vi.fn((): Promise<unknown> => Promise.resolve(null)),
+);
+vi.mock('./initialBudgetData', () => ({ takeInitialBudgetData }));
+
+let spreadsheet: ReturnType<typeof useSpreadsheet> | undefined;
+function SpreadsheetProbe() {
+  spreadsheet = useSpreadsheet();
+  return null;
+}
+
 function renderBudget() {
   return render(
     <TestProviders>
       <MemoryRouter>
         <SpreadsheetProvider>
+          <SpreadsheetProbe />
           <Budget />
         </SpreadsheetProvider>
       </MemoryRouter>
@@ -73,6 +87,11 @@ describe('Budget', () => {
   beforeEach(() => {
     tableRenders.length = 0;
     prewarms.length = 0;
+    prewarmAllMonths.mockClear();
+    // An earlier test may have stored another start month
+    localStorage.clear();
+    takeInitialBudgetData.mockReset();
+    takeInitialBudgetData.mockImplementation(() => Promise.resolve(null));
     resetTestProviders();
   });
 
@@ -161,5 +180,59 @@ describe('Budget', () => {
       'data-month',
       nextNext,
     );
+  });
+  it('renders from the data requested when the budget loaded', async () => {
+    const getBudgetBounds = vi.fn(async () => ({
+      start: '2024-01',
+      end: '2024-12',
+    }));
+    initServer({
+      'get-budget-bounds': getBudgetBounds,
+      'get-categories': async () => ({ grouped: [], list: [] }),
+    });
+    takeInitialBudgetData.mockImplementation(() =>
+      Promise.resolve({
+        bounds: { start: '2024-01', end: '2024-12' },
+        monthValues: [[{ name: 'budget202401!to-budget', value: 500 }]],
+      }),
+    );
+
+    renderBudget();
+    await screen.findByTestId('budget-table');
+
+    expect(takeInitialBudgetData).toHaveBeenCalledWith({
+      budgetId: undefined,
+      budgetType: 'envelope',
+      startMonth: monthUtils.currentMonth(),
+    });
+    expect(prewarmAllMonths).not.toHaveBeenCalled();
+    expect(spreadsheet?.getCachedValue('budget202401', 'to-budget')).toEqual({
+      name: 'budget202401!to-budget',
+      value: 500,
+    });
+    // Only the refresh that runs on every mount
+    expect(getBudgetBounds).toHaveBeenCalledTimes(1);
+  });
+
+  it('requests the data itself when none was requested for it', async () => {
+    const getBudgetBounds = vi.fn(async () => ({
+      start: '2024-01',
+      end: '2024-12',
+    }));
+    initServer({
+      'get-budget-bounds': getBudgetBounds,
+      'get-categories': async () => ({ grouped: [], list: [] }),
+    });
+
+    renderBudget();
+    await screen.findByTestId('budget-table');
+
+    expect(prewarmAllMonths).toHaveBeenCalledWith(
+      'envelope',
+      spreadsheet,
+      { start: '2024-01', end: '2024-12' },
+      monthUtils.currentMonth(),
+    );
+    expect(getBudgetBounds).toHaveBeenCalledTimes(2);
   });
 });
