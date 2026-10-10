@@ -9,7 +9,49 @@ async function getPayee(acct) {
   ]);
 }
 
-async function getTransferredAccount(transaction) {
+// Payee id -> the account it transfers to (null for a regular payee)
+export type TransferAccounts = Map<string, string | null>;
+
+// Stays well below SQLite's bound-parameter limit
+const PAYEE_LOOKUP_CHUNK_SIZE = 500;
+
+/**
+ * Looks up the transfer account of every payee of `transactions` with one
+ * query per chunk, for callers that run `onInsert`/`onUpdate` over many
+ * transactions at once. Same view and same rules as the single-transaction
+ * lookup in `getTransferredAccount`: a payee missing from the view (unknown,
+ * or a transfer payee of a deleted account) maps to null.
+ */
+export async function getTransferAccounts(
+  transactions: ReadonlyArray<{ payee?: string | null }>,
+): Promise<TransferAccounts> {
+  const ids = [
+    ...new Set(transactions.map(t => t.payee).filter(Boolean)),
+  ] as string[];
+  const result: TransferAccounts = new Map(ids.map(id => [id, null]));
+
+  for (let i = 0; i < ids.length; i += PAYEE_LOOKUP_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + PAYEE_LOOKUP_CHUNK_SIZE);
+    const rows = await db.all<Pick<db.DbViewPayee, 'id' | 'transfer_acct'>>(
+      `SELECT id, transfer_acct FROM v_payees WHERE id IN (${chunk
+        .map(() => '?')
+        .join(', ')})`,
+      chunk,
+    );
+    for (const row of rows) {
+      result.set(row.id, row.transfer_acct || null);
+    }
+  }
+  return result;
+}
+
+async function getTransferredAccount(
+  transaction,
+  transferAccounts?: TransferAccounts,
+) {
+  if (transaction.payee && transferAccounts?.has(transaction.payee)) {
+    return transferAccounts.get(transaction.payee);
+  }
   if (transaction.payee) {
     const result = await db.first<Pick<db.DbViewPayee, 'transfer_acct'>>(
       'SELECT transfer_acct FROM v_payees WHERE id = ?',
@@ -137,8 +179,14 @@ export async function updateTransfer(transaction, transferredAccount) {
   }
 }
 
-export async function onInsert(transaction) {
-  const transferredAccount = await getTransferredAccount(transaction);
+export async function onInsert(
+  transaction,
+  transferAccounts?: TransferAccounts,
+) {
+  const transferredAccount = await getTransferredAccount(
+    transaction,
+    transferAccounts,
+  );
 
   if (transferredAccount) {
     return addTransfer(transaction, transferredAccount);
@@ -151,8 +199,14 @@ export async function onDelete(transaction) {
   }
 }
 
-export async function onUpdate(transaction) {
-  const transferredAccount = await getTransferredAccount(transaction);
+export async function onUpdate(
+  transaction,
+  transferAccounts?: TransferAccounts,
+) {
+  const transferredAccount = await getTransferredAccount(
+    transaction,
+    transferAccounts,
+  );
 
   if (transaction.is_parent) {
     return removeTransfer(transaction);
