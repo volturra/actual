@@ -99,4 +99,22 @@ describe('normalisedLike', () => {
       expect(normalisedLike(`%payee ${i}x%`, value)).toBe(0);
     }
   });
+
+  it('matches long values, which it does not memoise, the same way', () => {
+    const padding = 'Ünïcödé nötes '.repeat(40);
+    for (let i = 0; i < 6000; i++) {
+      // Alternate between long values and short ones that fill the memo
+      const value = i % 2 ? `${padding}Café ${i}` : `Café ${i}`;
+      expect(value.length > 256).toBe(i % 2 === 1);
+      expect(normalisedLike(`%cafe ${i}%`, value)).toBe(1);
+      expect(normalisedLike(`%unicode notes%cafe ${i}%`, value)).toBe(i % 2);
+      expect(normalisedLike(`%cafe ${i}x%`, value)).toBe(0);
+    }
+    // Values just below, at and above the length cap
+    for (const length of [255, 256, 257]) {
+      const value = 'É'.repeat(length);
+      expect(normalisedLike(`%${'e'.repeat(length)}%`, value)).toBe(1);
+      expect(normalisedLike(`%${'e'.repeat(length + 1)}%`, value)).toBe(0);
+    }
+  });
 });
