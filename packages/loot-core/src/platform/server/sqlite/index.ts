@@ -6,7 +6,7 @@ import { logger } from '#platform/server/log';
 
 import { normalise } from './normalise';
 import type { SqlParam } from './types';
-import { unicodeLike } from './unicodeLike';
+import { normalisedLike, unicodeLike } from './unicodeLike';
 
 export type { SqlParam } from './types';
 
@@ -267,6 +267,7 @@ export async function openDatabase(pathOrBuffer?: string | Uint8Array) {
   db.create_function('UNICODE_LIKE', unicodeLike);
   db.create_function('REGEXP', regexp);
   db.create_function('NORMALISE', normalise);
+  db.create_function('NORMALISED_LIKE', normalisedLike);
   return db;
 }
 

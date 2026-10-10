@@ -1,4 +1,4 @@
-import { unicodeLike } from './unicodeLike';
+import { normalisedLike, unicodeLike } from './unicodeLike';
 
 describe('unicode LIKE functionality', () => {
   it('empty pattern should not match to a value', () => {
@@ -68,5 +68,35 @@ describe('unicode LIKE functionality', () => {
 
   it('should treat \\\\ as a literal \\ character', () => {
     expect(unicodeLike('c:\\\\test', 'c:\\test')).toBe(1);
+  });
+});
+
+describe('normalisedLike', () => {
+  it('matches the normalised value', () => {
+    expect(normalisedLike('%cafe%', 'Le Café')).toBe(1);
+    expect(normalisedLike('%strasse%', 'Hauptstraße')).toBe(1);
+    expect(normalisedLike('%lodz%', 'Łódź')).toBe(1);
+    expect(normalisedLike('%tea%', 'Coffee')).toBe(0);
+  });
+
+  it('treats null and empty values like an empty string', () => {
+    expect(normalisedLike('%', null)).toBe(1);
+    expect(normalisedLike('%', '')).toBe(1);
+    expect(normalisedLike('%a%', null)).toBe(0);
+    expect(normalisedLike('%a%', '')).toBe(0);
+  });
+
+  it('never matches an empty pattern', () => {
+    expect(normalisedLike(null, 'value')).toBe(0);
+    expect(normalisedLike('', 'value')).toBe(0);
+    expect(normalisedLike(null, null)).toBe(0);
+  });
+
+  it('gives the same results after its memo of values fills up', () => {
+    for (let i = 0; i < 12000; i++) {
+      const value = `Payée ${i}`;
+      expect(normalisedLike(`%payee ${i}%`, value)).toBe(1);
+      expect(normalisedLike(`%payee ${i}x%`, value)).toBe(0);
+    }
   });
 });
