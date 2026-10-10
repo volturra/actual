@@ -107,30 +107,39 @@ export function runQuery<T>(
     verifyParamTypes(sql, params);
   }
 
-  const stmt = typeof sql === 'string' ? db.prepare(sql) : sql;
+  const isPrepared = typeof sql !== 'string';
+  const stmt = isPrepared ? sql : db.prepare(sql);
 
-  if (fetchAll) {
-    try {
+  try {
+    if (fetchAll) {
       stmt.bind(params);
       const rows = [];
 
       while (stmt.step()) {
         rows.push(stmt.getAsObject());
       }
-
-      if (typeof sql === 'string') {
-        stmt.free();
-      } else {
-        stmt.reset();
-      }
       return rows;
-    } catch (e) {
-      logger.log(sql);
-      throw e;
     }
-  } else {
+
     stmt.run(params);
     return { changes: db.getRowsModified() };
+  } catch (e) {
+    if (fetchAll) {
+      logger.log(sql);
+    }
+    throw e;
+  } finally {
+    // Always finish the statement, also when a step failed. A statement
+    // that fails part way (for example with SQLITE_BUSY, or when the
+    // IndexedDB file layer throws) is left running by sql.js. A running
+    // write keeps every later COMMIT on this connection failing with
+    // "cannot commit transaction - SQL statements in progress", and a
+    // running read keeps holding its lock.
+    if (isPrepared) {
+      stmt.reset();
+    } else {
+      stmt.free();
+    }
   }
 }
 
