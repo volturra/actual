@@ -78,6 +78,27 @@ export type ItemAmountsByDate = {
 };
 
 /**
+ * Groups rows by their `groupByLabel` value, keeping their order, so
+ * `sumItemAmountsByDate` can go over only the rows of one item.
+ */
+export function groupRowsByLabel(
+  visibleRows: QueryDataEntity[],
+  groupByLabel: GroupByLabel,
+): Map<unknown, QueryDataEntity[]> {
+  const rowsByLabel = new Map<unknown, QueryDataEntity[]>();
+  for (const row of visibleRows) {
+    const key = row[groupByLabel];
+    const rows = rowsByLabel.get(key);
+    if (rows) {
+      rows.push(row);
+    } else {
+      rowsByLabel.set(key, [row]);
+    }
+  }
+  return rowsByLabel;
+}
+
+/**
  * Sums the amounts of the rows that belong to `item`, keyed by row date.
  *
  * `visibleRows` must already have gone through `filterReportTransactions`.
@@ -86,20 +107,28 @@ export type ItemAmountsByDate = {
  * `filterHiddenItems` and the `groupByLabel` match once per interval, but it
  * goes over the rows a single time, so callers can look up each interval with
  * `sums.get(interval) ?? 0`.
+ *
+ * `rowsByLabel`, from `groupRowsByLabel` on the same rows and label, lets it
+ * go over only the item's own rows instead of every row.
  */
 export function sumItemAmountsByDate(
   item: UncategorizedEntity,
   visibleRows: QueryDataEntity[],
   groupByLabel: GroupByLabel,
+  rowsByLabel?: Map<unknown, QueryDataEntity[]>,
 ): Map<string, number> {
   const groupsByCategory =
     groupByLabel === 'category' || groupByLabel === 'categoryGroup';
   const itemId = item.id ?? null;
   // An uncategorized bucket takes every row its bucket check lets through.
   const matchesEveryRow = !!item.uncategorized_id && groupsByCategory;
+  const candidateRows =
+    matchesEveryRow || !rowsByLabel
+      ? visibleRows
+      : (rowsByLabel.get(itemId) ?? []);
 
   const sums = new Map<string, number>();
-  for (const row of visibleRows) {
+  for (const row of candidateRows) {
     if (
       (!groupsByCategory || isInCategoryBucket(item, row)) &&
       (matchesEveryRow || row[groupByLabel] === itemId)
