@@ -290,6 +290,8 @@ describe('batchUpdateTransactions', () => {
       const transferAccounts = await getTransferAccounts([
         ...payees.map(payee => ({ payee })),
         { payee: 'shop' },
+        // Split parents never use their payee's transfer account
+        { payee: 'parent-only', is_parent: true },
       ]);
 
       // 1102 distinct payees in chunks of 500
@@ -298,6 +300,7 @@ describe('batchUpdateTransactions', () => {
       expect(transferAccounts.get('to-one')).toBe('one');
       expect(transferAccounts.get('shop')).toBeNull();
       expect(transferAccounts.get('unknown-1099')).toBeNull();
+      expect(transferAccounts.has('parent-only')).toBe(false);
     });
   });
 });

@@ -20,14 +20,21 @@ const PAYEE_LOOKUP_CHUNK_SIZE = 500;
  * query per chunk, for callers that run `onInsert`/`onUpdate` over many
  * transactions at once. Same view and same rules as the single-transaction
  * lookup in `getTransferredAccount`: a payee missing from the view (unknown,
- * or a transfer payee of a deleted account) maps to null.
+ * or a transfer payee of a deleted account) maps to null. Split parents
+ * are left out.
  */
 export async function getTransferAccounts(
-  transactions: ReadonlyArray<{ payee?: string | null }>,
+  transactions: ReadonlyArray<{ payee?: string | null; is_parent?: boolean }>,
 ): Promise<TransferAccounts> {
   const ids = [
-    ...new Set(transactions.map(t => t.payee).filter(Boolean)),
-  ] as string[];
+    ...new Set(
+      transactions
+        // Split parents never use their payee's transfer account
+        .filter(t => !t.is_parent)
+        .map(t => t.payee)
+        .filter((payee): payee is string => Boolean(payee)),
+    ),
+  ];
   const result: TransferAccounts = new Map(ids.map(id => [id, null]));
 
   for (let i = 0; i < ids.length; i += PAYEE_LOOKUP_CHUNK_SIZE) {
@@ -49,6 +56,12 @@ async function getTransferredAccount(
   transaction,
   transferAccounts?: TransferAccounts,
 ) {
+  // A split parent is never a transfer itself: `onUpdate` only removes
+  // its old transfer and `addTransfer` skips it, so the batch lookup
+  // leaves parents out
+  if (transferAccounts && transaction.is_parent) {
+    return null;
+  }
   if (transaction.payee && transferAccounts?.has(transaction.payee)) {
     return transferAccounts.get(transaction.payee);
   }
