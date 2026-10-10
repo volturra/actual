@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { View } from '@actual-app/components/view';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type {
   SummaryContent,
@@ -18,6 +17,7 @@ import { summarySpreadsheet } from '#components/reports/spreadsheets/summary-spr
 import { SummaryNumber } from '#components/reports/SummaryNumber';
 import { useReport } from '#components/reports/useReport';
 import { useLocale } from '#hooks/useLocale';
+import { getLatestTransaction } from '#reports';
 
 type SummaryCardProps = {
   widgetId: string;
@@ -39,7 +39,7 @@ export function SummaryCard({
 
   useEffect(() => {
     async function fetchLatestTransaction() {
-      const latestTrans = await send('get-latest-transaction');
+      const latestTrans = await getLatestTransaction();
       setLatestTransaction(
         latestTrans ? latestTrans.date : monthUtils.currentDay(),
       );

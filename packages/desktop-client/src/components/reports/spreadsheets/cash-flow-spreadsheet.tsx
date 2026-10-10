@@ -2,7 +2,6 @@ import React from 'react';
 import type { JSX } from 'react';
 
 import { AlignedText } from '@actual-app/components/aligned-text';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { q } from '@actual-app/core/shared/query';
 import type { RuleConditionEntity } from '@actual-app/core/types/models';
@@ -14,6 +13,7 @@ import { FinancialText } from '#components/FinancialText';
 import { indexCashFlow, runAll } from '#components/reports/util';
 import type { FormatType } from '#hooks/useFormat';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
+import { makeFiltersFromConditions } from '#reports';
 
 export function simpleCashFlow(
   startMonth: string,
@@ -28,7 +28,7 @@ export function simpleCashFlow(
     spreadsheet: ReturnType<typeof useSpreadsheet>,
     setData: (data: { graphData: { income: number; expense: number } }) => void,
   ) => {
-    const { filters } = await send('make-filters-from-conditions', {
+    const { filters } = await makeFiltersFromConditions({
       conditions: conditions.filter(cond => !cond.customName),
     });
     const conditionsOpKey = conditionsOp === 'or' ? '$or' : '$and';
@@ -89,7 +89,7 @@ export function cashFlowByDate(
     spreadsheet: ReturnType<typeof useSpreadsheet>,
     setData: (data: ReturnType<typeof recalculate>) => void,
   ) => {
-    const { filters } = await send('make-filters-from-conditions', {
+    const { filters } = await makeFiltersFromConditions({
       conditions: conditions.filter(cond => !cond.customName),
     });
     const conditionsOpKey = conditionsOp === 'or' ? '$or' : '$and';

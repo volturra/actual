@@ -5,7 +5,6 @@ import { Block } from '@actual-app/components/block';
 import { useResponsive } from '@actual-app/components/hooks/useResponsive';
 import { styles } from '@actual-app/components/styles';
 import { View } from '@actual-app/components/view';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type {
   AccountEntity,
@@ -27,6 +26,7 @@ import { useDateFormat } from '#hooks/useDateFormat';
 import { useFormat } from '#hooks/useFormat';
 import { useLocale } from '#hooks/useLocale';
 import { useSyncedPref } from '#hooks/useSyncedPref';
+import { getLatestTransaction } from '#reports';
 
 type NetWorthCardProps = {
   widgetId: string;
@@ -57,7 +57,7 @@ export function NetWorthCard({
 
   useEffect(() => {
     async function fetchLatestTransaction() {
-      const latestTrans = await send('get-latest-transaction');
+      const latestTrans = await getLatestTransaction();
       setLatestTransaction(
         latestTrans ? latestTrans.date : monthUtils.currentDay(),
       );

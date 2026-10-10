@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next';
 
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type { CashFlowWidget } from '@actual-app/core/types/models';
 import { Bar, BarChart, LabelList } from 'recharts';
@@ -22,6 +21,7 @@ import { calculateTimeRange } from '#components/reports/reportRanges';
 import { simpleCashFlow } from '#components/reports/spreadsheets/cash-flow-spreadsheet';
 import { useReport } from '#components/reports/useReport';
 import { useFormat } from '#hooks/useFormat';
+import { getLatestTransaction } from '#reports';
 
 import { defaultTimeFrame } from './CashFlow';
 
@@ -111,7 +111,7 @@ export function CashFlowCard({
 
   useEffect(() => {
     async function fetchLatestTransaction() {
-      const latestTrans = await send('get-latest-transaction');
+      const latestTrans = await getLatestTransaction();
       setLatestTransaction(
         latestTrans ? latestTrans.date : monthUtils.currentDay(),
       );

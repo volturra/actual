@@ -1,4 +1,3 @@
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type { GroupedEntity } from '@actual-app/core/types/models';
 
@@ -11,6 +10,7 @@ import type {
   UncategorizedEntity,
 } from '#components/reports/ReportOptions';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
+import { makeFiltersFromConditions } from '#reports';
 
 import type { createCustomSpreadsheetProps } from './custom-spreadsheet';
 import { fetchSpreadsheetQueryData } from './fetchSpreadsheetQueryData';
@@ -55,7 +55,7 @@ export function createGroupedSpreadsheet({
       return;
     }
 
-    const { filters } = await send('make-filters-from-conditions', {
+    const { filters } = await makeFiltersFromConditions({
       conditions: conditions.filter(cond => !cond.customName),
     });
     const conditionsOpKey = conditionsOp === 'or' ? '$or' : '$and';

@@ -7,7 +7,6 @@ import { Text } from '@actual-app/components/text';
 import { theme } from '@actual-app/components/theme';
 import { Tooltip } from '@actual-app/components/tooltip';
 import { View } from '@actual-app/components/view';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type { CustomReportEntity } from '@actual-app/core/types/models';
 
@@ -21,6 +20,7 @@ import { usePayees } from '#hooks/usePayees';
 import { useSyncedPref } from '#hooks/useSyncedPref';
 import { addNotification } from '#notifications/notificationsSlice';
 import { useDispatch } from '#redux';
+import { getEarliestTransaction, getLatestTransaction } from '#reports';
 import { useUpdateReportMutation } from '#reports/mutations';
 
 import { GetCardData } from './GetCardData';
@@ -89,8 +89,8 @@ function CustomReportListCardsInner({
       // The card waits for these dates before it loads, so fall back to today
       // if a lookup fails instead of loading forever.
       const [earliestTrans, latestTrans] = await Promise.all([
-        send('get-earliest-transaction').catch(() => null),
-        send('get-latest-transaction').catch(() => null),
+        getEarliestTransaction().catch(() => null),
+        getLatestTransaction().catch(() => null),
       ]);
       setEarliestTransaction(
         earliestTrans ? earliestTrans.date : monthUtils.currentDay(),
