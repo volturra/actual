@@ -49,6 +49,9 @@ export async function resetSync(
     //
     // Be VERY careful here since we are bulk deleting data. It should
     // never delete any data that doesn't have `tombstone = 1`
+    //
+    // No ANALYZE here: planner stats make SQLite pick worse plans for
+    // the transaction views (see migration 1791589705434)
     db.execQuery(`
       DELETE FROM messages_crdt;
       DELETE FROM messages_clock;
@@ -59,7 +62,6 @@ export async function resetSync(
       DELETE FROM category_groups WHERE tombstone = 1;
       DELETE FROM schedules WHERE tombstone = 1;
       DELETE FROM rules WHERE tombstone = 1;
-      ANALYZE;
       VACUUM;
     `);
     await db.loadClock();

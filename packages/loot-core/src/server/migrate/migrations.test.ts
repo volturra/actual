@@ -6,8 +6,11 @@ import * as path from 'path';
 import * as db from '#server/db';
 
 import {
+  applyMigration,
   getAppliedMigrations,
+  getMigrationId,
   getMigrationList,
+  getMigrationsDir,
   getPending,
   migrate,
   withMigrationsDir,
@@ -178,5 +181,66 @@ describe('Migrations', () => {
         expect(desc.sql.indexOf('is_expense')).not.toBe(-1);
       },
     );
+  });
+
+  describe('stale planner stats', () => {
+    const dropStatsId = 1791589705434;
+
+    async function statTables() {
+      const rows = await db.all<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE name LIKE 'sqlite_stat%' ORDER BY name",
+      );
+      return rows.map(row => row.name);
+    }
+
+    async function unapplyDropStats() {
+      db.runQuery('DELETE FROM __migrations__ WHERE id = ?', [dropStatsId]);
+    }
+
+    test('a new budget carries no planner stats', async () => {
+      // Earlier migrations run ANALYZE on the empty tables
+      await migrate(db.getDatabase());
+
+      expect(await statTables()).toEqual([]);
+      expect(await getAppliedMigrations(db.getDatabase())).toContain(
+        dropStatsId,
+      );
+    });
+
+    test('drops stats an existing budget already has', async () => {
+      await migrate(db.getDatabase());
+      await unapplyDropStats();
+      await db.insertCategoryGroup({ id: 'group1', name: 'group1' });
+      db.execQuery('ANALYZE');
+      expect(await statTables()).toContain('sqlite_stat1');
+
+      await migrate(db.getDatabase());
+
+      expect(await statTables()).toEqual([]);
+      expect(await getAppliedMigrations(db.getDatabase())).toContain(
+        dropStatsId,
+      );
+    });
+
+    test('runs on a budget without stat tables, and runs again cleanly', async () => {
+      await migrate(db.getDatabase());
+      await unapplyDropStats();
+      expect(await statTables()).toEqual([]);
+
+      await migrate(db.getDatabase());
+      // Apply it a second time, as a renumbered or re-run migration would
+      const name = (await getMigrationList(getMigrationsDir())).find(
+        m => getMigrationId(m) === dropStatsId,
+      );
+      await unapplyDropStats();
+      await applyMigration(db.getDatabase(), name, getMigrationsDir());
+
+      expect(await statTables()).toEqual([]);
+      expect(
+        (await getAppliedMigrations(db.getDatabase())).filter(
+          id => id === dropStatsId,
+        ),
+      ).toEqual([dropStatsId]);
+    });
   });
 });
