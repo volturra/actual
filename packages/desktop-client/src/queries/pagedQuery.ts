@@ -169,7 +169,13 @@ export class PagedQuery<TResponse = unknown> extends LiveQuery<TResponse> {
     // shown
     await Promise.resolve();
 
-    while (this.inflightRequestId) {
+    // An unsubscribed query must not deliver any more data, and must not wait
+    // on its in-flight requests either: their results are discarded
+    if (!this.isRunning) {
+      return;
+    }
+
+    while (this.inflightRequestId && this.isRunning) {
       await this._fetchDataPromise;
     }
 
