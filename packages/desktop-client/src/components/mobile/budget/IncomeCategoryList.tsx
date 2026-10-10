@@ -12,14 +12,12 @@ import { IncomeCategoryListItem } from './IncomeCategoryListItem';
 
 type IncomeCategoryListProps = {
   categories: CategoryEntity[];
-  month: string;
-  onEditCategory: (id: string) => void;
+  onEditCategory: (id: string, month: string) => void;
   onBudgetAction: (month: string, action: string, args: unknown) => void;
 };
 
 export function IncomeCategoryList({
   categories,
-  month,
   onEditCategory,
   onBudgetAction,
 }: IncomeCategoryListProps) {
@@ -106,13 +104,12 @@ export function IncomeCategoryList({
       aria-label={t('Income categories')}
       items={categories}
       dragAndDropHooks={dragAndDropHooks}
-      dependencies={[month, onEditCategory, onBudgetAction]}
+      dependencies={[onEditCategory, onBudgetAction]}
     >
       {category => (
         <IncomeCategoryListItem
           key={category.id}
           value={category}
-          month={month}
           onEdit={onEditCategory}
           onBudgetAction={onBudgetAction}
         />

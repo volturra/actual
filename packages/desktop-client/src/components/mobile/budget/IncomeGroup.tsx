@@ -22,15 +22,15 @@ import { useFormat } from '#hooks/useFormat';
 import { useSyncedPref } from '#hooks/useSyncedPref';
 import { envelopeBudget, trackingBudget } from '#spreadsheet/bindings';
 
+import { useBudgetMonth, useBudgetMonthRef } from './BudgetMonthContext';
 import { getColumnWidth, ROW_HEIGHT } from './BudgetTable';
 import { IncomeCategoryList } from './IncomeCategoryList';
 
 type IncomeGroupProps = {
   categoryGroup: CategoryGroupEntity;
-  month: string;
   showHiddenCategories: boolean;
-  onEditCategoryGroup: (id: CategoryGroupEntity['id']) => void;
-  onEditCategory: (id: string) => void;
+  onEditCategoryGroup: (id: CategoryGroupEntity['id'], month: string) => void;
+  onEditCategory: (id: string, month: string) => void;
   onBudgetAction: (month: string, action: string, args: unknown) => void;
   isCollapsed: (id: CategoryGroupEntity['id']) => boolean;
   onToggleCollapse: (id: CategoryGroupEntity['id']) => void;
@@ -38,7 +38,6 @@ type IncomeGroupProps = {
 
 export function IncomeGroup({
   categoryGroup,
-  month,
   showHiddenCategories,
   onEditCategoryGroup,
   onEditCategory,
@@ -86,14 +85,12 @@ export function IncomeGroup({
       <Card style={{ marginTop: 0 }}>
         <IncomeGroupHeader
           group={categoryGroup}
-          month={month}
           onEdit={onEditCategoryGroup}
           isCollapsed={isCollapsed}
           onToggleCollapse={onToggleCollapse}
         />
         <IncomeCategoryList
           categories={categories}
-          month={month}
           onEditCategory={onEditCategory}
           onBudgetAction={onBudgetAction}
         />
@@ -104,8 +101,7 @@ export function IncomeGroup({
 
 type IncomeGroupHeaderProps = {
   group: CategoryGroupEntity;
-  month: string;
-  onEdit: (id: CategoryGroupEntity['id']) => void;
+  onEdit: (id: CategoryGroupEntity['id'], month: string) => void;
   isCollapsed: (id: CategoryGroupEntity['id']) => boolean;
   onToggleCollapse: (id: CategoryGroupEntity['id']) => void;
   style?: CSSProperties;
@@ -113,12 +109,12 @@ type IncomeGroupHeaderProps = {
 
 function IncomeGroupHeader({
   group,
-  month,
   onEdit,
   isCollapsed,
   onToggleCollapse,
   style,
 }: IncomeGroupHeaderProps) {
+  const month = useBudgetMonth();
   return (
     <View
       data-testid="category-group-row"
@@ -152,7 +148,7 @@ function IncomeGroupHeader({
 
 type IncomeGroupNameProps = {
   group: CategoryGroupEntity;
-  onEdit: (id: CategoryGroupEntity['id']) => void;
+  onEdit: (id: CategoryGroupEntity['id'], month: string) => void;
   isCollapsed: (id: CategoryGroupEntity['id']) => boolean;
   onToggleCollapse: (id: CategoryGroupEntity['id']) => void;
 };
@@ -163,6 +159,7 @@ function IncomeGroupName({
   isCollapsed,
   onToggleCollapse,
 }: IncomeGroupNameProps) {
+  const monthRef = useBudgetMonthRef();
   const sidebarColumnWidth = getColumnWidth({
     isSidebar: true,
     offset: -13.5,
@@ -203,7 +200,7 @@ function IncomeGroupName({
         style={{
           maxWidth: sidebarColumnWidth,
         }}
-        onPress={() => onEdit(group.id)}
+        onPress={() => onEdit(group.id, monthRef.current)}
       >
         <View
           style={{

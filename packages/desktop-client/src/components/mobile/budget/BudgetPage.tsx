@@ -226,16 +226,16 @@ export function BudgetPage() {
   );
 
   const onApplyBudgetTemplatesInGroup = useCallback(
-    async categories => {
+    async (month: string, categories) => {
       applyBudgetAction({
-        month: startMonth,
+        month,
         type: 'apply-multiple-templates',
         args: {
           categories,
         },
       });
     },
-    [applyBudgetAction, startMonth],
+    [applyBudgetAction],
   );
 
   const onDeleteGroup = useCallback(
@@ -386,8 +386,11 @@ export function BudgetPage() {
     [categories, dispatch, onSaveNotes],
   );
 
+  // The rows pass the month they show when pressed, so these don't depend on
+  // `startMonth`: a new identity would rebuild every row of the budget lists
+  // whenever the month changes.
   const onOpenCategoryGroupMenuModal = useCallback(
-    id => {
+    (id, month: string) => {
       const group = categoryGroups.find(g => g.id === id);
       dispatch(
         pushModal({
@@ -400,7 +403,8 @@ export function BudgetPage() {
               onEditNotes: onOpenCategoryGroupNotesModal,
               onDelete: onDeleteGroup,
               onToggleVisibility: onToggleGroupVisibility,
-              onApplyBudgetTemplatesInGroup,
+              onApplyBudgetTemplatesInGroup: categories =>
+                onApplyBudgetTemplatesInGroup(month, categories),
               onSortCategories: (groupId, direction) => {
                 sortCategories({ groupId, direction });
               },
@@ -423,7 +427,7 @@ export function BudgetPage() {
   );
 
   const onOpenCategoryMenuModal = useCallback(
-    id => {
+    (id, month: string) => {
       const category = categories.find(c => c.id === id);
       const canEditAutomations =
         goalTemplatesEnabled &&
@@ -446,7 +450,7 @@ export function BudgetPage() {
                     pushModal({
                       modal: {
                         name: 'category-automations-edit',
-                        options: { categoryId, month: startMonth },
+                        options: { categoryId, month },
                       },
                     }),
                   );
@@ -467,7 +471,6 @@ export function BudgetPage() {
       onOpenCategoryNotesModal,
       onSaveCategory,
       onToggleCategoryVisibility,
-      startMonth,
     ],
   );
 

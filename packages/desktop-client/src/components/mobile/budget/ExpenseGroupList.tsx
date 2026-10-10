@@ -20,9 +20,8 @@ type ExpenseGroupListProps = {
   categoryGroups: CategoryGroupEntity[];
   show3Columns: boolean;
   showBudgetedColumn: boolean;
-  month: string;
-  onEditCategoryGroup: (id: CategoryGroupEntity['id']) => void;
-  onEditCategory: (id: CategoryEntity['id']) => void;
+  onEditCategoryGroup: (id: CategoryGroupEntity['id'], month: string) => void;
+  onEditCategory: (id: CategoryEntity['id'], month: string) => void;
   onBudgetAction: (month: string, action: string, args: unknown) => void;
   showHiddenCategories: boolean;
   isCollapsed: (id: CategoryGroupEntity['id']) => boolean;
@@ -33,7 +32,6 @@ export function ExpenseGroupList({
   categoryGroups,
   show3Columns,
   showBudgetedColumn,
-  month,
   onEditCategoryGroup,
   onEditCategory,
   onBudgetAction,
@@ -78,7 +76,6 @@ export function ExpenseGroupList({
       return (
         <ExpenseGroupHeader
           categoryGroup={group}
-          month={month}
           showBudgetedColumn={showBudgetedColumn}
           show3Columns={show3Columns}
           onEditCategoryGroup={() => {}}
@@ -137,7 +134,6 @@ export function ExpenseGroupList({
       aria-label={t('Expense category groups')}
       items={categoryGroups}
       dependencies={[
-        month,
         onEditCategoryGroup,
         onEditCategory,
         onBudgetAction,
@@ -153,7 +149,6 @@ export function ExpenseGroupList({
         <ExpenseGroupListItem
           key={categoryGroup.id}
           value={categoryGroup}
-          month={month}
           onEditCategoryGroup={onEditCategoryGroup}
           onEditCategory={onEditCategory}
           onBudgetAction={onBudgetAction}
