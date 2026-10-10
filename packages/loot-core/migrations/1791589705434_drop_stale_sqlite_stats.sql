@@ -8,12 +8,12 @@ BEGIN TRANSACTION;
 DROP TABLE IF EXISTS sqlite_stat1;
 DROP TABLE IF EXISTS sqlite_stat4;
 
--- Dropping the tables doesn't clear the stats this connection already
--- loaded. ANALYZE reloads every index's stats once it finishes, and on
--- sqlite_master it gathers nothing, so this resets them to the defaults.
--- It recreates the (empty) stat tables, which we drop again.
-ANALYZE sqlite_master;
-DROP TABLE IF EXISTS sqlite_stat1;
-DROP TABLE IF EXISTS sqlite_stat4;
-
 COMMIT;
+
+-- Dropping the tables doesn't clear the stats this connection already
+-- loaded, and ANALYZE only reloads the index stats, not the table row
+-- counts. Rolling back a schema change makes SQLite reload the whole
+-- schema, so the connection plans as if the file were opened afresh.
+BEGIN TRANSACTION;
+CREATE TABLE reload_schema (id TEXT);
+ROLLBACK;

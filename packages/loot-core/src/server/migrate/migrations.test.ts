@@ -3,6 +3,9 @@ import * as nativeFs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import type { Database } from '@jlongster/sql.js';
+
+import * as sqlite from '#platform/server/sqlite';
 import * as db from '#server/db';
 
 import {
@@ -220,6 +223,50 @@ describe('Migrations', () => {
       expect(await getAppliedMigrations(db.getDatabase())).toContain(
         dropStatsId,
       );
+    });
+
+    test('the open connection plans as if the file were opened afresh', async () => {
+      // A join whose plan depends on how many rows SQLite thinks
+      // `categories` and `category_mapping` have
+      const query = `EXPLAIN QUERY PLAN
+        SELECT t.id FROM transactions t
+        LEFT JOIN category_mapping cm ON cm.id = t.category
+        LEFT JOIN categories c ON c.id = cm.transferId
+        LEFT JOIN accounts a ON a.id = t.acct
+        WHERE a.offbudget = 0 AND c.id IS NULL`;
+      const planOf = (database: Database) =>
+        sqlite
+          .runQuery<{ detail: string }>(database, query, [], true)
+          .map(row => row.detail);
+
+      await migrate(db.getDatabase());
+      await unapplyDropStats();
+      // The stats old budgets carry, loaded into this connection
+      db.execQuery(`
+        ANALYZE;
+        DELETE FROM sqlite_stat1;
+        INSERT INTO sqlite_stat1 VALUES
+          ('categories', 'sqlite_autoindex_categories_1', '7 1'),
+          ('category_mapping', 'sqlite_autoindex_category_mapping_1', '7 1');
+        ANALYZE sqlite_master;
+      `);
+      const stalePlan = planOf(db.getDatabase());
+
+      await migrate(db.getDatabase());
+
+      // A connection that never loaded any stats, on the same schema
+      const fresh = await sqlite.openDatabase(':memory:');
+      const schema = await db.all<{ sql: string }>(
+        `SELECT sql FROM sqlite_master
+         WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
+         ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 ELSE 2 END`,
+      );
+      sqlite.execQuery(fresh, schema.map(row => row.sql + ';').join('\n'));
+      const freshPlan = planOf(fresh);
+      sqlite.closeDatabase(fresh);
+
+      expect(freshPlan).not.toEqual(stalePlan);
+      expect(planOf(db.getDatabase())).toEqual(freshPlan);
     });
 
     test('runs on a budget without stat tables, and runs again cleanly', async () => {
