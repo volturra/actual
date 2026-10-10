@@ -1,6 +1,7 @@
 // @ts-strict-ignore
 import * as CRDT from '@actual-app/crdt';
 
+import { createBenchmarkBudget } from '#mocks/benchmark-budget';
 import { createTestBudget } from '#mocks/budget';
 import { captureBreadcrumb, captureException } from '#platform/exceptions';
 import * as asyncStorage from '#platform/server/asyncStorage';
@@ -48,6 +49,7 @@ import {
 
 const DEMO_BUDGET_ID = '_demo-budget';
 const TEST_BUDGET_ID = '_test-budget';
+const BENCHMARK_BUDGET_ID = '_benchmark-budget';
 
 export type BudgetFileHandlers = {
   'validate-budget-name': typeof handleValidateBudgetName;
@@ -408,13 +410,27 @@ async function createBudget({
   avoidUpload,
   testMode,
   testBudgetId,
+  benchmarkMode,
+  benchmarkBudgetType,
 }: {
   budgetName?: Budget['name'];
   avoidUpload?: boolean;
   testMode?: boolean;
   testBudgetId?: Budget['name'];
+  /**
+   * Fill the budget with the large generated dataset used for UI
+   * performance benchmarking (implies `testMode`).
+   */
+  benchmarkMode?: boolean;
+  /** Budget type of the benchmark budget (default envelope). */
+  benchmarkBudgetType?: 'envelope' | 'tracking';
 } = {}) {
   let id;
+  if (benchmarkMode) {
+    testMode = true;
+    budgetName = budgetName || 'Benchmark Budget';
+    testBudgetId = testBudgetId || BENCHMARK_BUDGET_ID;
+  }
   if (testMode) {
     budgetName = budgetName || 'Test Budget';
     id = testBudgetId || TEST_BUDGET_ID;
@@ -464,7 +480,14 @@ async function createBudget({
     }
   }
 
-  if (testMode) {
+  if (benchmarkMode) {
+    const { timings, stats, refs } = await createBenchmarkBudget(
+      mainApp.handlers,
+      { budgetType: benchmarkBudgetType },
+    );
+    logger.log('Created benchmark budget', timings, stats);
+    return { timings, stats, refs };
+  } else if (testMode) {
     await createTestBudget(mainApp.handlers);
   }
 
