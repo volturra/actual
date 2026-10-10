@@ -36,6 +36,12 @@ type BatchReconciledReason = Extract<
 type BatchEditProps = {
   name: keyof TransactionEntity;
   ids: Array<TransactionEntity['id']>;
+  /**
+   * Set when `onSuccess` refreshes the transactions shown, so the edit modals
+   * are tagged `openerRefreshes` and the screen behind them skips its own
+   * refresh on close. `onSuccess` runs once the change is saved.
+   */
+  refetchesOnSuccess?: boolean;
   onSuccess?: (
     ids: Array<TransactionEntity['id']>,
     name: keyof TransactionEntity,
@@ -79,7 +85,12 @@ export function useTransactionBatchActions() {
   const dispatch = useDispatch();
   const { t } = useTranslation();
 
-  const onBatchEdit = async ({ name, ids, onSuccess }: BatchEditProps) => {
+  const onBatchEdit = async ({
+    name,
+    ids,
+    refetchesOnSuccess,
+    onSuccess,
+  }: BatchEditProps) => {
     const { data } = await aqlQuery(
       q('transactions')
         .filter({ id: { $oneof: ids } })
@@ -188,6 +199,7 @@ export function useTransactionBatchActions() {
         pushModal({
           modal: {
             name: 'payee-autocomplete',
+            openerRefreshes: refetchesOnSuccess,
             options: {
               onSelect: payeeId => onChange(name, payeeId),
             },
@@ -201,6 +213,7 @@ export function useTransactionBatchActions() {
         pushModal({
           modal: {
             name: 'account-autocomplete',
+            openerRefreshes: refetchesOnSuccess,
             options: {
               onSelect: accountId => onChange(name, accountId),
             },
@@ -218,6 +231,7 @@ export function useTransactionBatchActions() {
         pushModal({
           modal: {
             name: 'edit-field',
+            openerRefreshes: refetchesOnSuccess,
             options: {
               name,
               onSubmit: (name, value, mode) => onChange(name, value, mode),
@@ -241,6 +255,7 @@ export function useTransactionBatchActions() {
         pushModal({
           modal: {
             name: 'category-autocomplete',
+            openerRefreshes: refetchesOnSuccess,
             options: {
               month: transactionsHaveSameMonth ? transactionMonth : undefined,
               showNoneOption: true,

@@ -40,7 +40,7 @@ export type ConfirmTransactionEditReason =
   | 'unlockReconciled'
   | 'deleteReconciled';
 
-export type Modal =
+type ModalVariant =
   | {
       name: 'import-transactions';
       options: {
@@ -687,6 +687,16 @@ export type Modal =
         cleanup: CleanupTemplate[];
       };
     };
+
+export type Modal = ModalVariant & {
+  /**
+   * Set when the code that opens this modal refreshes whatever data the modal
+   * changes (or the modal changes no data at all), so the screen behind it
+   * doesn't need its own refresh when it closes. The account register
+   * otherwise refetches its transactions after every modal closes.
+   */
+  openerRefreshes?: boolean;
+};
 
 type OpenAccountCloseModalPayload = {
   accountId: AccountEntity['id'];
