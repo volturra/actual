@@ -51,13 +51,13 @@ describe('useTransactionBatchActions onBatchEdit', () => {
     });
   });
 
-  it('tags the edit modal when the caller refetches on success', async () => {
+  it('tags the edit modal when the caller refetches on settle', async () => {
     const { result } = renderHook(() => useTransactionBatchActions());
 
     await result.current.onBatchEdit({
       name: 'category',
       ids: [transaction.id],
-      refetchesOnSuccess: true,
+      refetchesOnSettled: true,
     });
 
     expect(pushedModal()).toMatchObject({
@@ -76,7 +76,7 @@ describe('useTransactionBatchActions onBatchEdit', () => {
     expect(modal.openerRefreshes).toBeFalsy();
   });
 
-  it('calls onSuccess only once the change is saved', async () => {
+  it('calls onSuccess and onSettled only once the change is saved', async () => {
     let finishSave: (() => void) | undefined;
     vi.mocked(send).mockImplementation(
       () =>
@@ -85,13 +85,15 @@ describe('useTransactionBatchActions onBatchEdit', () => {
         }),
     );
     const onSuccess = vi.fn();
+    const onSettled = vi.fn();
     const { result } = renderHook(() => useTransactionBatchActions());
 
     await result.current.onBatchEdit({
       name: 'category',
       ids: [transaction.id],
-      refetchesOnSuccess: true,
+      refetchesOnSettled: true,
       onSuccess,
+      onSettled,
     });
 
     const modal = pushedModal();
@@ -113,9 +115,41 @@ describe('useTransactionBatchActions onBatchEdit', () => {
       }),
     );
     expect(onSuccess).not.toHaveBeenCalled();
+    expect(onSettled).not.toHaveBeenCalled();
 
     finishSave?.();
     await saved;
     expect(onSuccess).toHaveBeenCalledTimes(1);
+    expect(onSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it('still calls onSettled when saving the change fails', async () => {
+    const error = new Error('batch update failed');
+    vi.mocked(send).mockRejectedValue(error);
+    const onSuccess = vi.fn();
+    const onSettled = vi.fn();
+    const { result } = renderHook(() => useTransactionBatchActions());
+
+    await result.current.onBatchEdit({
+      name: 'category',
+      ids: [transaction.id],
+      refetchesOnSettled: true,
+      onSuccess,
+      onSettled,
+    });
+
+    const modal = pushedModal();
+    if (modal.name !== 'category-autocomplete') {
+      throw new Error(`Unexpected modal ${modal.name}`);
+    }
+    const saved = modal.options.onSelect(
+      'cat-1',
+      'Food',
+    ) as unknown as Promise<void>;
+
+    // The error still propagates as before
+    await expect(saved).rejects.toBe(error);
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onSettled).toHaveBeenCalledTimes(1);
   });
 });

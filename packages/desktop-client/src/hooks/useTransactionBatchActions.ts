@@ -37,11 +37,17 @@ type BatchEditProps = {
   name: keyof TransactionEntity;
   ids: Array<TransactionEntity['id']>;
   /**
-   * Set when `onSuccess` refreshes the transactions shown, so the edit modals
+   * Set when `onSettled` refreshes the transactions shown, so the edit modals
    * are tagged `openerRefreshes` and the screen behind them skips its own
-   * refresh on close. `onSuccess` runs once the change is saved.
+   * refresh on close.
    */
-  refetchesOnSuccess?: boolean;
+  refetchesOnSettled?: boolean;
+  /**
+   * Runs once an edit finishes, whether the change was saved or failed (a
+   * failed batch may still have saved part of the change). Errors still
+   * propagate after it runs.
+   */
+  onSettled?: () => void;
   onSuccess?: (
     ids: Array<TransactionEntity['id']>,
     name: keyof TransactionEntity,
@@ -88,8 +94,9 @@ export function useTransactionBatchActions() {
   const onBatchEdit = async ({
     name,
     ids,
-    refetchesOnSuccess,
+    refetchesOnSettled,
     onSuccess,
+    onSettled,
   }: BatchEditProps) => {
     const { data } = await aqlQuery(
       q('transactions')
@@ -99,7 +106,7 @@ export function useTransactionBatchActions() {
     );
     const transactions = ungroupTransactions(data as TransactionEntity[]);
 
-    const onChange = async (
+    const saveChange = async (
       name: keyof TransactionEntity,
       value: Parameters<NonNullable<BatchEditProps['onSuccess']>>[2],
       mode?: Parameters<NonNullable<BatchEditProps['onSuccess']>>[3],
@@ -194,12 +201,20 @@ export function useTransactionBatchActions() {
       onSuccess?.(ids, name, value, mode);
     };
 
+    const onChange = async (...args: Parameters<typeof saveChange>) => {
+      try {
+        await saveChange(...args);
+      } finally {
+        onSettled?.();
+      }
+    };
+
     const pushPayeeAutocompleteModal = () => {
       dispatch(
         pushModal({
           modal: {
             name: 'payee-autocomplete',
-            openerRefreshes: refetchesOnSuccess,
+            openerRefreshes: refetchesOnSettled,
             options: {
               onSelect: payeeId => onChange(name, payeeId),
             },
@@ -213,7 +228,7 @@ export function useTransactionBatchActions() {
         pushModal({
           modal: {
             name: 'account-autocomplete',
-            openerRefreshes: refetchesOnSuccess,
+            openerRefreshes: refetchesOnSettled,
             options: {
               onSelect: accountId => onChange(name, accountId),
             },
@@ -231,7 +246,7 @@ export function useTransactionBatchActions() {
         pushModal({
           modal: {
             name: 'edit-field',
-            openerRefreshes: refetchesOnSuccess,
+            openerRefreshes: refetchesOnSettled,
             options: {
               name,
               onSubmit: (name, value, mode) => onChange(name, value, mode),
@@ -255,7 +270,7 @@ export function useTransactionBatchActions() {
         pushModal({
           modal: {
             name: 'category-autocomplete',
-            openerRefreshes: refetchesOnSuccess,
+            openerRefreshes: refetchesOnSettled,
             options: {
               month: transactionsHaveSameMonth ? transactionMonth : undefined,
               showNoneOption: true,

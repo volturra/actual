@@ -1157,10 +1157,12 @@ class AccountInternal extends PureComponent<
     void this.props.onBatchEdit({
       name,
       ids,
-      refetchesOnSuccess: true,
-      onSuccess: updatedIds => {
+      refetchesOnSettled: true,
+      // Refetch even when the edit fails: part of it may have been saved
+      onSettled: () => {
         void this.refetchTransactions();
-
+      },
+      onSuccess: updatedIds => {
         if (this.table.current) {
           this.table.current.edit(updatedIds[0], 'select', false);
         }
