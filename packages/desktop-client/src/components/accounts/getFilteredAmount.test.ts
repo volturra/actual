@@ -3,7 +3,9 @@ import { q } from '@actual-app/core/shared/query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
 
-import { getFilteredAmount } from './getFilteredAmount';
+import { pagedQuery } from '#queries/pagedQuery';
+
+import { getFilteredAmount, trackAppendedPages } from './getFilteredAmount';
 
 describe('getFilteredAmount', () => {
   let send: MockInstance<typeof connection.send>;
@@ -93,5 +95,54 @@ describe('getFilteredAmount', () => {
       ).resolves.toBeNull();
       expect(send).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('trackAppendedPages', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    // Five rows, served a page at a time
+    const rows = [1, 2, 3, 4, 5].map(id => ({ id: String(id) }));
+    vi.spyOn(connection, 'send').mockImplementation(async (name, args) => {
+      if (name !== 'query') {
+        throw new Error(`Unexpected ${name}`);
+      }
+      const { limit, offset = 0 } = args as { limit: number; offset?: number };
+      return {
+        data: rows.slice(offset, offset + limit),
+        dependencies: ['transactions'],
+      };
+    });
+    // Sync events never fire here
+    vi.spyOn(connection, 'listen').mockImplementation(() => vi.fn());
+  });
+
+  it('tells rows from one fetch from a page appended to them', async () => {
+    const appendedPages = trackAppendedPages();
+    const calls: Array<{ length: number; isOneFetch: boolean }> = [];
+    const paged = pagedQuery(q('transactions').select('*'), {
+      onPageData: appendedPages.onPageData,
+      onData: data => {
+        calls.push({
+          length: data.length,
+          isOneFetch: appendedPages.takeIsOneFetch(),
+        });
+      },
+      options: { pageCount: 2 },
+    });
+
+    // The first load
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    // A page appended by scrolling
+    await paged.fetchNext();
+    // A refresh fetches every loaded row again at once
+    await paged.run();
+
+    expect(calls).toEqual([
+      { length: 2, isOneFetch: true },
+      { length: 4, isOneFetch: false },
+      { length: 4, isOneFetch: true },
+    ]);
+    paged.unsubscribe();
   });
 });

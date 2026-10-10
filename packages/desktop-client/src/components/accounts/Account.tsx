@@ -94,7 +94,7 @@ import type { AppDispatch } from '#redux/store';
 import { updateNewTransactions } from '#transactions/transactionsSlice';
 
 import { AccountEmptyMessage } from './AccountEmptyMessage';
-import { getFilteredAmount } from './getFilteredAmount';
+import { getFilteredAmount, trackAppendedPages } from './getFilteredAmount';
 import { AccountHeader } from './Header';
 
 type ConditionEntity = Partial<RuleConditionEntity> | TransactionFilterEntity;
@@ -499,16 +499,11 @@ class AccountInternal extends PureComponent<
       query = query.filter({ reconciled: { $eq: false } });
     }
 
-    // Set when the rows passed to `onData` are a page appended to the rows
-    // loaded before, rather than the result of one fetch
-    let isAppendedPage = false;
+    const appendedPages = trackAppendedPages();
     this.paged = pagedQuery(query.select('*'), {
-      onPageData: () => {
-        isAppendedPage = true;
-      },
+      onPageData: appendedPages.onPageData,
       onData: async (groupedData, prevData) => {
-        const isOneFetch = !isAppendedPage;
-        isAppendedPage = false;
+        const isOneFetch = appendedPages.takeIsOneFetch();
         const data = ungroupTransactions([...groupedData]);
         const firstLoad = prevData == null;
 

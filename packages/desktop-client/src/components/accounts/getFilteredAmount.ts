@@ -42,3 +42,23 @@ export async function getFilteredAmount(
   const { data } = await aqlQuery(query.calculate({ $sum: '$amount' }));
   return data;
 }
+
+/**
+ * Tells, at the start of a paged query's `onData`, whether its rows are the
+ * result of one fetch, rather than the rows loaded before with a page
+ * appended by `fetchNext`, which calls `onPageData` just before `onData`.
+ */
+export function trackAppendedPages() {
+  let isAppendedPage = false;
+  return {
+    onPageData: () => {
+      isAppendedPage = true;
+    },
+    /** Call once at the start of each `onData` */
+    takeIsOneFetch: () => {
+      const isOneFetch = !isAppendedPage;
+      isAppendedPage = false;
+      return isOneFetch;
+    },
+  };
+}
