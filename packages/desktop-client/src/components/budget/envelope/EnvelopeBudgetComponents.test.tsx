@@ -15,11 +15,13 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SheetNameProvider } from '#hooks/useSheetName';
 import { SpreadsheetProvider } from '#hooks/useSpreadsheet';
 import { createTestQueryClient, TestProviders } from '#mocks';
+import { notesQueries } from '#notes';
 import { mergeSyncedPrefs } from '#prefs/prefsSlice';
 import { configureAppStore } from '#redux/store';
 
@@ -72,7 +74,7 @@ function setUp({
   const store = configureAppStore({ queryClient });
   store.dispatch(mergeSyncedPrefs({ 'flags.goalTemplatesEnabled': 'true' }));
 
-  return render(
+  render(
     <TestProviders store={store} queryClient={queryClient}>
       <MemoryRouter>
         <SpreadsheetProvider>
@@ -92,6 +94,7 @@ function setUp({
       </MemoryRouter>
     </TestProviders>,
   );
+  return { queryClient };
 }
 
 // The cell's own root element, which shows the hover-only buttons on hover
@@ -144,12 +147,65 @@ describe('ExpenseCategoryMonth', () => {
     expect(within(cellRoot()).getAllByRole('button')).toHaveLength(3);
   });
 
+  it('keeps the hover-only buttons in the Tab order of a cell never hovered', async () => {
+    setUp({});
+    await flush();
+    const user = userEvent.setup();
+
+    // Tab from before the cell lands on its notes button, then its budget
+    // menu button and its balance, like when they are mounted up front
+    await user.tab();
+    const [notesButton, budgetMenuButton, balanceButton] =
+      within(cellRoot()).getAllByRole('button');
+    expect(notesButton).toHaveAccessibleName('View notes');
+    expect(notesButton).toHaveFocus();
+    await user.tab();
+    expect(budgetMenuButton).toHaveFocus();
+    await user.tab();
+    expect(balanceButton).toHaveFocus();
+
+    // The budget menu opens from the keyboard
+    await user.tab({ shift: true });
+    await user.keyboard('{Enter}');
+    expect(
+      await screen.findByText("Copy last month's budget"),
+    ).toBeInTheDocument();
+  });
+
   it('always shows the notes button of a cell with a note', async () => {
     setUp({ notes: { [`${category.id}-${month}`]: 'Birthday party' } });
 
     expect(
       await screen.findByRole('button', { name: 'View notes' }),
     ).toBeInTheDocument();
+  });
+
+  it('shows or hides the notes button when a note is added or removed elsewhere', async () => {
+    const notes: Record<string, string> = {};
+    const { queryClient } = setUp({ notes });
+    await flush();
+    expect(
+      screen.queryByRole('button', { name: 'View notes' }),
+    ).not.toBeInTheDocument();
+
+    // e.g. synced from another device, which invalidates the notes query
+    notes[`${category.id}-${month}`] = 'Birthday party';
+    await act(() =>
+      queryClient.invalidateQueries({ queryKey: notesQueries.lists() }),
+    );
+    expect(
+      await screen.findByRole('button', { name: 'View notes' }),
+    ).toBeInTheDocument();
+
+    delete notes[`${category.id}-${month}`];
+    await act(() =>
+      queryClient.invalidateQueries({ queryKey: notesQueries.lists() }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: 'View notes' }),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it('opens the budget and balance menus', async () => {

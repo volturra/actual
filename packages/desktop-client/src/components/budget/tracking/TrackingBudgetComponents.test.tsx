@@ -8,6 +8,7 @@ import {
 } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SheetNameProvider } from '#hooks/useSheetName';
@@ -135,6 +136,31 @@ describe('tracking CategoryMonth', () => {
     fireEvent.mouseLeave(cellRoot());
     await flush();
     expect(within(cellRoot()).getAllByRole('button')).toHaveLength(3);
+  });
+
+  it('keeps the hover-only buttons in the Tab order of a cell never hovered', async () => {
+    setUp({});
+    await flush();
+    const user = userEvent.setup();
+
+    // Tab from before the cell lands on its notes button, then its budget
+    // menu button and its balance, like when they are mounted up front
+    await user.tab();
+    const [notesButton, budgetMenuButton, balanceButton] =
+      within(cellRoot()).getAllByRole('button');
+    expect(notesButton).toHaveAccessibleName('View notes');
+    expect(notesButton).toHaveFocus();
+    await user.tab();
+    expect(budgetMenuButton).toHaveFocus();
+    await user.tab();
+    expect(balanceButton).toHaveFocus();
+
+    // The budget menu opens from the keyboard
+    await user.tab({ shift: true });
+    await user.keyboard('{Enter}');
+    expect(
+      await screen.findByText("Copy last month's budget"),
+    ).toBeInTheDocument();
   });
 
   it('always shows the notes button of a cell with a note', async () => {

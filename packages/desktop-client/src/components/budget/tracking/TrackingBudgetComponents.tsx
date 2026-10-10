@@ -225,7 +225,8 @@ export const CategoryMonth = memo(function CategoryMonth({
   const showScheduleIndicator = schedule && scheduleStatus;
 
   // The hover-only buttons (notes without a note, budget menu) are mounted
-  // the first time the cell is hovered, not for every cell up front.
+  // the first time the cell is hovered or focused, not for every cell up
+  // front.
   const [showHoverButtons, setShowHoverButtons] = useState(false);
 
   return (
@@ -258,6 +259,7 @@ export const CategoryMonth = memo(function CategoryMonth({
         },
       }}
       onMouseEnter={() => setShowHoverButtons(true)}
+      onFocus={() => setShowHoverButtons(true)}
     >
       <View
         style={{

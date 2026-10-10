@@ -23,6 +23,8 @@ type NotesButtonProps = {
   defaultColor?: string;
   tooltipPosition?: ComponentProps<typeof Tooltip>['placement'];
   showPlaceholder?: boolean;
+  /** Focus the button when it mounts */
+  autoFocus?: boolean;
   style?: CSSProperties;
 };
 export function NotesButton({
@@ -32,6 +34,7 @@ export function NotesButton({
   defaultColor = theme.buttonNormalText,
   tooltipPosition = 'bottom start',
   showPlaceholder = false,
+  autoFocus,
   style,
 }: NotesButtonProps) {
   const triggerRef = useRef(null);
@@ -69,6 +72,7 @@ export function NotesButton({
           ref={triggerRef}
           variant="bare"
           aria-label={t('View notes')}
+          autoFocus={autoFocus}
           className={cx(
             css({
               color: defaultColor,
