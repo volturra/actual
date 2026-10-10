@@ -215,6 +215,9 @@ function getField(field?: string) {
   }
 }
 
+// Groups (transactions with their splits) the register loads per page
+const PAGE_COUNT = 150;
+
 type AccountInternalProps = {
   accountId?:
     | AccountEntity['id']
@@ -477,7 +480,12 @@ class AccountInternal extends PureComponent<
     return queries.transactions(accountId);
   };
 
-  updateQuery(query: Query, isFiltered: boolean = false) {
+  updateQuery(
+    query: Query,
+    isFiltered: boolean = false,
+    // Whether `query` filters on `queries.transactionsSearch`
+    isSearch: boolean = false,
+  ) {
     if (this.paged) {
       this.paged.unsubscribe();
     }
@@ -491,8 +499,16 @@ class AccountInternal extends PureComponent<
       query = query.filter({ reconciled: { $eq: false } });
     }
 
+    // Set when the rows passed to `onData` are a page appended to the rows
+    // loaded before, rather than the result of one fetch
+    let isAppendedPage = false;
     this.paged = pagedQuery(query.select('*'), {
+      onPageData: () => {
+        isAppendedPage = true;
+      },
       onData: async (groupedData, prevData) => {
+        const isOneFetch = !isAppendedPage;
+        isAppendedPage = false;
         const data = ungroupTransactions([...groupedData]);
         const firstLoad = prevData == null;
 
@@ -541,9 +557,18 @@ class AccountInternal extends PureComponent<
         const balances = this.state.showBalances
           ? await this.calculateBalances()
           : null;
+        // The rows of a search fetched together give its sum without
+        // running the search again, when they hold every match
         const filteredAmount = await getFilteredAmount(
           this.paged?.query,
           isFiltered,
+          isSearch && isOneFetch
+            ? {
+                groupCount: groupedData.length,
+                transactions: data,
+                pageCount: PAGE_COUNT,
+              }
+            : undefined,
         );
         this.setState(
           {
@@ -566,7 +591,7 @@ class AccountInternal extends PureComponent<
         );
       },
       options: {
-        pageCount: 150,
+        pageCount: PAGE_COUNT,
         onlySync: true,
       },
     });
@@ -610,6 +635,7 @@ class AccountInternal extends PureComponent<
           this.state.search,
           this.props.dateFormat,
         ),
+        true,
         true,
       );
     }

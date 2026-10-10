@@ -37,4 +37,61 @@ describe('getFilteredAmount', () => {
     await expect(getFilteredAmount(undefined, true)).resolves.toBeNull();
     expect(send).not.toHaveBeenCalled();
   });
+
+  describe('with the rows of a search', () => {
+    const query = q('transactions').filter({ account: 'acct' });
+    const transactions = [
+      // A split: the parent and its unmatched child don't count
+      { is_parent: true, amount: -300 },
+      { amount: -100 },
+      { amount: -200, _unmatched: true },
+      // Transactions that aren't split
+      { amount: 50 },
+      { is_parent: false, amount: -7 },
+    ];
+
+    it('sums the matched rows when they hold every match', async () => {
+      await expect(
+        getFilteredAmount(query, true, {
+          groupCount: 3,
+          transactions,
+          pageCount: 150,
+        }),
+      ).resolves.toBe(-57);
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it('is 0 when nothing matched, like the query', async () => {
+      await expect(
+        getFilteredAmount(query, true, {
+          groupCount: 0,
+          transactions: [],
+          pageCount: 150,
+        }),
+      ).resolves.toBe(0);
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it('runs the query when the rows fill the page', async () => {
+      await expect(
+        getFilteredAmount(query, true, {
+          groupCount: 3,
+          transactions,
+          pageCount: 3,
+        }),
+      ).resolves.toBe(1234);
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not sum anything without a filter or search', async () => {
+      await expect(
+        getFilteredAmount(query, false, {
+          groupCount: 3,
+          transactions,
+          pageCount: 150,
+        }),
+      ).resolves.toBeNull();
+      expect(send).not.toHaveBeenCalled();
+    });
+  });
 });
