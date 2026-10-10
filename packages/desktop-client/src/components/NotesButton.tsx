@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ComponentProps } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@actual-app/components/button';
 import { SvgCustomNotesPaper } from '@actual-app/components/icons/v2';
@@ -11,6 +10,7 @@ import { Tooltip } from '@actual-app/components/tooltip';
 import { View } from '@actual-app/components/view';
 import { send } from '@actual-app/core/platform/client/connection';
 import { css, cx } from '@emotion/css';
+import { t } from 'i18next';
 
 import { useNotes } from '#hooks/useNotes';
 
@@ -34,7 +34,6 @@ export function NotesButton({
   showPlaceholder = false,
   style,
 }: NotesButtonProps) {
-  const { t } = useTranslation();
   const triggerRef = useRef(null);
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const note = useNotes(id) || '';
@@ -92,15 +91,17 @@ export function NotesButton({
         </Button>
       </View>
 
-      <Popover
-        triggerRef={triggerRef}
-        isOpen={isOpen}
-        onOpenChange={onOpenChange}
-        placement={tooltipPosition}
-        style={{ padding: 4 }}
-      >
-        <Notes notes={tempNotes} editable focused onChange={setTempNotes} />
-      </Popover>
+      {isOpen && (
+        <Popover
+          triggerRef={triggerRef}
+          isOpen={isOpen}
+          onOpenChange={onOpenChange}
+          placement={tooltipPosition}
+          style={{ padding: 4 }}
+        >
+          <Notes notes={tempNotes} editable focused onChange={setTempNotes} />
+        </Popover>
+      )}
     </Tooltip>
   );
 }

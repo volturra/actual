@@ -5,6 +5,7 @@ import {
   clearServer,
   initServer,
 } from '@actual-app/core/platform/client/connection';
+import * as monthUtils from '@actual-app/core/shared/months';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -23,20 +24,37 @@ vi.mock(
 const tableRenders = vi.hoisted(
   () => [] as Array<(month: string, type: string, args: unknown) => void>,
 );
+const tableProps = vi.hoisted(() => ({
+  startMonth: '',
+  onMonthSelect: null as
+    | null
+    | ((month: string, numDisplayed: number) => Promise<void> | void),
+}));
 vi.mock('./DynamicBudgetTable', () => ({
   AutoSizingBudgetTable: ({
     onBudgetAction,
+    startMonth,
+    onMonthSelect,
   }: {
     onBudgetAction: (month: string, type: string, args: unknown) => void;
+    startMonth: string;
+    onMonthSelect: (month: string, numDisplayed: number) => void;
   }) => {
     tableRenders.push(onBudgetAction);
-    return <div data-testid="budget-table" />;
+    tableProps.startMonth = startMonth;
+    tableProps.onMonthSelect = onMonthSelect;
+    return <div data-testid="budget-table" data-month={startMonth} />;
   },
 }));
 
+// Each `prewarmMonth` call waits until the test resolves it
+const prewarms = vi.hoisted(() => [] as Array<() => void>);
 vi.mock('./util', () => ({
   prewarmAllMonths: () => Promise.resolve(),
-  prewarmMonth: () => Promise.resolve(),
+  prewarmMonth: () =>
+    new Promise<void>(resolve => {
+      prewarms.push(resolve);
+    }),
 }));
 
 function renderBudget() {
@@ -54,6 +72,7 @@ function renderBudget() {
 describe('Budget', () => {
   beforeEach(() => {
     tableRenders.length = 0;
+    prewarms.length = 0;
     resetTestProviders();
   });
 
@@ -100,6 +119,47 @@ describe('Budget', () => {
 
     expect(new Set(tableRenders.slice(rendersBeforeSave - 1))).toEqual(
       new Set([onBudgetAction]),
+    );
+  });
+
+  // Clicking "next month" twice quickly starts two prewarms. When the first
+  // one finishes last, it must not move the budget back to its month.
+  it('stays on the latest selected month when prewarms finish out of order', async () => {
+    initServer({
+      'get-budget-bounds': async () => ({ start: '2024-01', end: '2024-12' }),
+      'get-categories': async () => ({ grouped: [], list: [] }),
+    });
+
+    renderBudget();
+    await screen.findByTestId('budget-table');
+    const start = tableProps.startMonth;
+    const next = monthUtils.addMonths(start, 1);
+    const nextNext = monthUtils.addMonths(start, 2);
+
+    act(() => {
+      void tableProps.onMonthSelect?.(next, 1);
+    });
+    await waitFor(() => expect(tableProps.startMonth).toBe(next));
+    act(() => {
+      void tableProps.onMonthSelect?.(nextNext, 1);
+    });
+    await waitFor(() => expect(tableProps.startMonth).toBe(nextNext));
+    expect(prewarms).toHaveLength(2);
+
+    // The second prewarm finishes first, then the first one
+    await act(async () => {
+      prewarms[1]();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      prewarms[0]();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(tableProps.startMonth).toBe(nextNext);
+    expect(screen.getByTestId('budget-table')).toHaveAttribute(
+      'data-month',
+      nextNext,
     );
   });
 });

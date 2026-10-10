@@ -1,5 +1,11 @@
 // @ts-strict-ignore
-import React, { useEffect, useEffectEvent, useMemo, useState } from 'react';
+import React, {
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type { ComponentType } from 'react';
 
 import { styles } from '@actual-app/components/styles';
@@ -84,10 +90,15 @@ export function Budget() {
   });
   useEffect(() => loadBoundBudgets(), []);
 
+  // The month most recently selected. Selecting months quickly (e.g. clicking
+  // "next month" twice) starts several prewarms at once, and only the
+  // latest selection may be applied once its prewarm is done: applying an
+  // earlier one would jump back to a month the user already left.
+  const selectedMonthRef = useRef<string | null>(null);
+
   const onMonthSelect = async (month, numDisplayed) => {
     setStartMonthPref(month);
-
-    const warmingMonth = month;
+    selectedMonthRef.current = month;
 
     // We could be smarter about this, but this is a good start. We
     // optimize for the case where users press the left/right button
@@ -111,7 +122,7 @@ export function Budget() {
       );
     }
 
-    if (warmingMonth === month) {
+    if (selectedMonthRef.current === month) {
       setStartMonthPref(month);
     }
   };
