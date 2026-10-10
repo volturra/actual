@@ -161,16 +161,30 @@ export class PagedQuery<TResponse = unknown> extends LiveQuery<TResponse> {
   // The public version of this function is created below and
   // throttled by `once`
   private _fetchNext = async () => {
+    // Give a caller that is replacing this query in the same tick a chance
+    // to unsubscribe it first. In the register, the table's
+    // `onItemsRendered` (which calls `fetchNext`) runs in the same React
+    // commit as, but before, the `setState` callback that swaps in the new
+    // query, so without this the old query's next page would be fetched and
+    // shown
+    await Promise.resolve();
+
     while (this.inflightRequestId) {
       await this._fetchDataPromise;
     }
 
     const previousData = this.data;
 
-    if (!this._hasReachedEnd) {
+    // Like `fetchData`, an unsubscribed query must not deliver any more data
+    // to its listeners: it has been replaced or torn down
+    if (!this._hasReachedEnd && this.isRunning) {
       const { data } = await aqlQuery(
         this.query.limit(this._pageCount).offset(previousData.length),
       );
+
+      if (!this.isRunning) {
+        return;
+      }
 
       // If either there is an existing request in flight or the data
       // has already changed underneath it, we can't reliably concat
