@@ -376,6 +376,39 @@ export function calculateTrend(
   return 'stable';
 }
 
+/**
+ * Stand in for the expenses dated before `displayStart` with one expense of
+ * their total, dated the day before `displayStart`.
+ *
+ * `calculateAgeOfMoney` gives the same ages from `displayStart` onward and
+ * the same `insufficientData` either way:
+ * - Expenses consume the income buckets oldest first whatever their own
+ *   dates, so after the earlier expenses the buckets only depend on how much
+ *   they spent in total.
+ * - All earlier expenses sort before the later ones, and so does the stand-in.
+ * - `insufficientData` is set once the expenses so far exceed all income,
+ *   which only depends on the running total.
+ * - Ages dated before `displayStart` (the stand-in's included) are dropped
+ *   before anything is shown.
+ */
+export function withEarlierExpensesTotal(
+  expenses: Transaction[],
+  earlierExpensesTotal: number,
+  displayStart: string,
+): Transaction[] {
+  if (earlierExpensesTotal >= 0) {
+    return expenses;
+  }
+  return [
+    {
+      id: '',
+      date: monthUtils.subDays(displayStart, 1),
+      amount: earlierExpensesTotal,
+    },
+    ...expenses,
+  ];
+}
+
 export type AgeOfMoneyParams = {
   start: string;
   end: string;
@@ -566,12 +599,17 @@ export function createAgeOfMoneySpreadsheet({
       conditionsOp,
     );
 
-    // Query for ALL income transactions up to the end date
-    // FIFO requires complete income history to calculate ages correctly
-    // Includes: regular income + transfers from off-budget accounts
-    //   + (when account-filtered) transfers from filtered-out on-budget accounts
+    // FIFO needs the complete income history up to the end date, as
+    // buckets. Expenses are only listed one by one from the start of the
+    // display range: ages before it are never shown, and the expenses
+    // before it only use up the oldest buckets, which depends on nothing but
+    // their total (see `withEarlierExpensesTotal`).
+    // Includes: regular income and expenses + transfers from/to off-budget
+    //   accounts + (when account-filtered) transfers from/to filtered-out
+    //   on-budget accounts
     // Excludes: on-budget transfers within the filtered account set
-    function makeIncomeQuery() {
+    const displayStart = monthUtils.firstDayOfMonth(start);
+    function makeBaseQuery() {
       return q('transactions')
         .filter({
           [conditionsOpKey]: filters,
@@ -580,41 +618,42 @@ export function createAgeOfMoneySpreadsheet({
           date: { $lte: fixedEnd },
           'account.offbudget': false,
           ...transferFilter,
-          amount: { $gt: 0 },
-        })
-        .select(['id', 'date', 'amount']);
+        });
     }
 
-    // Query for ALL expense transactions up to the end date
-    // FIFO requires complete expense history to properly consume income buckets
-    // Includes: regular expenses + transfers to off-budget accounts
-    //   + (when account-filtered) transfers to filtered-out on-budget accounts
-    // Excludes: on-budget transfers within the filtered account set
-    function makeExpenseQuery() {
-      return q('transactions')
-        .filter({
-          [conditionsOpKey]: filters,
-        })
-        .filter({
-          date: { $lte: fixedEnd },
-          'account.offbudget': false,
-          ...transferFilter,
-          amount: { $lt: 0 },
-        })
-        .select(['id', 'date', 'amount']);
-    }
+    // All income, and the expenses from the display start onward
+    const rowsQuery = makeBaseQuery()
+      .filter({
+        $or: [
+          { amount: { $gt: 0 } },
+          { $and: [{ amount: { $lt: 0 } }, { date: { $gte: displayStart } }] },
+        ],
+      })
+      .select(['id', 'date', 'amount']);
+    // The total of the expenses before the display start
+    const earlierExpensesQuery = makeBaseQuery()
+      .filter({ amount: { $lt: 0 }, date: { $lt: displayStart } })
+      .select([{ amount: { $sum: '$amount' } }]);
 
-    return runAll([makeIncomeQuery(), makeExpenseQuery()], data => {
-      const [incomeData, expenseData] = data as [Transaction[], Transaction[]];
+    return runAll([rowsQuery, earlierExpensesQuery], data => {
+      const [rows, earlierExpenseRows] = data as [
+        Transaction[],
+        Array<{ amount: number | null }>,
+      ];
+      const incomeData = rows.filter(t => t.amount > 0);
+      const expenseData = withEarlierExpensesTotal(
+        rows.filter(t => t.amount < 0),
+        earlierExpenseRows[0]?.amount ?? 0,
+        displayStart,
+      );
 
-      // Calculate ages using FIFO method on ALL historical data
+      // Calculate ages using FIFO method on the whole history
       const { ages, insufficientData } = calculateAgeOfMoney(
         incomeData,
         expenseData,
       );
 
       // Filter ages to only those within the display range
-      const displayStart = monthUtils.firstDayOfMonth(start);
       const filteredAges = ages.filter(({ date }) => date >= displayStart);
 
       // Generate graph data from filtered ages with specified granularity
