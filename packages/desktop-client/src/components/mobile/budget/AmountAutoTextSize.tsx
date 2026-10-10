@@ -73,10 +73,14 @@ export function AmountAutoTextSize({
     [mode, minFontSizePx, maxFontSizePx, fontSizePrecisionPx],
   );
 
-  // Runs before paint, like the remount it replaces, so the new text is never
-  // painted at the size fitted for the previous text. Only a change of the
-  // text itself needs a refit: style changes keep the element's font size in
-  // `AutoTextSize` too, and the container's size is watched by the observer.
+  // Clears the old fit during the commit and requests a refit. The library
+  // throttles fitting through `requestAnimationFrame`, so the refit runs in the
+  // next frame's rAF callbacks, before that frame is painted. (The remount
+  // this replaces got its first fit from the new `ResizeObserver`, which fires
+  // after rAF, so it painted one unfitted frame first; the settled size is the
+  // same.) Only a change of the text itself needs a refit: style changes keep
+  // the element's font size in `AutoTextSize` too, and the container's size is
+  // watched by the observer.
   useLayoutEffect(() => {
     if (elementRef.current) {
       elementRef.current.style.fontSize = '';
