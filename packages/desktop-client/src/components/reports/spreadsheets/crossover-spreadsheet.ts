@@ -7,6 +7,7 @@ import type { useSpreadsheet } from '#hooks/useSpreadsheet';
 import { aqlQuery } from '#queries/aqlQuery';
 
 type MonthlyAgg = { date: string; amount: number };
+type AccountMonthlyAgg = MonthlyAgg & { account: AccountEntity['id'] };
 
 // Utility functions for Hampel identifier
 function calculateMedian(values: number[]): number {
@@ -129,7 +130,10 @@ export function createCrossoverSpreadsheet({
       const query = q('transactions')
         .filter({
           $and: [
-            { $or: expenseCategoryIds.map(id => ({ category: id })) },
+            // `$oneof` compiles to one `IN (...)` test. A `$or` of one
+            // equality per category made SQLite evaluate every comparison
+            // for every transaction.
+            { category: { $oneof: expenseCategoryIds } },
             { date: { $gte: monthUtils.firstDayOfMonth(start) } },
             { date: { $lte: monthUtils.lastDayOfMonth(end) } },
           ],
@@ -144,46 +148,30 @@ export function createCrossoverSpreadsheet({
       return data as MonthlyAgg[];
     })();
 
-    // Compute monthly balances for selected accounts (historical returns)
-    const historicalBalancesPromise = Promise.all(
-      incomeAccountIds.map(async accountId => {
-        // Get the account balance at the end of the first month (start month)
-        const startingBalance = await aqlQuery(
-          q('transactions')
-            .filter({ account: accountId })
-            .filter({
-              date: { $lte: monthUtils.lastDayOfMonth(start) },
-            })
-            .calculate({ $sum: '$amount' }),
-        ).then(({ data }) => (typeof data === 'number' ? data : 0));
-        // Get all transactions from the start month onwards for balance calculations
-        // We need to exclude the first month since we already have its ending balance as starting
-        // Instead of adding months (which can cause invalid month strings), we'll filter out the first month later
-        const balances = await aqlQuery(
-          q('transactions')
-            .filter({
-              account: accountId,
-              date: { $gte: monthUtils.firstDayOfMonth(start) },
-            })
-            .filter({
-              $and: [{ date: { $lte: monthUtils.lastDayOfMonth(end) } }],
-            })
-            .groupBy({ $month: '$date' })
-            .select([
-              { date: { $month: '$date' } },
-              { amount: { $sum: '$amount' } },
-            ]),
-        ).then(({ data }) => data as MonthlyAgg[]);
-
-        // Filter out the first month since we already have its ending balance as starting
-        const filteredBalances = balances.filter(b => b.date !== start);
-
-        return {
-          accountId,
-          starting: startingBalance,
-          balances: filteredBalances,
-        };
-      }),
+    // Compute monthly balances for selected accounts (historical returns).
+    // One query groups every selected account by month up to the report end;
+    // each account's starting balance (its balance at the end of the start
+    // month) is the sum of its months up to and including the start month.
+    const balancesEnd = end < start ? start : end;
+    const historicalBalancesPromise = aqlQuery(
+      q('transactions')
+        .filter({
+          account: { $oneof: incomeAccountIds },
+          date: { $lte: monthUtils.lastDayOfMonth(balancesEnd) },
+        })
+        .groupBy(['account', { $month: '$date' }])
+        .select([
+          'account',
+          { date: { $month: '$date' } },
+          { amount: { $sum: '$amount' } },
+        ]),
+    ).then(({ data }) =>
+      splitAccountBalances(
+        data as AccountMonthlyAgg[],
+        incomeAccountIds,
+        start,
+        end,
+      ),
     );
 
     const [expenses, historicalBalances] = await Promise.all([
@@ -209,6 +197,37 @@ export function createCrossoverSpreadsheet({
       ),
     );
   };
+}
+
+// Months are zero-padded `YYYY-MM` strings, so they sort as text.
+function splitAccountBalances(
+  rows: AccountMonthlyAgg[],
+  accountIds: AccountEntity['id'][],
+  start: string,
+  end: string,
+) {
+  const rowsByAccount = new Map<AccountEntity['id'], AccountMonthlyAgg[]>();
+  for (const row of rows) {
+    const accountRows = rowsByAccount.get(row.account);
+    if (accountRows) {
+      accountRows.push(row);
+    } else {
+      rowsByAccount.set(row.account, [row]);
+    }
+  }
+  return accountIds.map(accountId => {
+    let starting = 0;
+    const balances: MonthlyAgg[] = [];
+    for (const { date, amount } of rowsByAccount.get(accountId) ?? []) {
+      if (date <= start) {
+        starting += amount;
+      } else if (date <= end) {
+        // The start month is already part of the starting balance
+        balances.push({ date, amount });
+      }
+    }
+    return { accountId, starting, balances };
+  });
 }
 
 function recalculate(
