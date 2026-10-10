@@ -4,11 +4,9 @@ import { useTranslation } from 'react-i18next';
 
 import { Button } from '@actual-app/components/button';
 import { styles } from '@actual-app/components/styles';
-import { Text } from '@actual-app/components/text';
 import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type { CategoryEntity } from '@actual-app/core/types/models';
-import { AutoTextSize } from 'auto-text-size';
 
 import { makeAmountGrey } from '#components/budget/util';
 import { PrivacyFilter } from '#components/PrivacyFilter';
@@ -22,6 +20,7 @@ import { pushModal } from '#modals/modalsSlice';
 import { useDispatch } from '#redux';
 import type { SheetFields } from '#spreadsheet';
 
+import { AmountAutoTextSize } from './AmountAutoTextSize';
 import { getColumnWidth, PILL_STYLE } from './BudgetTable';
 
 type BudgetCellProps<
@@ -199,9 +198,7 @@ export function BudgetCell<
             })}
           >
             <PrivacyFilter>
-              <AutoTextSize
-                key={value}
-                as={Text}
+              <AmountAutoTextSize
                 minFontSizePx={6}
                 maxFontSizePx={12}
                 mode="oneline"
@@ -213,7 +210,7 @@ export function BudgetCell<
                 }}
               >
                 {format(value, type)}
-              </AutoTextSize>
+              </AmountAutoTextSize>
             </PrivacyFilter>
           </Button>
         )
