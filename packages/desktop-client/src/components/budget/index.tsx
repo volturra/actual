@@ -85,9 +85,10 @@ export function Budget() {
   useEffect(() => loadBoundBudgets(), []);
 
   const onMonthSelect = async (month, numDisplayed) => {
+    // Set right away, not after the prewarm: selecting months quickly
+    // (e.g. clicking "next month" twice) runs several prewarms at once,
+    // and an earlier one finishing last must not jump back to its month.
     setStartMonthPref(month);
-
-    const warmingMonth = month;
 
     // We could be smarter about this, but this is a good start. We
     // optimize for the case where users press the left/right button
@@ -109,10 +110,6 @@ export function Budget() {
         spreadsheet,
         monthUtils.addMonths(month, numDisplayed),
       );
-    }
-
-    if (warmingMonth === month) {
-      setStartMonthPref(month);
     }
   };
 

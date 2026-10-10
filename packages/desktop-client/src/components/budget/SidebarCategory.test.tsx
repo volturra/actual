@@ -121,3 +121,58 @@ describe('SidebarCategory context menu', () => {
     ]);
   });
 });
+
+describe('SidebarCategory hover buttons', () => {
+  const category = generateCategory('Groceries', 'group-id');
+
+  function renderRow(notes: Record<string, string> = {}) {
+    initServer({
+      query: async () => ({
+        data: Object.entries(notes).map(([id, note]) => ({ id, note })),
+        dependencies: [],
+      }),
+    });
+    const store = configureTestAppStore({
+      queryClient: createTestQueryClient(),
+    });
+    return render(
+      <TestProviders store={store}>
+        <SidebarCategory
+          innerRef={null}
+          category={category}
+          editing={false}
+          onEditName={vi.fn()}
+          onSave={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      </TestProviders>,
+    );
+  }
+
+  it('mounts the menu and notes buttons the first time the row is hovered', async () => {
+    const { container } = renderRow();
+    await act(() => Promise.resolve());
+
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
+
+    const row = container.firstElementChild;
+    if (!row) {
+      throw new Error('No row rendered');
+    }
+    fireEvent.mouseEnter(row);
+
+    // The category menu and the notes button
+    expect(screen.getAllByRole('button')).toHaveLength(2);
+    expect(
+      screen.getByRole('button', { name: 'View notes' }),
+    ).toBeInTheDocument();
+  });
+
+  it('always shows the notes button of a category with a note', async () => {
+    renderRow({ [category.id]: 'Weekly shop' });
+
+    expect(
+      await screen.findByRole('button', { name: 'View notes' }),
+    ).toBeInTheDocument();
+  });
+});

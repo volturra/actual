@@ -52,6 +52,8 @@ export const Tooltip = ({
     setIsHover(false);
   }, [triggerProps.isDisabled]);
 
+  const isOpen = triggerProps.isOpen ?? (isHovered && !triggerProps.isDisabled);
+
   return (
     <View
       style={{ minHeight: 'auto', flexShrink: 0, maxWidth: '100%' }}
@@ -59,22 +61,23 @@ export const Tooltip = ({
       onMouseEnter={handlePointerEnter}
       onMouseLeave={handlePointerLeave}
     >
-      <TooltipTrigger
-        isOpen={isHovered && !triggerProps.isDisabled}
-        {...triggerProps}
-      >
+      <TooltipTrigger isOpen={isOpen} {...triggerProps}>
         {children}
 
-        <AriaTooltip
-          triggerRef={triggerRef}
-          style={{
-            ...styles.tooltip,
-            ...(disablePointerEvents && { pointerEvents: 'none' }),
-          }}
-          {...props}
-        >
-          {content}
-        </AriaTooltip>
+        {/* A closed tooltip renders nothing, so only mount it while open:
+            most tooltips (e.g. one per budget cell) are never opened. */}
+        {(isOpen || props.isOpen) && (
+          <AriaTooltip
+            triggerRef={triggerRef}
+            style={{
+              ...styles.tooltip,
+              ...(disablePointerEvents && { pointerEvents: 'none' }),
+            }}
+            {...props}
+          >
+            {content}
+          </AriaTooltip>
+        )}
       </TooltipTrigger>
     </View>
   );

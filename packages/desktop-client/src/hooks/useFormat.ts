@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo } from 'react';
+import { shallowEqual } from 'react-redux';
 
 import { evalArithmetic } from '@actual-app/core/shared/arithmetic';
 import { getCurrency } from '@actual-app/core/shared/currencies';
@@ -14,7 +15,8 @@ import {
 } from '@actual-app/core/shared/util';
 import type { IntegerAmount } from '@actual-app/core/shared/util';
 
-import { useSyncedPref } from './useSyncedPref';
+import { useSelector } from '#redux';
+import type { RootState } from '#redux/store';
 
 export type FormatType =
   | 'string'
@@ -107,14 +109,27 @@ function format(
   }
 }
 
+function selectFormatPrefs(state: RootState) {
+  const prefs = state.prefs.synced;
+  return [
+    prefs.numberFormat,
+    prefs.hideFraction,
+    prefs.defaultCurrencyCode,
+    prefs.currencySymbolPosition,
+    prefs.currencySpaceBetweenAmountAndSymbol,
+  ] as const;
+}
+
 export function useFormat(): UseFormatResult {
-  const [numberFormatPref] = useSyncedPref('numberFormat');
-  const [hideFractionPref] = useSyncedPref('hideFraction');
-  const [defaultCurrencyCodePref] = useSyncedPref('defaultCurrencyCode');
-  const [symbolPositionPref] = useSyncedPref('currencySymbolPosition');
-  const [spaceEnabledPref] = useSyncedPref(
-    'currencySpaceBetweenAmountAndSymbol',
-  );
+  // One store subscription for all five prefs instead of one per pref: a
+  // budget page renders this hook for every amount shown.
+  const [
+    numberFormatPref,
+    hideFractionPref,
+    defaultCurrencyCodePref,
+    symbolPositionPref,
+    spaceEnabledPref,
+  ] = useSelector(selectFormatPrefs, shallowEqual);
 
   const activeCurrency = useMemo(() => {
     return getCurrency(defaultCurrencyCodePref || '');
