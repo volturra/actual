@@ -3,4 +3,4 @@ category: Enhancements
 authors: [volturra]
 ---
 
-Calculate custom report totals faster, especially when grouping by payee.
+Custom reports open and update faster on budgets with many transactions.
