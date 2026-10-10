@@ -1,7 +1,15 @@
 // @ts-strict-ignore
 import { patchFetchForSqlJS } from '#mocks/util';
 
-import { execQuery, init, openDatabase, runQuery, transaction } from './index';
+import {
+  _getModule,
+  execQuery,
+  init,
+  openDatabase,
+  prepare,
+  runQuery,
+  transaction,
+} from './index';
 
 beforeAll(async () => {
   const baseURL = `${__dirname}/../../../../../../node_modules/@jlongster/sql.js/dist/`;
@@ -9,6 +17,22 @@ beforeAll(async () => {
 
   return init({ baseURL });
 });
+
+// Two connections to one file, so one can hold a lock the other runs into.
+// In the browser this is another tab or worker on the same budget file.
+function openTwoConnections(name: string) {
+  const SQL = _getModule();
+  // @ts-expect-error 2nd argument missed in sql.js types
+  const db = new SQL.Database(`/${name}.sqlite`, { filename: true });
+  execQuery(db, 'PRAGMA journal_mode=MEMORY;' + initSQL);
+  // @ts-expect-error 2nd argument missed in sql.js types
+  const other = new SQL.Database(`/${name}.sqlite`, { filename: true });
+  return { db, other };
+}
+
+function insertNumber(id: string, number: number) {
+  return `INSERT INTO numbers (id, number) VALUES ('${id}', ${number})`;
+}
 
 const initSQL = `
 CREATE TABLE numbers (id TEXT PRIMARY KEY, number INTEGER);
@@ -192,5 +216,71 @@ describe('Web sqlite', () => {
     expect(rows.length).toBe(1);
     // @ts-expect-error Property 'id' does not exist on type 'unknown'
     expect(rows[0].id).toBe('id1');
+  });
+
+  describe('when a statement fails part way', () => {
+    let consoleSpy;
+    beforeEach(() => {
+      consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => null);
+    });
+    afterEach(() => {
+      consoleSpy.mockRestore();
+    });
+
+    it.each([
+      ['a sql string', (db, sql) => runQuery(db, sql)],
+      ['a prepared statement', (db, sql) => runQuery(db, prepare(db, sql))],
+    ])(
+      'should still commit transactions after a busy write (%s)',
+      (label, write) => {
+        const { db, other } = openTwoConnections(
+          'busy-write-' + label.replace(/ /g, '-'),
+        );
+
+        other.exec('BEGIN EXCLUSIVE');
+        expect(() => write(db, insertNumber('id1', 1))).toThrow(/locked/);
+        other.exec('ROLLBACK');
+
+        // The failed write must not stay running, or every COMMIT fails
+        // with "cannot commit transaction - SQL statements in progress"
+        transaction(db, () => {
+          runQuery(db, insertNumber('id2', 2));
+        });
+        transaction(
+          db,
+          () => {
+            runQuery(db, insertNumber('id3', 3));
+          },
+          { immediate: true },
+        );
+        expect(runQuery(db, 'SELECT id FROM numbers', [], true)).toEqual([
+          { id: 'id2' },
+          { id: 'id3' },
+        ]);
+      },
+    );
+
+    it('should release the lock of a read that fails part way', () => {
+      const { db, other } = openTwoConnections('failed-read');
+      other.exec(insertNumber('id1', 1));
+
+      // Reading a row throws after the first step, while the read holds
+      // its shared lock
+      const stmt = prepare(db, 'SELECT * FROM numbers');
+      stmt.getAsObject = () => {
+        throw new Error('read failed');
+      };
+      expect(() => runQuery(db, stmt, [], true)).toThrow('read failed');
+
+      // A read left running keeps its shared lock, so the other connection
+      // could never commit a write again
+      other.exec('BEGIN');
+      other.exec(insertNumber('id2', 2));
+      other.exec('COMMIT');
+      expect(runQuery(db, 'SELECT id FROM numbers', [], true)).toEqual([
+        { id: 'id1' },
+        { id: 'id2' },
+      ]);
+    });
   });
 });
