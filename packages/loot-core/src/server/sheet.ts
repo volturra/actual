@@ -15,6 +15,7 @@ import type {
   DbZeroBudgetMonth,
 } from './db';
 import { Spreadsheet } from './spreadsheet/spreadsheet';
+import type { Node } from './spreadsheet/spreadsheet';
 import { resolveName } from './spreadsheet/util';
 
 let globalSheet: Spreadsheet;
@@ -39,6 +40,47 @@ async function updateSpreadsheetCache(rawDb, names: string[]) {
         );
       }
     });
+  });
+}
+
+/**
+ * Write the given cells to the cache in one transaction and, with
+ * `markClean`, mark the cache clean in that same transaction. Unlike
+ * `updateSpreadsheetCache` this throws (synchronously) when the write fails,
+ * so the caller knows whether the cache was marked clean.
+ */
+function writeSpreadsheetCache(
+  mainDb: Database,
+  cacheDb: Database,
+  nodes: Map<string, Node>,
+  names: string[],
+  { markClean }: { markClean: boolean },
+) {
+  sqlite.transaction(cacheDb, () => {
+    for (const name of names) {
+      const node = nodes.get(name);
+      if (node == null) {
+        // The cell was deleted after it was computed. Drop its cached value
+        // so it's computed again if it's created again.
+        sqlite.runQuery(cacheDb, 'DELETE FROM kvcache WHERE key = ?', [name]);
+      } else if (node.sql == null) {
+        // Don't cache query nodes yet
+        sqlite.runQuery(
+          cacheDb,
+          'INSERT OR REPLACE INTO kvcache (key, value) VALUES (?, ?)',
+          [name, JSON.stringify(node.value)],
+        );
+      }
+    }
+
+    if (markClean) {
+      // In the same transaction as the cells: a reader sees either the
+      // cells and the clean marker, or neither. On desktop the main
+      // database's copy of the marker commits first, but on its own it
+      // doesn't match the cache database's, so the cache counts as dirty
+      // until this transaction commits.
+      setCacheStatus(mainDb, cacheDb, { clean: true });
+    }
   });
 }
 
@@ -134,6 +176,7 @@ export async function loadSpreadsheet(
     sheet = new Spreadsheet(
       updateSpreadsheetCache.bind(null, cacheDb),
       setCacheStatus.bind(null, mainDb, cacheDb),
+      writeSpreadsheetCache.bind(null, mainDb, cacheDb),
     );
   } else {
     sheet = new Spreadsheet();

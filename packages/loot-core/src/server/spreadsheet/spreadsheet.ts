@@ -59,6 +59,18 @@ function yieldToOtherTasks(callback: () => void): () => void {
   return () => clearTimeout(timer);
 }
 
+/**
+ * How long the backend has to stay idle before the cells computed while the
+ * stored cache is marked dirty are written to it (see `pendingCacheNames`).
+ */
+const CACHE_SAVE_DELAY_MS = 1000;
+
+type WriteCache = (
+  nodes: Map<string, Node>,
+  names: string[],
+  options: { markClean: boolean },
+) => void;
+
 export class Spreadsheet {
   _meta: {
     createdMonths: Set<string>;
@@ -90,15 +102,36 @@ export class Spreadsheet {
   unloaded: boolean;
   saveCache;
   setCacheStatus;
+  // Writes cells to the cache and optionally marks it clean, in one
+  // transaction. Throws if that fails. Without it every run saves its cells
+  // right away.
+  writeCache: WriteCache | null;
+  // Set once this sheet marked the stored cache dirty, cleared once it marks
+  // it clean again. Only ever true while the stored cache is marked dirty
+  // (nothing else marks it clean), which is what makes it safe to skip the
+  // dirty write and to put off saving computed cells while it's set.
+  cacheMarkedDirty: boolean;
+  // Cells computed since the stored cache was marked dirty that aren't
+  // written to it yet. The cache isn't marked clean while there are any.
+  pendingCacheNames: Set<string>;
+  cacheSaveTimer: ReturnType<typeof setTimeout> | null;
   transactionDepth;
 
-  constructor(saveCache?: unknown, setCacheStatus?: unknown) {
+  constructor(
+    saveCache?: unknown,
+    setCacheStatus?: unknown,
+    writeCache?: WriteCache,
+  ) {
     // @ts-expect-error Graph should be converted to class
     this.graph = new Graph();
     this.nodes = new Map<string, Node>();
     this.transactionDepth = 0;
     this.saveCache = saveCache;
     this.setCacheStatus = setCacheStatus;
+    this.writeCache = writeCache ?? null;
+    this.cacheMarkedDirty = false;
+    this.pendingCacheNames = new Set();
+    this.cacheSaveTimer = null;
     this.dirtyCells = [];
     this.computeQueue = [];
     this.pausedComputation = null;
@@ -357,6 +390,11 @@ export class Spreadsheet {
         // Clear the queue before notifying: `onFinish` listeners check
         // `computedCount`, which `clearQueue` brings up to date
         this.clearQueue();
+        if (this.isCacheSaveDeferred()) {
+          // These cells have new values too, so they must be saved before
+          // the cache is marked clean
+          this.deferCacheSave(computed);
+        }
         if (computed.length > 0) {
           this.events.emit('change', { names: computed });
         }
@@ -405,8 +443,12 @@ export class Spreadsheet {
       this.events.emit('change', { names });
 
       // Cache the updated cells
-      this.saveCachedCells(names);
-      this.markCacheSafe();
+      if (this.isCacheSaveDeferred()) {
+        this.deferCacheSave(names);
+      } else {
+        this.saveCachedCells(names);
+        this.markCacheSafe();
+      }
 
       this.clearQueue();
     }
@@ -420,21 +462,133 @@ export class Spreadsheet {
 
   markCacheSafe() {
     if (!this.cacheBarrier) {
+      if (this.pendingCacheNames.size > 0) {
+        // Cells computed since the cache was marked dirty aren't saved yet.
+        // They're saved together with the clean marker once idle.
+        this.scheduleCacheSave();
+        return;
+      }
       if (this.setCacheStatus) {
         this.setCacheStatus({ clean: true });
+        this.cacheMarkedDirty = false;
       }
     }
   }
 
+  /**
+   * Mark the stored cache as not to be trusted, e.g. after data was changed
+   * without going through the sheet. The cache stays dirty until a later
+   * computation or cache barrier finishes.
+   */
   markCacheDirty() {
+    this.writeCacheDirty();
+    if (this.pendingCacheNames.size > 0) {
+      // Otherwise saving them, once idle or when closing, would mark the
+      // cache clean right away. Write them now without marking it clean.
+      try {
+        this.writeCache(this.nodes, [...this.pendingCacheNames], {
+          markClean: false,
+        });
+        this.pendingCacheNames.clear();
+      } catch (e) {
+        // Keep them pending and stop saving, so this sheet never marks the
+        // cache clean again
+        logger.warn('Failed saving the spreadsheet cache', e);
+        this.writeCache = null;
+      }
+    }
+  }
+
+  writeCacheDirty() {
     if (this.setCacheStatus) {
       this.setCacheStatus({ clean: false });
+      // Only after the write succeeded
+      this.cacheMarkedDirty = true;
     }
+  }
+
+  /**
+   * Whether cells computed now can be saved later: the stored cache is
+   * already marked dirty, so until they are saved (with the clean marker, in
+   * one transaction) loading the budget recomputes everything anyway.
+   */
+  isCacheSaveDeferred(): boolean {
+    return this.cacheMarkedDirty && this.writeCache != null && !this.unloaded;
+  }
+
+  deferCacheSave(names: string[]): void {
+    for (const name of names) {
+      this.pendingCacheNames.add(name);
+    }
+    this.scheduleCacheSave();
+  }
+
+  scheduleCacheSave(): void {
+    if (this.unloaded || this.writeCache == null) {
+      return;
+    }
+    if (this.cacheSaveTimer !== null) {
+      clearTimeout(this.cacheSaveTimer);
+    }
+    const timer = setTimeout(() => {
+      this.cacheSaveTimer = null;
+      if (this.unloaded) {
+        return;
+      }
+      if (
+        this.running ||
+        this.computeQueue.length > 0 ||
+        this.cacheBarrier ||
+        this.transactionDepth > 0
+      ) {
+        // Still computing or changing data, so wait until that's done
+        this.scheduleCacheSave();
+        return;
+      }
+      this.flushCacheSave();
+    }, CACHE_SAVE_DELAY_MS);
+    // Don't keep a Node process (e.g. an API script) alive just for this; if
+    // it exits first the cache just stays dirty
+    if (typeof timer === 'object' && timer && 'unref' in timer) {
+      timer.unref();
+    }
+    this.cacheSaveTimer = timer;
+  }
+
+  /**
+   * Save the cells computed since the cache was marked dirty and mark it
+   * clean, in one transaction. Only call this when no cell other than a
+   * query cell is computing or queued, so the sheet is consistent with the
+   * data.
+   */
+  flushCacheSave(): void {
+    if (
+      this.pendingCacheNames.size === 0 ||
+      this.cacheBarrier ||
+      this.writeCache == null
+    ) {
+      return;
+    }
+    const names = [...this.pendingCacheNames];
+    try {
+      this.writeCache(this.nodes, names, { markClean: true });
+    } catch (e) {
+      // Nothing was written, so the stored cache is still marked dirty. Keep
+      // the cells pending so it isn't marked clean without them.
+      logger.warn('Failed saving the spreadsheet cache', e);
+      return;
+    }
+    this.pendingCacheNames.clear();
+    this.cacheMarkedDirty = false;
   }
 
   startCacheBarrier() {
     this.cacheBarrier = true;
-    this.markCacheDirty();
+    if (!this.cacheMarkedDirty) {
+      // Otherwise it's already marked dirty, and nothing marks it clean
+      // while the barrier is up
+      this.writeCacheDirty();
+    }
   }
 
   endCacheBarrier() {
@@ -479,13 +633,27 @@ export class Spreadsheet {
   }
 
   unload() {
-    this.unloaded = true;
-    const pendingChange = this.running || this.computeQueue.length > 0;
-    if (pendingChange && this.onlyQueriesQueued()) {
-      // Query cells aren't cached, so the cache is up to date even though
-      // they'll never finish. Mark it as such, as finishing the run would.
-      this.markCacheSafe();
+    if (this.cacheSaveTimer !== null) {
+      clearTimeout(this.cacheSaveTimer);
+      this.cacheSaveTimer = null;
     }
+    const pendingChange = this.running || this.computeQueue.length > 0;
+    if (!pendingChange || this.onlyQueriesQueued()) {
+      if (this.pendingCacheNames.size > 0) {
+        // Save the cells still waiting to be saved now, while the database
+        // is open. Query cells aren't cached, so ones still left to run
+        // don't matter. Under a cache barrier (or mid-transaction) nothing
+        // is saved and the cache stays dirty.
+        if (this.transactionDepth === 0) {
+          this.flushCacheSave();
+        }
+      } else if (pendingChange) {
+        // Query cells aren't cached, so the cache is up to date even though
+        // they'll never finish. Mark it as such, as finishing the run would.
+        this.markCacheSafe();
+      }
+    }
+    this.unloaded = true;
     // Only query cells are left, so there is nothing to cache or notify
     if (this.pausedComputation) {
       this.stopComputations();
