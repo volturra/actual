@@ -102,8 +102,13 @@ describe('normalisedLike', () => {
 
   it('matches long values, which it does not memoise, the same way', () => {
     const padding = 'Ünïcödé nötes '.repeat(40);
-    for (let i = 0; i < 6000; i++) {
-      // Alternate between long values and short ones that fill the memo
+    // Fill the memo of values first, so long values meet a full memo
+    for (let i = 0; i < 5000; i++) {
+      expect(normalisedLike('%', `Fill ${i}`)).toBe(1);
+    }
+    // Long values are normalised on every call, so keep this loop short
+    for (let i = 0; i < 400; i++) {
+      // Alternate between long values and short ones that go in the memo
       const value = i % 2 ? `${padding}Café ${i}` : `Café ${i}`;
       expect(value.length > 256).toBe(i % 2 === 1);
       expect(normalisedLike(`%cafe ${i}%`, value)).toBe(1);

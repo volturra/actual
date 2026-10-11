@@ -1,6 +1,6 @@
 import { LRUCache } from 'lru-cache';
 
-import { normalise } from './normalise';
+import { getNormalisedString } from '#shared/normalisation';
 
 const likePatternCache = new LRUCache<string, RegExp>({ max: 500 });
 
@@ -73,11 +73,11 @@ export function normalisedLike(
     return unicodeLike(pattern, null);
   }
   if (value.length > NORMALISED_CACHE_MAX_LENGTH) {
-    return unicodeLike(pattern, normalise(value));
+    return unicodeLike(pattern, getNormalisedString(value));
   }
   let normalised = normalisedCache.get(value);
   if (normalised === undefined) {
-    normalised = normalise(value) ?? '';
+    normalised = getNormalisedString(value);
     normalisedCache.set(value, normalised);
   }
   return unicodeLike(pattern, normalised);
