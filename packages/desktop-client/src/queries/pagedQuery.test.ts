@@ -771,6 +771,99 @@ describe('pagedQuery', () => {
     }
     await fetchNextPromise;
     expect(fetchNextSettled).toBe(true);
-    expect(paged.data.length).toBe(300);
+    // The query was unsubscribed, so the page it fetched is dropped
+    expect(paged.data.length).toBe(150);
+  });
+
+  it('does not fetch the next page of a query unsubscribed in the same tick', async () => {
+    // The register's table asks for the next page in the same React commit
+    // in which the account replaces its query (e.g. hiding reconciled
+    // transactions). The old query's page must not be fetched or shown.
+    mockPagingServer(500, { delay: 10 });
+    tracer.start();
+
+    const query = q('transactions').select('id');
+    const paged = pagedQuery(query, {
+      onData: data => tracer.event('data', data),
+      onPageData: data => tracer.event('page-data', data),
+      options: { pageCount: 20 },
+    });
+
+    await tracer.expect('server-query', ['id']);
+    await tracer.expect('data', d => {
+      expect(d.length).toBe(20);
+    });
+
+    void paged.fetchNext();
+    paged.unsubscribe();
+
+    await expectNoMoreEvents(100);
+    expect(paged.data.length).toBe(20);
+  });
+
+  it('does not wait on in-flight requests once unsubscribed', async () => {
+    mockPagingServer(500, { delay: 10 });
+    tracer.start();
+
+    const query = q('transactions').select('id');
+    const paged = pagedQuery(query, {
+      onData: data => tracer.event('data', data),
+      options: { pageCount: 20 },
+    });
+
+    await tracer.expect('server-query', ['id']);
+    await tracer.expect('data', d => {
+      expect(d.length).toBe(20);
+    });
+
+    // A stale in-flight request id (the #8628 class of bug) must not make an
+    // unsubscribed query's `fetchNext` spin waiting for it
+    const internals = paged as unknown as {
+      _inflightRequestId: number | null;
+    };
+    internals._inflightRequestId = 1;
+    paged.unsubscribe();
+
+    let settled = false;
+    const fetchNextPromise = paged.fetchNext().then(() => {
+      settled = true;
+    });
+    // Timers never fire while `fetchNext` spins, so pump microtasks only
+    for (let i = 0; i < 200 && !settled; i++) {
+      await Promise.resolve();
+    }
+    const settledWhileStale = settled;
+    // Break a spinning loop so a regression fails here instead of hanging
+    internals._inflightRequestId = null;
+    await fetchNextPromise;
+
+    expect(settledWhileStale).toBe(true);
+    await expectNoMoreEvents(50);
+    expect(paged.data.length).toBe(20);
+  });
+
+  it('drops a page that arrives after the query was unsubscribed', async () => {
+    mockPagingServer(500, { delay: 10 });
+    tracer.start();
+
+    const query = q('transactions').select('id');
+    const paged = pagedQuery(query, {
+      onData: data => tracer.event('data', data),
+      onPageData: data => tracer.event('page-data', data),
+      options: { pageCount: 20 },
+    });
+
+    await tracer.expect('server-query', ['id']);
+    await tracer.expect('data', d => {
+      expect(d.length).toBe(20);
+    });
+
+    const fetchNextPromise = paged.fetchNext();
+    await tracer.expect('server-query', ['id']);
+    paged.unsubscribe();
+    await fetchNextPromise;
+
+    await expectNoMoreEvents(100);
+    expect(paged.data.length).toBe(20);
   });
 });
