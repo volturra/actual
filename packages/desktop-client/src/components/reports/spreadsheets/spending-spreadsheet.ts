@@ -16,13 +16,16 @@ import { resolveSpendingAverageRange } from '#components/reports/spendingAverage
 import { fromDateRepr } from '#components/reports/util';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
 import { aqlQuery } from '#queries/aqlQuery';
-import { getEarliestTransaction, makeFiltersFromConditions } from '#reports';
+import {
+  createInFlightSharing,
+  getEarliestTransaction,
+  makeFiltersFromConditions,
+} from '#reports';
 
 import {
   filterCategoriesByConditions,
   isSupportedCategoryCondition,
 } from './budgetDataQuery';
-import { makeQuery } from './makeQuery';
 
 type createSpendingSpreadsheetProps = {
   conditions?: RuleConditionEntity[];
@@ -81,7 +84,6 @@ export function createSpendingSpreadsheet({
   const endDate = monthUtils.getMonthEnd(compareMonth + '-01');
   const startDateTo = compareToMonth + '-01';
   const endDateTo = monthUtils.getMonthEnd(compareToMonth + '-01');
-  const interval = 'Daily';
   const compareInterval = monthUtils.dayRangeInclusive(
     compareMonth + '-01',
     endDate,
@@ -110,56 +112,40 @@ export function createSpendingSpreadsheet({
 
     const conditionsOpKey = conditionsOp === 'or' ? '$or' : '$and';
 
-    const [assets, debts] = await Promise.all([
-      aqlQuery(
-        makeQuery(
-          'assets',
-          startDate,
-          endDate,
-          interval,
-          conditionsOpKey,
-          filters,
-        ),
-      ).then(({ data }) => data),
-      aqlQuery(
-        makeQuery(
-          'debts',
-          startDate,
-          endDate,
-          interval,
-          conditionsOpKey,
-          filters,
-        ),
-      ).then(({ data }) => data),
-    ]);
+    // The rows of the month compared to are only needed when that month is
+    // outside the main range. Inside it, the main range already holds them.
+    const isCompareToOutsideRange =
+      endDateTo < startDate || startDateTo > endDate;
+    const filterKey = JSON.stringify([conditionsOpKey, filters]);
+    const fetchTotals = (
+      name: 'assets' | 'debts',
+      fromDate: string,
+      toDate: string,
+    ) =>
+      shareSpendingTotals(
+        JSON.stringify([name, fromDate, toDate, filterKey]),
+        () =>
+          aqlQuery(
+            makeSpendingTotalsQuery(
+              name,
+              fromDate,
+              toDate,
+              conditionsOpKey,
+              filters,
+            ),
+          ).then(({ data }) => data),
+      );
 
-    const [assetsTo, debtsTo] = await Promise.all([
-      aqlQuery(
-        makeQuery(
-          'assets',
-          startDateTo,
-          endDateTo,
-          interval,
-          conditionsOpKey,
-          filters,
-        ),
-      ).then(({ data }) => data),
-      aqlQuery(
-        makeQuery(
-          'debts',
-          startDateTo,
-          endDateTo,
-          interval,
-          conditionsOpKey,
-          filters,
-        ),
-      ).then(({ data }) => data),
+    const [assets, debts, overlapAssets, overlapDebts] = await Promise.all([
+      fetchTotals('assets', startDate, endDate),
+      fetchTotals('debts', startDate, endDate),
+      isCompareToOutsideRange
+        ? fetchTotals('assets', startDateTo, endDateTo)
+        : Promise.resolve([]),
+      isCompareToOutsideRange
+        ? fetchTotals('debts', startDateTo, endDateTo)
+        : Promise.resolve([]),
     ]);
-
-    const overlapAssets =
-      endDateTo < startDate || startDateTo > endDate ? assetsTo : [];
-    const overlapDebts =
-      endDateTo < startDate || startDateTo > endDate ? debtsTo : [];
 
     const combineAssets = [...assets, ...overlapAssets];
     const combineDebts = [...debts, ...overlapDebts];
@@ -227,7 +213,7 @@ export function createSpendingSpreadsheet({
       budgets.reduce((a, v) => a + v.amount, 0) / compareInterval.length;
 
     const intervals = monthUtils.dayRangeInclusive(startDate, endDate);
-    if (endDateTo < startDate || startDateTo > endDate) {
+    if (isCompareToOutsideRange) {
       intervals.push(...monthUtils.dayRangeInclusive(startDateTo, endDateTo));
     }
 
@@ -243,7 +229,7 @@ export function createSpendingSpreadsheet({
       return { month, perMonthAssets: 0, perMonthDebts: 0 };
     });
 
-    if (endDateTo < startDate || startDateTo > endDate) {
+    if (isCompareToOutsideRange) {
       months.unshift({
         month: compareToMonth,
         perMonthAssets: 0,
@@ -350,4 +336,52 @@ export function createSpendingSpreadsheet({
       totalTotals: totalAssets + totalDebts,
     });
   };
+}
+
+type SpendingTotalsRow = {
+  date: string;
+  categoryIncome: boolean;
+  accountOffBudget: boolean;
+  amount: number;
+};
+
+// The This Month, Budget Overview and 3-Month Average cards of the dashboard
+// mount together and ask for the same totals.
+const shareSpendingTotals = createInFlightSharing<SpendingTotalsRow[]>();
+
+/**
+ * Daily totals of the positive (`assets`) or negative (`debts`) transactions
+ * from `startDate` to `endDate`, split only by whether the category is an
+ * income category and whether the account is off budget. The spending report
+ * reads nothing else.
+ *
+ * Income and off-budget rows are dropped in JS, not in SQL: for a
+ * transaction with no category, or whose category or account was deleted,
+ * the joined flag is NULL, which JS reads as false but a SQL comparison with
+ * false (`= 0`) does not match.
+ */
+export function makeSpendingTotalsQuery(
+  name: 'assets' | 'debts',
+  startDate: string,
+  endDate: string,
+  conditionsOpKey: string,
+  filters: unknown[],
+) {
+  return q('transactions')
+    .filter({ [conditionsOpKey]: filters })
+    .filter({
+      $and: [{ date: { $gte: startDate } }, { date: { $lte: endDate } }],
+    })
+    .filter(name === 'assets' ? { amount: { $gt: 0 } } : { amount: { $lt: 0 } })
+    .groupBy([
+      'date',
+      { $id: '$category.is_income' },
+      { $id: '$account.offbudget' },
+    ])
+    .select([
+      'date',
+      { categoryIncome: { $id: '$category.is_income' } },
+      { accountOffBudget: { $id: '$account.offbudget' } },
+      { amount: { $sum: '$amount' } },
+    ]);
 }
