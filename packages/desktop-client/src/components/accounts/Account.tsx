@@ -94,7 +94,11 @@ import type { AppDispatch } from '#redux/store';
 import { updateNewTransactions } from '#transactions/transactionsSlice';
 
 import { AccountEmptyMessage } from './AccountEmptyMessage';
-import { getFilteredAmount, trackAppendedPages } from './getFilteredAmount';
+import {
+  getFilteredAmount,
+  holdsEveryMatch,
+  trackAppendedPages,
+} from './getFilteredAmount';
 import { AccountHeader } from './Header';
 import {
   createModalCloseRefetchTracker,
@@ -562,13 +566,15 @@ class AccountInternal extends PureComponent<
         const balances = this.state.showBalances
           ? await this.calculateBalances()
           : null;
-        // The rows of a search fetched together give its sum without
-        // running the search again. Fewer groups than a page means the
-        // fetch reached the end, so they hold every match
+        // The rows of a search that hold every match give its sum
+        // without running the search again
         const filteredAmount = await getFilteredAmount(
           this.paged?.query,
           isFiltered,
-          isSearch && isOneFetch && groupedData.length < PAGE_COUNT
+          holdsEveryMatch(
+            { isSearch, isOneFetch, groupCount: groupedData.length },
+            PAGE_COUNT,
+          )
             ? data
             : undefined,
         );

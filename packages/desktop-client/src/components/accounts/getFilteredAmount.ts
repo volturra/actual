@@ -28,6 +28,23 @@ export async function getFilteredAmount(
 }
 
 /**
+ * Whether the rows a search delivered hold every match, so its sum can be
+ * taken from them. Only rows from one fetch qualify, not pages appended
+ * to earlier rows. A fetch asks for at least `pageCount` groups, so fewer
+ * than that means it reached the end.
+ */
+export function holdsEveryMatch(
+  {
+    isSearch,
+    isOneFetch,
+    groupCount,
+  }: { isSearch: boolean; isOneFetch: boolean; groupCount: number },
+  pageCount: number,
+): boolean {
+  return isSearch && isOneFetch && groupCount < pageCount;
+}
+
+/**
  * Tells, at the start of a paged query's `onData`, whether its rows are the
  * result of one fetch, rather than the rows loaded before with a page
  * appended by `fetchNext`, which calls `onPageData` just before `onData`.

@@ -5,7 +5,11 @@ import type { MockInstance } from 'vitest';
 
 import { pagedQuery } from '#queries/pagedQuery';
 
-import { getFilteredAmount, trackAppendedPages } from './getFilteredAmount';
+import {
+  getFilteredAmount,
+  holdsEveryMatch,
+  trackAppendedPages,
+} from './getFilteredAmount';
 
 describe('getFilteredAmount', () => {
   let send: MockInstance<typeof connection.send>;
@@ -70,6 +74,44 @@ describe('getFilteredAmount', () => {
       ).resolves.toBeNull();
       expect(send).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('holdsEveryMatch', () => {
+  const pageCount = 150;
+  const oneSearchFetch = { isSearch: true, isOneFetch: true };
+
+  it('holds every match when one search fetch ends before a full page', () => {
+    expect(
+      holdsEveryMatch({ ...oneSearchFetch, groupCount: 149 }, pageCount),
+    ).toBe(true);
+    expect(
+      holdsEveryMatch({ ...oneSearchFetch, groupCount: 0 }, pageCount),
+    ).toBe(true);
+  });
+
+  it('does not when the fetch fills the page, as more may follow', () => {
+    expect(
+      holdsEveryMatch({ ...oneSearchFetch, groupCount: 150 }, pageCount),
+    ).toBe(false);
+  });
+
+  it('does not for pages appended to earlier rows', () => {
+    expect(
+      holdsEveryMatch(
+        { isSearch: true, isOneFetch: false, groupCount: 10 },
+        pageCount,
+      ),
+    ).toBe(false);
+  });
+
+  it('does not when the query is not a search', () => {
+    expect(
+      holdsEveryMatch(
+        { isSearch: false, isOneFetch: true, groupCount: 10 },
+        pageCount,
+      ),
+    ).toBe(false);
   });
 });
 
