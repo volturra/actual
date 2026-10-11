@@ -32,6 +32,7 @@ import { fetchSpreadsheetQueryData } from './fetchSpreadsheetQueryData';
 import { filterEmptyRows } from './filterEmptyRows';
 import {
   filterReportTransactions,
+  groupRowsByLabel,
   sumItemAmountsByDate,
 } from './filterHiddenItems';
 import { recalculate } from './recalculate';
@@ -209,9 +210,11 @@ export function createCustomSpreadsheet({
     let netAssets = 0;
     let netDebts = 0;
 
+    const assetsByLabel = groupRowsByLabel(assets, groupByLabel);
+    const debtsByLabel = groupRowsByLabel(debts, groupByLabel);
     const amountsByItem = groupByList.map(item => ({
-      assets: sumItemAmountsByDate(item, assets, groupByLabel),
-      debts: sumItemAmountsByDate(item, debts, groupByLabel),
+      assets: sumItemAmountsByDate(item, assets, groupByLabel, assetsByLabel),
+      debts: sumItemAmountsByDate(item, debts, groupByLabel, debtsByLabel),
     }));
 
     const intervalData = intervals.reduce(
