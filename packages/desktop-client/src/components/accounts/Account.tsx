@@ -490,9 +490,11 @@ class AccountInternal extends PureComponent<
 
   updateQuery(
     query: Query,
-    isFiltered: boolean = false,
-    // Whether `query` filters on `queries.transactionsSearch`
-    isSearch: boolean = false,
+    {
+      isFiltered = false,
+      // Whether `query` filters on `queries.transactionsSearch`
+      isSearch = false,
+    }: { isFiltered?: boolean; isSearch?: boolean } = {},
   ) {
     if (this.paged) {
       this.paged.unsubscribe();
@@ -561,16 +563,13 @@ class AccountInternal extends PureComponent<
           ? await this.calculateBalances()
           : null;
         // The rows of a search fetched together give its sum without
-        // running the search again, when they hold every match
+        // running the search again. Fewer groups than a page means the
+        // fetch reached the end, so they hold every match
         const filteredAmount = await getFilteredAmount(
           this.paged?.query,
           isFiltered,
-          isSearch && isOneFetch
-            ? {
-                groupCount: groupedData.length,
-                transactions: data,
-                pageCount: PAGE_COUNT,
-              }
+          isSearch && isOneFetch && groupedData.length < PAGE_COUNT
+            ? data
             : undefined,
         );
         this.setState(
@@ -627,10 +626,9 @@ class AccountInternal extends PureComponent<
 
   onSearchDone = debounce(() => {
     if (this.state.search === '') {
-      this.updateQuery(
-        this.currentQuery,
-        this.state.filterConditions.length > 0,
-      );
+      this.updateQuery(this.currentQuery, {
+        isFiltered: this.state.filterConditions.length > 0,
+      });
     } else {
       this.updateQuery(
         queries.transactionsSearch(
@@ -638,8 +636,7 @@ class AccountInternal extends PureComponent<
           this.state.search,
           this.props.dateFormat,
         ),
-        true,
-        true,
+        { isFiltered: true, isSearch: true },
       );
     }
   }, 150);
@@ -1644,7 +1641,7 @@ class AccountInternal extends PureComponent<
           filterConditions: conditions,
         },
         () => {
-          this.updateQuery(this.currentQuery, true);
+          this.updateQuery(this.currentQuery, { isFiltered: true });
         },
       );
     } else {
@@ -1765,7 +1762,7 @@ class AccountInternal extends PureComponent<
     // when transactions have the same values in the sorted column(s)
     this.currentQuery = this.currentQuery.orderBy({ sort_order: sortAscDesc });
 
-    this.updateQuery(this.currentQuery, isFiltered);
+    this.updateQuery(this.currentQuery, { isFiltered });
   };
 
   onSort = (headerClicked: string, ascDesc: 'asc' | 'desc') => {

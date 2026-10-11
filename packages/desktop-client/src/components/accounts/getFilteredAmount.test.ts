@@ -40,7 +40,7 @@ describe('getFilteredAmount', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  describe('with the rows of a search', () => {
+  describe('with every row a search matched', () => {
     const query = q('transactions').filter({ account: 'acct' });
     const transactions = [
       // A split: the parent and its unmatched child don't count
@@ -52,46 +52,21 @@ describe('getFilteredAmount', () => {
       { is_parent: false, amount: -7 },
     ];
 
-    it('sums the matched rows when they hold every match', async () => {
-      await expect(
-        getFilteredAmount(query, true, {
-          groupCount: 3,
-          transactions,
-          pageCount: 150,
-        }),
-      ).resolves.toBe(-57);
+    it('sums the matched rows', async () => {
+      await expect(getFilteredAmount(query, true, transactions)).resolves.toBe(
+        -57,
+      );
       expect(send).not.toHaveBeenCalled();
     });
 
     it('is 0 when nothing matched, like the query', async () => {
-      await expect(
-        getFilteredAmount(query, true, {
-          groupCount: 0,
-          transactions: [],
-          pageCount: 150,
-        }),
-      ).resolves.toBe(0);
+      await expect(getFilteredAmount(query, true, [])).resolves.toBe(0);
       expect(send).not.toHaveBeenCalled();
-    });
-
-    it('runs the query when the rows fill the page', async () => {
-      await expect(
-        getFilteredAmount(query, true, {
-          groupCount: 3,
-          transactions,
-          pageCount: 3,
-        }),
-      ).resolves.toBe(1234);
-      expect(send).toHaveBeenCalledTimes(1);
     });
 
     it('does not sum anything without a filter or search', async () => {
       await expect(
-        getFilteredAmount(query, false, {
-          groupCount: 3,
-          transactions,
-          pageCount: 150,
-        }),
+        getFilteredAmount(query, false, transactions),
       ).resolves.toBeNull();
       expect(send).not.toHaveBeenCalled();
     });
@@ -142,6 +117,36 @@ describe('trackAppendedPages', () => {
       { length: 2, isOneFetch: true },
       { length: 4, isOneFetch: false },
       { length: 4, isOneFetch: true },
+    ]);
+    paged.unsubscribe();
+  });
+
+  it('relies on onPageData being called synchronously right before onData', async () => {
+    // Anything that could run between the two calls (another delivery
+    // after an await) would take the appended-page flag meant for this one
+    const events: string[] = [];
+    const paged = pagedQuery(q('transactions').select('*'), {
+      onPageData: () => {
+        events.push('page-data');
+        queueMicrotask(() => events.push('microtask'));
+        setTimeout(() => events.push('timeout'), 0);
+      },
+      onData: () => {
+        events.push('data');
+      },
+      options: { pageCount: 2 },
+    });
+
+    await vi.waitFor(() => expect(events).toEqual(['data']));
+    await paged.fetchNext();
+    await vi.waitFor(() => expect(events).toContain('timeout'));
+
+    expect(events).toEqual([
+      'data',
+      'page-data',
+      'data',
+      'microtask',
+      'timeout',
     ]);
     paged.unsubscribe();
   });
