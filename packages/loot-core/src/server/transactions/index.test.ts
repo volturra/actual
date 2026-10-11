@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as db from '#server/db';
 import { handlers } from '#server/main';
 import { runHandler } from '#server/mutators';
-import { setSyncingMode } from '#server/sync';
+import { batchMessages, setSyncingMode } from '#server/sync';
 
 import { getTransferAccounts } from './transfer';
 
@@ -385,32 +385,85 @@ describe('batchUpdateTransactions', () => {
       ]);
     });
 
-    it('looks payees up in chunks', async () => {
-      await db.insertAccount({ id: 'one', name: 'one' });
-      await db.insertPayee({ id: 'to-one', name: '', transfer_acct: 'one' });
+    it('maps every payee to the account the single-payee lookup gives', async () => {
+      // The per-transaction lookup the batch map replaces
+      const lookUpOne = async (payee: string) =>
+        (
+          await db.first<{ transfer_acct: string | null }>(
+            'SELECT transfer_acct FROM v_payees WHERE id = ?',
+            [payee],
+          )
+        )?.transfer_acct || null;
+      const compare = async (payees: string[]) => {
+        const transferAccounts = await getTransferAccounts();
+        for (const payee of payees) {
+          expect({
+            payee,
+            account: transferAccounts.get(payee) ?? null,
+          }).toEqual({ payee, account: await lookUpOne(payee) });
+        }
+        return transferAccounts;
+      };
+
+      await db.insertAccount({ id: 'open', name: 'open' });
+      await db.insertAccount({ id: 'closed', name: 'closed', closed: 1 });
+      await db.insertAccount({ id: 'deleted', name: 'deleted' });
+      await db.insertPayee({ id: 'to-open', name: '', transfer_acct: 'open' });
+      await db.insertPayee({
+        id: 'to-closed',
+        name: '',
+        transfer_acct: 'closed',
+      });
+      await db.insertPayee({
+        id: 'to-deleted',
+        name: '',
+        transfer_acct: 'deleted',
+      });
+      await db.deleteAccount({ id: 'deleted' });
+      await db.insertAccount({ id: 'other', name: 'other' });
+      await db.insertPayee({
+        id: 'to-other-gone',
+        name: '',
+        transfer_acct: 'other',
+      });
+      // `deletePayee` refuses transfer payees, so tombstone it directly
+      await db.runQuery('UPDATE payees SET tombstone = 1 WHERE id = ?', [
+        'to-other-gone',
+      ]);
       await db.insertPayee({ id: 'shop', name: 'Shop' });
-      const lookups = countPayeeLookups();
+      await db.insertPayee({ id: 'gone', name: 'Gone' });
+      await db.deletePayee({ id: 'gone' });
 
       const payees = [
-        'to-one',
+        'to-open',
+        'to-closed',
+        'to-deleted',
+        'to-other-gone',
         'shop',
-        ...Array.from({ length: 1100 }, (_, i) => `unknown-${i}`),
-        null,
+        'gone',
+        'unknown',
+        'new-transfer',
+        'new-shop',
       ];
-      const transferAccounts = await getTransferAccounts([
-        ...payees.map(payee => ({ payee })),
-        { payee: 'shop' },
-        // Split parents never use their payee's transfer account
-        { payee: 'parent-only', is_parent: true },
-      ]);
+      const transferAccounts = await compare(payees);
+      expect(Object.fromEntries(transferAccounts)).toEqual({
+        'to-open': 'open',
+        'to-closed': 'closed',
+        'to-other-gone': 'other',
+      });
 
-      // 1102 distinct payees in chunks of 500
-      expect(lookups()).toBe(3);
-      expect(transferAccounts.size).toBe(1102);
-      expect(transferAccounts.get('to-one')).toBe('one');
-      expect(transferAccounts.get('shop')).toBeNull();
-      expect(transferAccounts.get('unknown-1099')).toBeNull();
-      expect(transferAccounts.has('parent-only')).toBe(false);
+      // Payees created earlier in the same batch
+      await batchMessages(async () => {
+        await db.insertAccount({ id: 'new', name: 'new' });
+        await db.insertPayee({
+          id: 'new-transfer',
+          name: '',
+          transfer_acct: 'new',
+        });
+        await db.insertPayee({ id: 'new-shop', name: 'New shop' });
+        await compare(payees);
+      });
+      expect((await compare(payees)).get('new-transfer')).toBe('new');
     });
   });
 });

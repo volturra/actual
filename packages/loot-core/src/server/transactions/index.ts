@@ -163,10 +163,7 @@ export async function batchUpdateTransactions({
     // It reads the same state the per-transaction lookups did: the
     // transfer writes below are batched and only applied after they all
     // ran, and they never change payees
-    const transferAccounts = await transfer.getTransferAccounts([
-      ...allAdded,
-      ...allUpdated,
-    ]);
+    const transferAccounts = await transfer.getTransferAccounts();
     await batchMessages(async () => {
       await Promise.all(
         allAdded.map(t => transfer.onInsert(t, transferAccounts)),

@@ -9,44 +9,24 @@ async function getPayee(acct) {
   ]);
 }
 
-// Payee id -> the account it transfers to (null for a regular payee)
-export type TransferAccounts = Map<string, string | null>;
-
-// Stays well below SQLite's bound-parameter limit
-const PAYEE_LOOKUP_CHUNK_SIZE = 500;
+// Transfer payee id -> the account it transfers to
+export type TransferAccounts = Map<string, string>;
 
 /**
- * Looks up the transfer account of every payee of `transactions` with one
- * query per chunk, for callers that run `onInsert`/`onUpdate` over many
- * transactions at once. Same view and same rules as the single-transaction
- * lookup in `getTransferredAccount`: a payee missing from the view (unknown,
- * or a transfer payee of a deleted account) maps to null. Split parents
- * are left out.
+ * Looks up every transfer payee with one query, for callers that run
+ * `onInsert`/`onUpdate` over many transactions at once. Same view as the
+ * single-transaction lookup in `getTransferredAccount`: a payee missing from
+ * the map (a regular or unknown payee, or a transfer payee of a deleted
+ * account) has no transfer account.
  */
-export async function getTransferAccounts(
-  transactions: ReadonlyArray<{ payee?: string | null; is_parent?: boolean }>,
-): Promise<TransferAccounts> {
-  const ids = [
-    ...new Set(
-      transactions
-        // Split parents never use their payee's transfer account
-        .filter(t => !t.is_parent)
-        .map(t => t.payee)
-        .filter((payee): payee is string => Boolean(payee)),
-    ),
-  ];
-  const result: TransferAccounts = new Map(ids.map(id => [id, null]));
-
-  for (let i = 0; i < ids.length; i += PAYEE_LOOKUP_CHUNK_SIZE) {
-    const chunk = ids.slice(i, i + PAYEE_LOOKUP_CHUNK_SIZE);
-    const rows = await db.all<Pick<db.DbViewPayee, 'id' | 'transfer_acct'>>(
-      `SELECT id, transfer_acct FROM v_payees WHERE id IN (${chunk
-        .map(() => '?')
-        .join(', ')})`,
-      chunk,
-    );
-    for (const row of rows) {
-      result.set(row.id, row.transfer_acct || null);
+export async function getTransferAccounts(): Promise<TransferAccounts> {
+  const rows = await db.all<Pick<db.DbViewPayee, 'id' | 'transfer_acct'>>(
+    'SELECT id, transfer_acct FROM v_payees WHERE transfer_acct IS NOT NULL',
+  );
+  const result: TransferAccounts = new Map();
+  for (const row of rows) {
+    if (row.transfer_acct) {
+      result.set(row.id, row.transfer_acct);
     }
   }
   return result;
@@ -56,24 +36,20 @@ async function getTransferredAccount(
   transaction,
   transferAccounts?: TransferAccounts,
 ) {
-  // A split parent is never a transfer itself: `onUpdate` only removes
-  // its old transfer and `addTransfer` skips it, so the batch lookup
-  // leaves parents out
-  if (transferAccounts && transaction.is_parent) {
+  // A split parent is never a transfer itself (its children can be):
+  // `onUpdate` only removes its old transfer and `addTransfer` skips it
+  if (transaction.is_parent || !transaction.payee) {
     return null;
   }
-  if (transaction.payee && transferAccounts?.has(transaction.payee)) {
-    return transferAccounts.get(transaction.payee);
+  if (transferAccounts) {
+    return transferAccounts.get(transaction.payee) ?? null;
   }
-  if (transaction.payee) {
-    const result = await db.first<Pick<db.DbViewPayee, 'transfer_acct'>>(
-      'SELECT transfer_acct FROM v_payees WHERE id = ?',
-      [transaction.payee],
-    );
+  const result = await db.first<Pick<db.DbViewPayee, 'transfer_acct'>>(
+    'SELECT transfer_acct FROM v_payees WHERE id = ?',
+    [transaction.payee],
+  );
 
-    return result?.transfer_acct || null;
-  }
-  return null;
+  return result?.transfer_acct || null;
 }
 
 async function clearCategory(transaction, transferAcct) {
