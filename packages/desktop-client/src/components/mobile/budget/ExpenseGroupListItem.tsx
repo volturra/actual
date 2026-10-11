@@ -25,16 +25,16 @@ import { useFormat } from '#hooks/useFormat';
 import { useSyncedPref } from '#hooks/useSyncedPref';
 import { envelopeBudget, trackingBudget } from '#spreadsheet/bindings';
 
+import { useBudgetMonth, useBudgetMonthRef } from './BudgetMonthContext';
 import { getColumnWidth, ROW_HEIGHT } from './BudgetTable';
 import { ExpenseCategoryList } from './ExpenseCategoryList';
 
 type ExpenseGroupListItemProps = ComponentPropsWithoutRef<
   typeof GridListItem<CategoryGroupEntity>
 > & {
-  month: string;
   showHiddenCategories: boolean;
-  onEditCategoryGroup: (id: CategoryGroupEntity['id']) => void;
-  onEditCategory: (id: string) => void;
+  onEditCategoryGroup: (id: CategoryGroupEntity['id'], month: string) => void;
+  onEditCategory: (id: string, month: string) => void;
   onBudgetAction: (month: string, action: string, args: unknown) => void;
   isCollapsed: (id: CategoryGroupEntity['id']) => boolean;
   onToggleCollapse: (id: CategoryGroupEntity['id']) => void;
@@ -46,7 +46,6 @@ type ExpenseGroupListItemProps = ComponentPropsWithoutRef<
 export function ExpenseGroupListItem({
   onEditCategoryGroup,
   onEditCategory,
-  month,
   onBudgetAction,
   showBudgetedColumn,
   show3Columns,
@@ -89,7 +88,6 @@ export function ExpenseGroupListItem({
       >
         <ExpenseGroupHeader
           categoryGroup={categoryGroup}
-          month={month}
           showBudgetedColumn={showBudgetedColumn}
           show3Columns={show3Columns}
           onEditCategoryGroup={onEditCategoryGroup}
@@ -101,7 +99,6 @@ export function ExpenseGroupListItem({
         <ExpenseCategoryList
           categoryGroup={categoryGroup}
           categories={categories}
-          month={month}
           onEditCategory={onEditCategory}
           onBudgetAction={onBudgetAction}
           shouldHideCategory={shouldHideCategory}
@@ -115,8 +112,7 @@ export function ExpenseGroupListItem({
 
 type ExpenseGroupHeaderProps = {
   categoryGroup: CategoryGroupEntity;
-  month: string;
-  onEditCategoryGroup: (id: CategoryGroupEntity['id']) => void;
+  onEditCategoryGroup: (id: CategoryGroupEntity['id'], month: string) => void;
   isCollapsed: (id: CategoryGroupEntity['id']) => boolean;
   onToggleCollapse: (id: CategoryGroupEntity['id']) => void;
   show3Columns: boolean;
@@ -126,7 +122,6 @@ type ExpenseGroupHeaderProps = {
 
 export function ExpenseGroupHeader({
   categoryGroup,
-  month,
   onEditCategoryGroup,
   show3Columns,
   showBudgetedColumn,
@@ -134,6 +129,7 @@ export function ExpenseGroupHeader({
   onToggleCollapse,
   isHidden,
 }: ExpenseGroupHeaderProps) {
+  const month = useBudgetMonth();
   return (
     <View
       data-testid="category-group-row"
@@ -171,7 +167,7 @@ export function ExpenseGroupHeader({
 
 type ExpenseGroupNameProps = {
   group: CategoryGroupEntity;
-  onEditCategoryGroup: (id: CategoryGroupEntity['id']) => void;
+  onEditCategoryGroup: (id: CategoryGroupEntity['id'], month: string) => void;
   isCollapsed: (id: CategoryGroupEntity['id']) => boolean;
   onToggleCollapse: (id: CategoryGroupEntity['id']) => void;
   show3Columns: boolean;
@@ -184,6 +180,7 @@ function ExpenseGroupName({
   onToggleCollapse,
   show3Columns,
 }: ExpenseGroupNameProps) {
+  const monthRef = useBudgetMonthRef();
   const sidebarColumnWidth = getColumnWidth({
     show3Columns,
     isSidebar: true,
@@ -236,7 +233,7 @@ function ExpenseGroupName({
         style={{
           maxWidth: sidebarColumnWidth,
         }}
-        onPress={() => onEditCategoryGroup(group.id)}
+        onPress={() => onEditCategoryGroup(group.id, monthRef.current)}
       >
         <View
           style={{

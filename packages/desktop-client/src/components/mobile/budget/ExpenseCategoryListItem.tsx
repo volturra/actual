@@ -26,12 +26,13 @@ import { envelopeBudget, trackingBudget } from '#spreadsheet/bindings';
 
 import { BalanceCell } from './BalanceCell';
 import { BudgetCell } from './BudgetCell';
+import { useBudgetMonth, useBudgetMonthRef } from './BudgetMonthContext';
 import { getColumnWidth, ROW_HEIGHT } from './BudgetTable';
 import { SpentCell } from './SpentCell';
 
 type ExpenseCategoryNameProps = {
   category: CategoryEntity;
-  onEditCategory: (id: CategoryEntity['id']) => void;
+  onEditCategory: (id: CategoryEntity['id'], month: string) => void;
   show3Columns: boolean;
 };
 
@@ -40,6 +41,7 @@ function ExpenseCategoryName({
   onEditCategory,
   show3Columns,
 }: ExpenseCategoryNameProps) {
+  const monthRef = useBudgetMonthRef();
   const sidebarColumnWidth = getColumnWidth({
     show3Columns,
     isSidebar: true,
@@ -69,7 +71,7 @@ function ExpenseCategoryName({
         style={{
           maxWidth: sidebarColumnWidth,
         }}
-        onPress={() => onEditCategory?.(category.id)}
+        onPress={() => onEditCategory?.(category.id, monthRef.current)}
       >
         <View
           style={{
@@ -205,17 +207,17 @@ function ExpenseCategoryCells({
 type ExpenseCategoryListItemProps = ComponentPropsWithoutRef<
   typeof GridListItem<CategoryEntity>
 > & {
-  month: string;
   isHidden: boolean;
   style?: CSSProperties;
   show3Columns: boolean;
   showBudgetedColumn: boolean;
-  onEditCategory: (id: CategoryEntity['id']) => void;
+  onEditCategory: (id: CategoryEntity['id'], month: string) => void;
   onBudgetAction: (month: string, action: string, args: unknown) => void;
 };
 
+// The list's collection is built from these props, so nothing here may
+// depend on the month: the row's content reads it from context instead.
 export function ExpenseCategoryListItem({
-  month,
   isHidden,
   onEditCategory,
   onBudgetAction,
@@ -225,6 +227,46 @@ export function ExpenseCategoryListItem({
 }: ExpenseCategoryListItemProps) {
   const { value: category } = props;
 
+  if (!category) {
+    return null;
+  }
+
+  return (
+    <GridListItem
+      textValue={category.name}
+      data-testid="category-row"
+      {...props}
+    >
+      <ExpenseCategoryRow
+        category={category}
+        isHidden={isHidden}
+        onEditCategory={onEditCategory}
+        onBudgetAction={onBudgetAction}
+        show3Columns={show3Columns}
+        showBudgetedColumn={showBudgetedColumn}
+      />
+    </GridListItem>
+  );
+}
+
+type ExpenseCategoryRowProps = {
+  category: CategoryEntity;
+  isHidden: boolean;
+  show3Columns: boolean;
+  showBudgetedColumn: boolean;
+  onEditCategory: (id: CategoryEntity['id'], month: string) => void;
+  onBudgetAction: (month: string, action: string, args: unknown) => void;
+};
+
+function ExpenseCategoryRow({
+  category,
+  isHidden,
+  onEditCategory,
+  onBudgetAction,
+  show3Columns,
+  showBudgetedColumn,
+}: ExpenseCategoryRowProps) {
+  const month = useBudgetMonth();
   const { t } = useTranslation();
   const [budgetType = 'envelope'] = useSyncedPref('budgetType');
   const format = useFormat();
@@ -241,9 +283,6 @@ export function ExpenseCategoryListItem({
 
   const onCarryover = useCallback(
     (carryover: boolean) => {
-      if (!category) {
-        return;
-      }
       onBudgetAction(month, 'carryover', {
         category: category.id,
         flag: carryover,
@@ -258,14 +297,11 @@ export function ExpenseCategoryListItem({
     'leftover'
   >(
     budgetType === 'envelope'
-      ? envelopeBudget.catBalance(category?.id)
-      : trackingBudget.catBalance(category?.id),
+      ? envelopeBudget.catBalance(category.id)
+      : trackingBudget.catBalance(category.id),
   );
 
   const onTransfer = useCallback(() => {
-    if (!category) {
-      return;
-    }
     dispatch(
       pushModal({
         modal: {
@@ -313,9 +349,6 @@ export function ExpenseCategoryListItem({
   ]);
 
   const onCover = useCallback(() => {
-    if (!category) {
-      return;
-    }
     dispatch(
       pushModal({
         modal: {
@@ -362,9 +395,6 @@ export function ExpenseCategoryListItem({
   ]);
 
   const onOpenBalanceMenu = useCallback(() => {
-    if (!category) {
-      return;
-    }
     if (balanceMenuModalName === 'envelope-balance-menu') {
       dispatch(
         pushModal({
@@ -406,54 +436,41 @@ export function ExpenseCategoryListItem({
 
   const navigate = useNavigate();
   const onShowActivity = useCallback(() => {
-    if (!category) {
-      return;
-    }
     void navigate(`/categories/${category.id}?month=${month}`);
   }, [category, month, navigate]);
 
-  if (!category) {
-    return null;
-  }
-
   return (
-    <GridListItem
-      textValue={category.name}
-      data-testid="category-row"
-      {...props}
+    <View
+      style={{
+        height: ROW_HEIGHT,
+        borderColor: theme.tableBorder,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingLeft: 5,
+        paddingRight: 5,
+        borderBottomWidth: 1,
+        opacity: isHidden ? 0.5 : undefined,
+        backgroundColor: monthUtils.isCurrentMonth(month)
+          ? theme.budgetCurrentMonth
+          : theme.budgetOtherMonth,
+      }}
     >
-      <View
-        style={{
-          height: ROW_HEIGHT,
-          borderColor: theme.tableBorder,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          paddingLeft: 5,
-          paddingRight: 5,
-          borderBottomWidth: 1,
-          opacity: isHidden ? 0.5 : undefined,
-          backgroundColor: monthUtils.isCurrentMonth(month)
-            ? theme.budgetCurrentMonth
-            : theme.budgetOtherMonth,
-        }}
-      >
-        <ExpenseCategoryName
-          category={category}
-          onEditCategory={onEditCategory}
-          show3Columns={show3Columns}
-        />
-        <ExpenseCategoryCells
-          key={`${category.id}-${show3Columns}-${showBudgetedColumn}`}
-          category={category}
-          month={month}
-          onBudgetAction={onBudgetAction}
-          show3Columns={show3Columns}
-          showBudgetedColumn={showBudgetedColumn}
-          onOpenBalanceMenu={onOpenBalanceMenu}
-          onShowActivity={onShowActivity}
-        />
-      </View>
-    </GridListItem>
+      <ExpenseCategoryName
+        category={category}
+        onEditCategory={onEditCategory}
+        show3Columns={show3Columns}
+      />
+      <ExpenseCategoryCells
+        key={`${category.id}-${show3Columns}-${showBudgetedColumn}`}
+        category={category}
+        month={month}
+        onBudgetAction={onBudgetAction}
+        show3Columns={show3Columns}
+        showBudgetedColumn={showBudgetedColumn}
+        onOpenBalanceMenu={onOpenBalanceMenu}
+        onShowActivity={onShowActivity}
+      />
+    </View>
   );
 }
