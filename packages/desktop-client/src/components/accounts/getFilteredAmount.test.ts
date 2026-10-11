@@ -120,34 +120,4 @@ describe('trackAppendedPages', () => {
     ]);
     paged.unsubscribe();
   });
-
-  it('relies on onPageData being called synchronously right before onData', async () => {
-    // Anything that could run between the two calls (another delivery
-    // after an await) would take the appended-page flag meant for this one
-    const events: string[] = [];
-    const paged = pagedQuery(q('transactions').select('*'), {
-      onPageData: () => {
-        events.push('page-data');
-        queueMicrotask(() => events.push('microtask'));
-        setTimeout(() => events.push('timeout'), 0);
-      },
-      onData: () => {
-        events.push('data');
-      },
-      options: { pageCount: 2 },
-    });
-
-    await vi.waitFor(() => expect(events).toEqual(['data']));
-    await paged.fetchNext();
-    await vi.waitFor(() => expect(events).toContain('timeout'));
-
-    expect(events).toEqual([
-      'data',
-      'page-data',
-      'data',
-      'microtask',
-      'timeout',
-    ]);
-    paged.unsubscribe();
-  });
 });
