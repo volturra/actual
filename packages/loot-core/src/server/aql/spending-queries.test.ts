@@ -2,26 +2,19 @@ import * as db from '#server/db';
 import { conditionsToAQL } from '#server/transactions/transaction-rules';
 import { q } from '#shared/query';
 import type { Query } from '#shared/query';
+import { makeSpendingTotalsQuery } from '#shared/spending-totals';
+import type { SpendingTotalsRow } from '#shared/spending-totals';
 import type { RuleConditionEntity } from '#types/models';
 
 import { aqlQuery } from '.';
 
-// The queries below are copies of the query shapes the spending report
-// builds (desktop-client spending-spreadsheet.ts), run against the real
-// engine. `previousSpendingQuery` is the custom-report query (makeQuery with
-// a daily interval) the report used before it switched to
-// `spendingTotalsQuery`. After the report's own filter (no income category,
-// no off-budget account) both must give the same total per date. Keep them
-// in sync when the report's queries change.
+// Runs the spending report's totals query (`makeSpendingTotalsQuery`) on the
+// real engine. `previousSpendingQuery` is the custom-report query (makeQuery
+// with a daily interval) the report used before it switched to the totals
+// query; after the report's own filter (no income category, no off-budget
+// account) both must give the same total per date.
 
 beforeEach(global.emptyDatabase());
-
-type Row = {
-  date: string;
-  categoryIncome: boolean;
-  accountOffBudget: boolean;
-  amount: number;
-};
 
 function previousSpendingQuery(
   name: 'assets' | 'debts',
@@ -59,40 +52,14 @@ function previousSpendingQuery(
     ]);
 }
 
-function spendingTotalsQuery(
-  name: 'assets' | 'debts',
-  startDate: string,
-  endDate: string,
-  conditionsOpKey: string,
-  filters: unknown[],
-) {
-  return q('transactions')
-    .filter({ [conditionsOpKey]: filters })
-    .filter({
-      $and: [{ date: { $gte: startDate } }, { date: { $lte: endDate } }],
-    })
-    .filter(name === 'assets' ? { amount: { $gt: 0 } } : { amount: { $lt: 0 } })
-    .groupBy([
-      'date',
-      { $id: '$category.is_income' },
-      { $id: '$account.offbudget' },
-    ])
-    .select([
-      'date',
-      { categoryIncome: { $id: '$category.is_income' } },
-      { accountOffBudget: { $id: '$account.offbudget' } },
-      { amount: { $sum: '$amount' } },
-    ]);
-}
-
 async function run(query: Query) {
   const { data } = await aqlQuery(query);
-  return data as Row[];
+  return data as SpendingTotalsRow[];
 }
 
 // The report's own reduction of the rows: drop income categories and
 // off-budget accounts, then add up per date.
-function totalsByDate(rows: Row[]) {
+function totalsByDate(rows: SpendingTotalsRow[]) {
   const totals = new Map<string, number>();
   for (const row of rows.filter(
     e => !e.categoryIncome && !e.accountOffBudget,
@@ -340,7 +307,7 @@ describe('spending report totals query', () => {
             ),
           );
           const current = await run(
-            spendingTotalsQuery(
+            makeSpendingTotalsQuery(
               name,
               startDate,
               endDate,
@@ -390,7 +357,7 @@ describe('spending report totals query', () => {
     await db.deleteAccount({ id: 'gone-account' });
 
     const rows = await run(
-      spendingTotalsQuery('debts', '2017-01-01', '2017-01-31', '$and', []),
+      makeSpendingTotalsQuery('debts', '2017-01-01', '2017-01-31', '$and', []),
     );
 
     expect(totalsByDate(rows)).toEqual([['2017-01-10', -1_111]]);
