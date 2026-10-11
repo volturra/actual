@@ -36,6 +36,18 @@ type BatchReconciledReason = Extract<
 type BatchEditProps = {
   name: keyof TransactionEntity;
   ids: Array<TransactionEntity['id']>;
+  /**
+   * Set when `onSettled` refreshes the transactions shown, so the edit modals
+   * are tagged `openerRefreshes` and the screen behind them skips its own
+   * refresh on close.
+   */
+  refetchesOnSettled?: boolean;
+  /**
+   * Runs once an edit finishes, whether the change was saved or failed (a
+   * failed batch may still have saved part of the change). Errors still
+   * propagate after it runs.
+   */
+  onSettled?: () => void;
   onSuccess?: (
     ids: Array<TransactionEntity['id']>,
     name: keyof TransactionEntity,
@@ -79,7 +91,13 @@ export function useTransactionBatchActions() {
   const dispatch = useDispatch();
   const { t } = useTranslation();
 
-  const onBatchEdit = async ({ name, ids, onSuccess }: BatchEditProps) => {
+  const onBatchEdit = async ({
+    name,
+    ids,
+    refetchesOnSettled,
+    onSuccess,
+    onSettled,
+  }: BatchEditProps) => {
     const { data } = await aqlQuery(
       q('transactions')
         .filter({ id: { $oneof: ids } })
@@ -88,7 +106,7 @@ export function useTransactionBatchActions() {
     );
     const transactions = ungroupTransactions(data as TransactionEntity[]);
 
-    const onChange = async (
+    const saveChange = async (
       name: keyof TransactionEntity,
       value: Parameters<NonNullable<BatchEditProps['onSuccess']>>[2],
       mode?: Parameters<NonNullable<BatchEditProps['onSuccess']>>[3],
@@ -183,11 +201,15 @@ export function useTransactionBatchActions() {
       onSuccess?.(ids, name, value, mode);
     };
 
+    const onChange = (...args: Parameters<typeof saveChange>) =>
+      runThenSettle(() => saveChange(...args), onSettled);
+
     const pushPayeeAutocompleteModal = () => {
       dispatch(
         pushModal({
           modal: {
             name: 'payee-autocomplete',
+            openerRefreshes: refetchesOnSettled,
             options: {
               onSelect: payeeId => onChange(name, payeeId),
             },
@@ -201,6 +223,7 @@ export function useTransactionBatchActions() {
         pushModal({
           modal: {
             name: 'account-autocomplete',
+            openerRefreshes: refetchesOnSettled,
             options: {
               onSelect: accountId => onChange(name, accountId),
             },
@@ -218,6 +241,7 @@ export function useTransactionBatchActions() {
         pushModal({
           modal: {
             name: 'edit-field',
+            openerRefreshes: refetchesOnSettled,
             options: {
               name,
               onSubmit: (name, value, mode) => onChange(name, value, mode),
@@ -241,6 +265,7 @@ export function useTransactionBatchActions() {
         pushModal({
           modal: {
             name: 'category-autocomplete',
+            openerRefreshes: refetchesOnSettled,
             options: {
               month: transactionsHaveSameMonth ? transactionMonth : undefined,
               showNoneOption: true,
@@ -584,4 +609,19 @@ export function useTransactionBatchActions() {
     onSetTransfer,
     onMerge,
   };
+}
+
+/**
+ * Runs `fn`, then `onSettled` whether it resolved or threw; errors still
+ * propagate. Kept outside the hook because React Compiler can't compile a
+ * `try` without a `catch`: written inline it makes the compiler skip the
+ * whole hook, so its callbacks get a new identity on every render and the
+ * lists that depend on them re-render every row.
+ */
+async function runThenSettle(fn: () => Promise<void>, onSettled?: () => void) {
+  try {
+    await fn();
+  } finally {
+    onSettled?.();
+  }
 }

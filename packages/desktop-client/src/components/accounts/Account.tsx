@@ -96,6 +96,10 @@ import { updateNewTransactions } from '#transactions/transactionsSlice';
 import { AccountEmptyMessage } from './AccountEmptyMessage';
 import { getFilteredAmount } from './getFilteredAmount';
 import { AccountHeader } from './Header';
+import {
+  createModalCloseRefetchTracker,
+  modalStackNeedsRefetch,
+} from './modalCloseRefetch';
 
 type ConditionEntity = Partial<RuleConditionEntity> | TransactionFilterEntity;
 
@@ -236,6 +240,7 @@ type AccountInternalProps = {
   columnOrder: TransactionTableColumnId[];
   saveColumns: (columns: TransactionTableColumn[], applyToAll: boolean) => void;
   modalShowing?: boolean;
+  modalNeedsRefetch?: boolean;
   accounts: AccountEntity[];
   newTransactions: Array<TransactionEntity['id']>;
   matchedTransactions: Array<TransactionEntity['id']>;
@@ -408,6 +413,8 @@ class AccountInternal extends PureComponent<
     }
   }
 
+  didModalsCloseNeedingRefetch = createModalCloseRefetchTracker();
+
   componentDidUpdate(prevProps: AccountInternalProps) {
     // If the active account changes - close the transaction entry mode
     if (this.state.isAdding && this.props.accountId !== prevProps.accountId) {
@@ -416,8 +423,9 @@ class AccountInternal extends PureComponent<
 
     // If the user was on a different screen and is now coming back to
     // the transactions, automatically refresh the transaction to make
-    // sure we have updated state
-    if (prevProps.modalShowing && !this.props.modalShowing) {
+    // sure we have updated state. Skipped when every modal shown was
+    // opened by code that refreshes the register itself (`openerRefreshes`)
+    if (this.didModalsCloseNeedingRefetch(prevProps, this.props)) {
       // This is clearly a hack. Need a better way to track which
       // things are listening to transactions and refetch
       // automatically (use ActualQL?)
@@ -970,6 +978,9 @@ class AccountInternal extends PureComponent<
             columns,
             onSave: this.onSaveColumns,
           },
+          // Changes no transactions; `onSaveColumns` rebuilds the query when
+          // a column change needs different data
+          openerRefreshes: true,
         },
       }),
     );
@@ -1146,9 +1157,12 @@ class AccountInternal extends PureComponent<
     void this.props.onBatchEdit({
       name,
       ids,
-      onSuccess: updatedIds => {
+      refetchesOnSettled: true,
+      // Refetch even when the edit fails: part of it may have been saved
+      onSettled: () => {
         void this.refetchTransactions();
-
+      },
+      onSuccess: updatedIds => {
         if (this.table.current) {
           this.table.current.edit(updatedIds[0], 'select', false);
         }
@@ -2072,6 +2086,9 @@ export function Account() {
   } = useTransactionTableColumns(params.id);
 
   const modalShowing = useSelector(state => state.modals.modalStack.length > 0);
+  const modalNeedsRefetch = useSelector(state =>
+    modalStackNeedsRefetch(state.modals.modalStack),
+  );
   const accountsSyncing = useSelector(state => state.account.accountsSyncing);
   const filterConditions = location?.state?.filterConditions || [];
 
@@ -2129,6 +2146,7 @@ export function Account() {
             saveColumns={saveColumns}
             payees={payees}
             modalShowing={modalShowing}
+            modalNeedsRefetch={modalNeedsRefetch}
             accountsSyncing={accountsSyncing}
             filterConditions={filterConditions}
             categoryGroups={categoryGroups}
