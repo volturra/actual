@@ -441,7 +441,7 @@ describe('batchUpdateTransactions', () => {
         transfer_acct: 'other',
       });
       // `deletePayee` refuses transfer payees, so tombstone it directly
-      await db.runQuery('UPDATE payees SET tombstone = 1 WHERE id = ?', [
+      db.runQuery('UPDATE payees SET tombstone = 1 WHERE id = ?', [
         'to-other-gone',
       ]);
       await db.insertPayee({ id: 'shop', name: 'Shop' });
