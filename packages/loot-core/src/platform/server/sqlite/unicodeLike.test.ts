@@ -1,4 +1,4 @@
-import { unicodeLike } from './unicodeLike';
+import { normalisedLike, unicodeLike } from './unicodeLike';
 
 describe('unicode LIKE functionality', () => {
   it('empty pattern should not match to a value', () => {
@@ -68,5 +68,53 @@ describe('unicode LIKE functionality', () => {
 
   it('should treat \\\\ as a literal \\ character', () => {
     expect(unicodeLike('c:\\\\test', 'c:\\test')).toBe(1);
+  });
+});
+
+describe('normalisedLike', () => {
+  it('matches the normalised value', () => {
+    expect(normalisedLike('%cafe%', 'Le Café')).toBe(1);
+    expect(normalisedLike('%strasse%', 'Hauptstraße')).toBe(1);
+    expect(normalisedLike('%lodz%', 'Łódź')).toBe(1);
+    expect(normalisedLike('%tea%', 'Coffee')).toBe(0);
+  });
+
+  it('treats null and empty values like an empty string', () => {
+    expect(normalisedLike('%', null)).toBe(1);
+    expect(normalisedLike('%', '')).toBe(1);
+    expect(normalisedLike('%a%', null)).toBe(0);
+    expect(normalisedLike('%a%', '')).toBe(0);
+  });
+
+  it('never matches an empty pattern', () => {
+    expect(normalisedLike(null, 'value')).toBe(0);
+    expect(normalisedLike('', 'value')).toBe(0);
+    expect(normalisedLike(null, null)).toBe(0);
+  });
+
+  it('gives the same results after its memo of values fills up', () => {
+    for (let i = 0; i < 12000; i++) {
+      const value = `Payée ${i}`;
+      expect(normalisedLike(`%payee ${i}%`, value)).toBe(1);
+      expect(normalisedLike(`%payee ${i}x%`, value)).toBe(0);
+    }
+  });
+
+  it('matches long values, which it does not memoise, the same way', () => {
+    const padding = 'Ünïcödé nötes '.repeat(40);
+    for (let i = 0; i < 6000; i++) {
+      // Alternate between long values and short ones that fill the memo
+      const value = i % 2 ? `${padding}Café ${i}` : `Café ${i}`;
+      expect(value.length > 256).toBe(i % 2 === 1);
+      expect(normalisedLike(`%cafe ${i}%`, value)).toBe(1);
+      expect(normalisedLike(`%unicode notes%cafe ${i}%`, value)).toBe(i % 2);
+      expect(normalisedLike(`%cafe ${i}x%`, value)).toBe(0);
+    }
+    // Values just below, at and above the length cap
+    for (const length of [255, 256, 257]) {
+      const value = 'É'.repeat(length);
+      expect(normalisedLike(`%${'e'.repeat(length)}%`, value)).toBe(1);
+      expect(normalisedLike(`%${'e'.repeat(length + 1)}%`, value)).toBe(0);
+    }
   });
 });

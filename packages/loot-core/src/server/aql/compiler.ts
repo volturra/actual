@@ -732,7 +732,7 @@ const compileOp = saveStack('op', (state, fieldRef, opData) => {
     }
     case '$like': {
       const [left, right] = valArray(state, [lhs, rhs], ['string', 'string']);
-      return `UNICODE_LIKE(${getNormalisedString(right)}, NORMALISE(${left}))`;
+      return `NORMALISED_LIKE(${getNormalisedString(right)}, ${left})`;
     }
     case '$regexp': {
       const [left, right] = valArray(state, [lhs, rhs], ['string', 'string']);
@@ -744,7 +744,7 @@ const compileOp = saveStack('op', (state, fieldRef, opData) => {
     }
     case '$notlike': {
       const [left, right] = valArray(state, [lhs, rhs], ['string', 'string']);
-      return `(NOT UNICODE_LIKE(${getNormalisedString(right)}, NORMALISE(${left}))\n OR ${left} IS NULL)`;
+      return `(NOT NORMALISED_LIKE(${getNormalisedString(right)}, ${left})\n OR ${left} IS NULL)`;
     }
     default:
       throw new CompileError(`Unknown operator: ${op}`);
