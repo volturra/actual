@@ -295,6 +295,58 @@ describe('initial budget data', () => {
     ).toBe(null);
   });
 
+  // The month replies arrive one by one, with pushes in between
+  async function preloadWithHeldMonths(heldMonths: string[]) {
+    const release: Array<() => void> = [];
+    initServer({
+      'get-budget-bounds': async () => bounds,
+      'preferences/get': async () => ({}),
+      'envelope-budget-month': ({ month }: { month: string }) =>
+        heldMonths.includes(month)
+          ? new Promise(resolve =>
+              release.push(() => resolve(monthValues(month))),
+            )
+          : Promise.resolve(monthValues(month)),
+    });
+    preloadInitialBudgetData('budget-a');
+    await settle();
+    return () => release.forEach(resolve => resolve());
+  }
+
+  it('is not used when a month changes between the month replies', async () => {
+    // 2024-04 has been answered, the other months not yet
+    const releaseOthers = await preloadWithHeldMonths(prewarmedMonths.slice(1));
+
+    serverPush('cells-changed', [{ name: 'budget202404!to-budget', value: 1 }]);
+    await settle();
+    releaseOthers();
+
+    expect(
+      await takeInitialBudgetData({
+        budgetId: 'budget-a',
+        budgetType: 'envelope',
+        startMonth: START,
+      }),
+    ).toBe(null);
+  });
+
+  it('is used when a month changes before its own reply', async () => {
+    // The reply is read after the change, so it already includes it
+    const releaseOthers = await preloadWithHeldMonths(prewarmedMonths.slice(1));
+
+    serverPush('cells-changed', [{ name: 'budget202407!to-budget', value: 1 }]);
+    await settle();
+    releaseOthers();
+
+    expect(
+      await takeInitialBudgetData({
+        budgetId: 'budget-a',
+        budgetType: 'envelope',
+        startMonth: START,
+      }),
+    ).not.toBe(null);
+  });
+
   it('is still used when only cells of other sheets change', async () => {
     preloadInitialBudgetData('budget-a');
     await settle();

@@ -9,11 +9,11 @@ export type MonthBounds = {
   end: string;
 };
 
-export function getValidMonthBounds(
+export function getValidMonthBounds<Start extends undefined | string>(
   bounds: MonthBounds,
-  startMonth: undefined | string,
+  startMonth: Start,
   endMonth: string,
-) {
+): { start: Start | string; end: string } {
   return {
     start: startMonth < bounds.start ? bounds.start : startMonth,
     end: endMonth > bounds.end ? bounds.end : endMonth,

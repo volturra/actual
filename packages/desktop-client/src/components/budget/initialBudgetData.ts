@@ -4,6 +4,7 @@ import * as monthUtils from '@actual-app/core/shared/months';
 import type { Handlers } from '@actual-app/core/types/handlers';
 import type { SyncedPrefs } from '@actual-app/core/types/prefs';
 
+import { getValidMonthBounds } from './MonthsContext';
 import type { MonthBounds } from './MonthsContext';
 
 type BudgetType = NonNullable<SyncedPrefs['budgetType']>;
@@ -16,7 +17,8 @@ export type InitialBudgetData = {
 
 type Preload = {
   budgetId: string;
-  budgetType: BudgetType;
+  // Null until the synced prefs arrive
+  budgetType: BudgetType | null;
   startMonth: string;
   data: Promise<InitialBudgetData | null>;
   // Set when a cell of a month whose values already arrived changes, so the
@@ -35,12 +37,12 @@ let preload: Preload | null = null;
 /** The months the budget page loads into the spreadsheet before it renders. */
 export function getPrewarmMonths(bounds: MonthBounds, startMonth: string) {
   const numMonths = 3;
-  const first = monthUtils.subMonths(startMonth, 1);
-  const last = monthUtils.addMonths(startMonth, numMonths + 1);
-  return monthUtils.rangeInclusive(
-    first < bounds.start ? bounds.start : first,
-    last > bounds.end ? bounds.end : last,
+  const { start, end } = getValidMonthBounds(
+    bounds,
+    monthUtils.subMonths(startMonth, 1),
+    monthUtils.addMonths(startMonth, numMonths + 1),
   );
+  return monthUtils.rangeInclusive(start, end);
 }
 
 /** The current values of every budget cell of `month`. */
@@ -109,8 +111,7 @@ export function preloadInitialBudgetData(budgetId: string) {
 
   const current: Preload = {
     budgetId,
-    // Set once the synced prefs arrive; only checked after that
-    budgetType: 'envelope',
+    budgetType: null,
     startMonth,
     data: Promise.resolve(null),
     isStale: false,
