@@ -82,11 +82,16 @@ export function PayeesList({
             paddingBottom: MOBILE_NAV_HEIGHT,
             overflow: 'auto',
           }}
-          dependencies={[ruleCounts, isRuleCountsLoading]}
+          dependencies={[ruleCounts, isRuleCountsLoading, t]}
         >
           {payee => (
             <PayeesListItem
               value={payee}
+              label={
+                payee.transfer_acct
+                  ? t('Transfer: {{name}}', { name: payee.name })
+                  : payee.name
+              }
               ruleCount={ruleCounts.get(payee.id) ?? 0}
               isRuleCountLoading={isRuleCountsLoading}
               onAction={() => onPayeePress(payee)}
