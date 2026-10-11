@@ -4,12 +4,10 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@actual-app/components/button';
 import { SvgArrowThickRight } from '@actual-app/components/icons/v1';
 import { styles } from '@actual-app/components/styles';
-import { Text } from '@actual-app/components/text';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
 import type { CategoryEntity } from '@actual-app/core/types/models';
 import { css, cx } from '@emotion/css';
-import { AutoTextSize } from 'auto-text-size';
 
 import { BalanceWithCarryover } from '#components/budget/BalanceWithCarryover';
 import { PrivacyFilter } from '#components/PrivacyFilter';
@@ -18,6 +16,7 @@ import { useSyncedPref } from '#hooks/useSyncedPref';
 import type { Binding } from '#spreadsheet';
 import { envelopeBudget, trackingBudget } from '#spreadsheet/bindings';
 
+import { AmountAutoTextSize } from './AmountAutoTextSize';
 import { getColumnWidth, PILL_STYLE } from './BudgetTable';
 
 type BalanceCellProps = {
@@ -90,9 +89,7 @@ export function BalanceCell({
           aria-label={ariaLabel}
         >
           <PrivacyFilter>
-            <AutoTextSize
-              key={value}
-              as={Text}
+            <AmountAutoTextSize
               minFontSizePx={6}
               maxFontSizePx={12}
               mode="oneline"
@@ -107,7 +104,7 @@ export function BalanceCell({
               )}
             >
               {format(value, type)}
-            </AutoTextSize>
+            </AmountAutoTextSize>
           </PrivacyFilter>
         </Button>
       )}

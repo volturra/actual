@@ -17,7 +17,6 @@ import type {
   CategoryGroupEntity,
 } from '@actual-app/core/types/models';
 import { css } from '@emotion/css';
-import { AutoTextSize } from 'auto-text-size';
 
 import { PrivacyFilter } from '#components/PrivacyFilter';
 import { CellValue } from '#components/spreadsheet/CellValue';
@@ -25,6 +24,7 @@ import { useFormat } from '#hooks/useFormat';
 import { useSyncedPref } from '#hooks/useSyncedPref';
 import { envelopeBudget, trackingBudget } from '#spreadsheet/bindings';
 
+import { AmountAutoTextSize } from './AmountAutoTextSize';
 import { useBudgetMonth, useBudgetMonthRef } from './BudgetMonthContext';
 import { getColumnWidth, ROW_HEIGHT } from './BudgetTable';
 import { ExpenseCategoryList } from './ExpenseCategoryList';
@@ -326,16 +326,14 @@ function ExpenseGroupCells({
           {({ type, value }) => (
             <View>
               <PrivacyFilter>
-                <AutoTextSize
-                  key={value}
-                  as={Text}
+                <AmountAutoTextSize
                   minFontSizePx={6}
                   maxFontSizePx={12}
                   mode="oneline"
                   style={amountStyle}
                 >
                   {format(value, type)}
-                </AutoTextSize>
+                </AmountAutoTextSize>
               </PrivacyFilter>
             </View>
           )}
@@ -353,16 +351,14 @@ function ExpenseGroupCells({
           {({ type, value }) => (
             <View>
               <PrivacyFilter>
-                <AutoTextSize
-                  key={value}
-                  as={Text}
+                <AmountAutoTextSize
                   minFontSizePx={6}
                   maxFontSizePx={12}
                   mode="oneline"
                   style={amountStyle}
                 >
                   {format(value, type)}
-                </AutoTextSize>
+                </AmountAutoTextSize>
               </PrivacyFilter>
             </View>
           )}
@@ -375,16 +371,14 @@ function ExpenseGroupCells({
         {({ type, value }) => (
           <View>
             <PrivacyFilter>
-              <AutoTextSize
-                key={value}
-                as={Text}
+              <AmountAutoTextSize
                 minFontSizePx={6}
                 maxFontSizePx={12}
                 mode="oneline"
                 style={amountStyle}
               >
                 {format(value, type)}
-              </AutoTextSize>
+              </AmountAutoTextSize>
             </PrivacyFilter>
           </View>
         )}

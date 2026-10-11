@@ -14,7 +14,6 @@ import { View } from '@actual-app/components/view';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type { CategoryGroupEntity } from '@actual-app/core/types/models';
 import { css } from '@emotion/css';
-import { AutoTextSize } from 'auto-text-size';
 
 import { PrivacyFilter } from '#components/PrivacyFilter';
 import { CellValue } from '#components/spreadsheet/CellValue';
@@ -22,6 +21,7 @@ import { useFormat } from '#hooks/useFormat';
 import { useSyncedPref } from '#hooks/useSyncedPref';
 import { envelopeBudget, trackingBudget } from '#spreadsheet/bindings';
 
+import { AmountAutoTextSize } from './AmountAutoTextSize';
 import { useBudgetMonth, useBudgetMonthRef } from './BudgetMonthContext';
 import { getColumnWidth, ROW_HEIGHT } from './BudgetTable';
 import { IncomeCategoryList } from './IncomeCategoryList';
@@ -266,9 +266,7 @@ function IncomeGroupCells({ group }: IncomeGroupCellsProps) {
           {({ type, value }) => (
             <View>
               <PrivacyFilter>
-                <AutoTextSize
-                  key={value}
-                  as={Text}
+                <AmountAutoTextSize
                   minFontSizePx={6}
                   maxFontSizePx={12}
                   mode="oneline"
@@ -284,7 +282,7 @@ function IncomeGroupCells({ group }: IncomeGroupCellsProps) {
                   }}
                 >
                   {format(value, type)}
-                </AutoTextSize>
+                </AmountAutoTextSize>
               </PrivacyFilter>
             </View>
           )}
@@ -297,9 +295,7 @@ function IncomeGroupCells({ group }: IncomeGroupCellsProps) {
         {({ type, value }) => (
           <View>
             <PrivacyFilter>
-              <AutoTextSize
-                key={value}
-                as={Text}
+              <AmountAutoTextSize
                 minFontSizePx={6}
                 maxFontSizePx={12}
                 mode="oneline"
@@ -315,7 +311,7 @@ function IncomeGroupCells({ group }: IncomeGroupCellsProps) {
                 }}
               >
                 {format(value, type)}
-              </AutoTextSize>
+              </AmountAutoTextSize>
             </PrivacyFilter>
           </View>
         )}

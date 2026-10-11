@@ -8,7 +8,6 @@ import { SvgCheveronRight } from '@actual-app/components/icons/v1';
 import { SvgViewShow } from '@actual-app/components/icons/v2';
 import { Label } from '@actual-app/components/label';
 import { styles } from '@actual-app/components/styles';
-import { Text } from '@actual-app/components/text';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
 import * as monthUtils from '@actual-app/core/shared/months';
@@ -31,6 +30,7 @@ import { useSyncedPref } from '#hooks/useSyncedPref';
 import type { Binding } from '#spreadsheet';
 import { envelopeBudget, trackingBudget } from '#spreadsheet/bindings';
 
+import { AmountAutoTextSize } from './AmountAutoTextSize';
 import { BudgetMonthProvider } from './BudgetMonthContext';
 import { ExpenseGroupList } from './ExpenseGroupList';
 import { IncomeGroup } from './IncomeGroup';
@@ -102,9 +102,7 @@ function ToBudget({ toBudget, onPress, show3Columns }: ToBudgetProps) {
             {({ type, value }) => (
               <View>
                 <PrivacyFilter>
-                  <AutoTextSize
-                    key={value}
-                    as={Text}
+                  <AmountAutoTextSize
                     minFontSizePx={6}
                     maxFontSizePx={12}
                     mode="oneline"
@@ -121,7 +119,7 @@ function ToBudget({ toBudget, onPress, show3Columns }: ToBudgetProps) {
                     }}
                   >
                     {format(value, type)}
-                  </AutoTextSize>
+                  </AmountAutoTextSize>
                 </PrivacyFilter>
               </View>
             )}
@@ -201,9 +199,7 @@ function Saved({ projected, onPress, show3Columns }: SavedProps) {
             {({ type, value }) => (
               <View>
                 <PrivacyFilter>
-                  <AutoTextSize
-                    key={value}
-                    as={Text}
+                  <AmountAutoTextSize
                     minFontSizePx={6}
                     maxFontSizePx={12}
                     mode="oneline"
@@ -220,7 +216,7 @@ function Saved({ projected, onPress, show3Columns }: SavedProps) {
                     }}
                   >
                     {format(value, type)}
-                  </AutoTextSize>
+                  </AmountAutoTextSize>
                 </PrivacyFilter>
               </View>
             )}
@@ -526,9 +522,7 @@ function BudgetTableHeader({
                   </View>
                   <View>
                     <PrivacyFilter>
-                      <AutoTextSize
-                        key={value}
-                        as={Text}
+                      <AmountAutoTextSize
                         minFontSizePx={6}
                         maxFontSizePx={12}
                         mode="oneline"
@@ -541,7 +535,7 @@ function BudgetTableHeader({
                           budgetType === 'tracking' ? value : -value,
                           formatType,
                         )}
-                      </AutoTextSize>
+                      </AmountAutoTextSize>
                     </PrivacyFilter>
                   </View>
                 </View>
@@ -594,9 +588,7 @@ function BudgetTableHeader({
                   </View>
                   <View>
                     <PrivacyFilter>
-                      <AutoTextSize
-                        key={value}
-                        as={Text}
+                      <AmountAutoTextSize
                         minFontSizePx={6}
                         maxFontSizePx={12}
                         mode="oneline"
@@ -606,7 +598,7 @@ function BudgetTableHeader({
                         }}
                       >
                         {format(value, type)}
-                      </AutoTextSize>
+                      </AmountAutoTextSize>
                     </PrivacyFilter>
                   </View>
                 </View>
@@ -637,16 +629,14 @@ function BudgetTableHeader({
                 </View>
                 <View>
                   <PrivacyFilter>
-                    <AutoTextSize
-                      key={value}
-                      as={Text}
+                    <AmountAutoTextSize
                       minFontSizePx={6}
                       maxFontSizePx={12}
                       mode="oneline"
                       style={amountStyle}
                     >
                       {format(value, type)}
-                    </AutoTextSize>
+                    </AmountAutoTextSize>
                   </PrivacyFilter>
                 </View>
               </View>
