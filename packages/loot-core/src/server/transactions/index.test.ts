@@ -400,7 +400,7 @@ describe('batchUpdateTransactions', () => {
     });
 
     it('maps every payee to the account the single-payee lookup gives', async () => {
-      // The per-transaction lookup the batch map replaces
+      // The single-payee lookup getTransferredAccount falls back to
       const lookUpOne = async (payee: string) =>
         (
           await db.first<{ transfer_acct: string | null }>(

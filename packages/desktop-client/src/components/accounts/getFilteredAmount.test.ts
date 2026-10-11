@@ -83,7 +83,10 @@ describe('holdsEveryMatch', () => {
 
   it('holds every match when one search fetch ends before a full page', () => {
     expect(
-      holdsEveryMatch({ ...oneSearchFetch, groupCount: 149 }, pageCount),
+      holdsEveryMatch(
+        { ...oneSearchFetch, groupCount: pageCount - 1 },
+        pageCount,
+      ),
     ).toBe(true);
     expect(
       holdsEveryMatch({ ...oneSearchFetch, groupCount: 0 }, pageCount),
@@ -92,7 +95,7 @@ describe('holdsEveryMatch', () => {
 
   it('does not when the fetch fills the page, as more may follow', () => {
     expect(
-      holdsEveryMatch({ ...oneSearchFetch, groupCount: 150 }, pageCount),
+      holdsEveryMatch({ ...oneSearchFetch, groupCount: pageCount }, pageCount),
     ).toBe(false);
   });
 

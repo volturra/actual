@@ -166,7 +166,7 @@ export async function batchUpdateTransactions({
     const transferAccounts =
       allAdded.length > 0 || allUpdated.length > 0
         ? await transfer.getTransferAccounts()
-        : new Map();
+        : new Map<string, string>();
     await batchMessages(async () => {
       await Promise.all(
         allAdded.map(t => transfer.onInsert(t, transferAccounts)),
