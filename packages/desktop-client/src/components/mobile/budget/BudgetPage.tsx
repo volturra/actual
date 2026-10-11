@@ -29,6 +29,10 @@ import { View } from '@actual-app/components/view';
 import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { groupById } from '@actual-app/core/shared/util';
+import type {
+  CategoryEntity,
+  CategoryGroupEntity,
+} from '@actual-app/core/types/models';
 import type { TransObjectLiteral } from '@actual-app/core/types/util';
 
 import { sync } from '#app/appSlice';
@@ -226,7 +230,7 @@ export function BudgetPage() {
   );
 
   const onApplyBudgetTemplatesInGroup = useCallback(
-    async (month: string, categories) => {
+    async (month: string, categories: Array<CategoryEntity['id']>) => {
       applyBudgetAction({
         month,
         type: 'apply-multiple-templates',
@@ -390,7 +394,7 @@ export function BudgetPage() {
   // `startMonth`: a new identity would rebuild every row of the budget lists
   // whenever the month changes.
   const onOpenCategoryGroupMenuModal = useCallback(
-    (id, month: string) => {
+    (id: CategoryGroupEntity['id'], month: string) => {
       const group = categoryGroups.find(g => g.id === id);
       dispatch(
         pushModal({
@@ -427,7 +431,7 @@ export function BudgetPage() {
   );
 
   const onOpenCategoryMenuModal = useCallback(
-    (id, month: string) => {
+    (id: CategoryEntity['id'], month: string) => {
       const category = categories.find(c => c.id === id);
       const canEditAutomations =
         goalTemplatesEnabled &&
