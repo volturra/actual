@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { GridListItem } from 'react-aria-components';
 import type { GridListItemProps } from 'react-aria-components';
@@ -17,6 +17,11 @@ type ActionableGridListItemProps<T> = {
   children?: ReactNode;
 } & Omit<WithRequired<GridListItemProps<T>, 'value'>, 'children'>;
 
+// Lists build their collection by rendering every item, not only the visible
+// ones. To keep that cheap, the spring and gesture handlers live in the
+// item's content, which is only rendered for rows that are actually shown.
+// The revealed state stays here so a swiped-open row is still open when it
+// is scrolled out of view and back.
 export function ActionableGridListItem<T extends object>({
   value,
   textValue,
@@ -27,15 +32,71 @@ export function ActionableGridListItem<T extends object>({
   onAction,
   ...props
 }: ActionableGridListItemProps<T>) {
-  const dragStartedRef = useRef(false);
   const [isRevealed, setIsRevealed] = useState(false);
+  // The virtualizer reuses a row's rendered view for another item when
+  // scrolling, so the content is keyed to this item to keep one item's swipe
+  // position from showing on another.
+  const contentKey = useId();
 
   const hasActions = !!actions;
 
-  // Spring animation for the swipe
+  return (
+    <GridListItem
+      {...props}
+      value={value}
+      textValue={textValue}
+      style={{
+        ...styles.mobileListItem,
+        padding: 0,
+        backgroundColor: hasActions
+          ? actionsBackgroundColor
+          : (styles.mobileListItem.backgroundColor ?? 'transparent'),
+        overflow: 'hidden',
+      }}
+    >
+      <ActionableGridListItemContent
+        key={contentKey}
+        actions={actions}
+        actionsBackgroundColor={actionsBackgroundColor}
+        actionsWidth={actionsWidth}
+        isRevealed={isRevealed}
+        onRevealedChange={setIsRevealed}
+        onAction={onAction}
+      >
+        {children}
+      </ActionableGridListItemContent>
+    </GridListItem>
+  );
+}
+
+type ActionableGridListItemContentProps = {
+  actions?: ActionableGridListItemProps<object>['actions'];
+  actionsBackgroundColor: string;
+  actionsWidth: number;
+  isRevealed: boolean;
+  onRevealedChange: (isRevealed: boolean) => void;
+  children?: ReactNode;
+  onAction?: () => void;
+};
+
+function ActionableGridListItemContent({
+  actions,
+  actionsBackgroundColor,
+  actionsWidth,
+  isRevealed,
+  onRevealedChange,
+  children,
+  onAction,
+}: ActionableGridListItemContentProps) {
+  const dragStartedRef = useRef(false);
+
+  const hasActions = !!actions;
+
+  // Spring animation for the swipe. It starts at the revealed offset when the
+  // row was left open before this content was (re)mounted.
   const [{ x }, api] = useSpring(
     () => ({
-      from: { x: 0 },
+      from: { x: isRevealed ? -actionsWidth : 0 },
       config: config.stiff,
     }),
     [],
@@ -67,7 +128,7 @@ export function ActionableGridListItem<T extends object>({
         to: { x: shouldReveal ? -actionsWidth : 0 },
         onRest: () => {
           dragStartedRef.current = false;
-          setIsRevealed(shouldReveal);
+          onRevealedChange(shouldReveal);
         },
       });
     },
@@ -87,74 +148,60 @@ export function ActionableGridListItem<T extends object>({
   };
 
   return (
-    <GridListItem
-      {...props}
-      value={value}
-      textValue={textValue}
+    <animated.div
+      {...(hasActions ? bind() : {})}
       style={{
-        ...styles.mobileListItem,
-        padding: 0,
-        backgroundColor: hasActions
-          ? actionsBackgroundColor
-          : (styles.mobileListItem.backgroundColor ?? 'transparent'),
-        overflow: 'hidden',
+        ...(hasActions
+          ? { transform: x.to(v => `translate3d(${v}px,0,0)`) }
+          : {}),
+        display: 'flex',
+        touchAction: hasActions ? 'pan-y' : 'auto',
+        cursor: hasActions ? 'grab' : 'pointer',
       }}
     >
-      <animated.div
-        {...(hasActions ? bind() : {})}
+      {/* Main content */}
+      <Button
+        variant="bare"
         style={{
-          ...(hasActions
-            ? { transform: x.to(v => `translate3d(${v}px,0,0)`) }
-            : {}),
-          display: 'flex',
-          touchAction: hasActions ? 'pan-y' : 'auto',
-          cursor: hasActions ? 'grab' : 'pointer',
+          flex: 1,
+          backgroundColor: theme.tableBackground,
+          minWidth: '100%',
+          padding: 16,
+          textAlign: 'left',
+          borderRadius: 0,
+          justifyContent: 'flex-start',
+          alignItems: 'flex-start',
         }}
+        onPressStart={e => e.continuePropagation()}
+        onClick={handleAction}
       >
-        {/* Main content */}
-        <Button
-          variant="bare"
-          style={{
-            flex: 1,
-            backgroundColor: theme.tableBackground,
-            minWidth: '100%',
-            padding: 16,
-            textAlign: 'left',
-            borderRadius: 0,
-            justifyContent: 'flex-start',
-            alignItems: 'flex-start',
-          }}
-          onPressStart={e => e.continuePropagation()}
-          onClick={handleAction}
-        >
-          {children}
-        </Button>
+        {children}
+      </Button>
 
-        {/* Actions that appear when swiped */}
-        {hasActions && (
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'center',
-              backgroundColor: actionsBackgroundColor,
-              minWidth: actionsWidth,
-            }}
-          >
-            {typeof actions === 'function'
-              ? actions({
-                  close: () => {
-                    void api.start({
-                      to: { x: 0 },
-                      onRest: () => {
-                        setIsRevealed(false);
-                      },
-                    });
-                  },
-                })
-              : actions}
-          </div>
-        )}
-      </animated.div>
-    </GridListItem>
+      {/* Actions that appear when swiped */}
+      {hasActions && (
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'center',
+            backgroundColor: actionsBackgroundColor,
+            minWidth: actionsWidth,
+          }}
+        >
+          {typeof actions === 'function'
+            ? actions({
+                close: () => {
+                  void api.start({
+                    to: { x: 0 },
+                    onRest: () => {
+                      onRevealedChange(false);
+                    },
+                  });
+                },
+              })
+            : actions}
+        </div>
+      )}
+    </animated.div>
   );
 }

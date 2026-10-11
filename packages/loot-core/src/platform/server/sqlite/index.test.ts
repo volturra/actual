@@ -1,4 +1,6 @@
 // @ts-strict-ignore
+import { compareLikeSQL, likePatterns, likeValues } from '#mocks/like-cases';
+import type { CompareLikeRow } from '#mocks/like-cases';
 import { patchFetchForSqlJS } from '#mocks/util';
 
 import {
@@ -282,5 +284,46 @@ describe('Web sqlite', () => {
         { id: 'id2' },
       ]);
     });
+  });
+});
+
+describe('NORMALISED_LIKE on sql.js', () => {
+  it('gives the same results as UNICODE_LIKE of NORMALISE', async () => {
+    const db = await openDatabase();
+    execQuery(db, 'CREATE TABLE strings (id INTEGER PRIMARY KEY, value TEXT)');
+    likeValues.forEach((value, id) => {
+      runQuery(db, 'INSERT INTO strings (id, value) VALUES (?, ?)', [
+        id,
+        value,
+      ]);
+    });
+
+    let matches = 0;
+    for (const pattern of likePatterns) {
+      const rows = runQuery<CompareLikeRow>(
+        db,
+        compareLikeSQL,
+        [pattern, pattern, pattern, pattern],
+        true,
+      );
+      expect(rows).toHaveLength(likeValues.length);
+      for (const row of rows) {
+        const value = likeValues[row.id];
+        expect({ pattern, value, like: row.new_like }).toEqual({
+          pattern,
+          value,
+          like: row.old_like,
+        });
+        expect({ pattern, value, notLike: row.new_not_like }).toEqual({
+          pattern,
+          value,
+          notLike: row.old_not_like,
+        });
+        matches += row.old_like;
+      }
+    }
+    // The cases exercise both outcomes
+    expect(matches).toBeGreaterThan(30);
+    expect(matches).toBeLessThan(likePatterns.length * likeValues.length);
   });
 });

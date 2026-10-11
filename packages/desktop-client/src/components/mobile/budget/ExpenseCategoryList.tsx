@@ -17,8 +17,7 @@ type ExpenseCategoryListProps = {
   categoryGroup: CategoryGroupEntity;
   categories: CategoryEntity[];
   shouldHideCategory: (category: CategoryEntity) => boolean;
-  month: string;
-  onEditCategory: (id: string) => void;
+  onEditCategory: (id: string, month: string) => void;
   onBudgetAction: (month: string, action: string, args: unknown) => void;
   show3Columns: boolean;
   showBudgetedColumn: boolean;
@@ -27,7 +26,6 @@ type ExpenseCategoryListProps = {
 export function ExpenseCategoryList({
   categoryGroup,
   categories,
-  month,
   onEditCategory,
   onBudgetAction,
   show3Columns,
@@ -120,7 +118,6 @@ export function ExpenseCategoryList({
       items={categories}
       dragAndDropHooks={dragAndDropHooks}
       dependencies={[
-        month,
         onEditCategory,
         onBudgetAction,
         shouldHideCategory,
@@ -132,7 +129,6 @@ export function ExpenseCategoryList({
         <ExpenseCategoryListItem
           key={category.id}
           value={category}
-          month={month}
           onEditCategory={onEditCategory}
           onBudgetAction={onBudgetAction}
           isHidden={shouldHideCategory(category)}

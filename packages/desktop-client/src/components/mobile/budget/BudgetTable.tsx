@@ -8,7 +8,6 @@ import { SvgCheveronRight } from '@actual-app/components/icons/v1';
 import { SvgViewShow } from '@actual-app/components/icons/v2';
 import { Label } from '@actual-app/components/label';
 import { styles } from '@actual-app/components/styles';
-import { Text } from '@actual-app/components/text';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
 import * as monthUtils from '@actual-app/core/shared/months';
@@ -31,6 +30,8 @@ import { useSyncedPref } from '#hooks/useSyncedPref';
 import type { Binding } from '#spreadsheet';
 import { envelopeBudget, trackingBudget } from '#spreadsheet/bindings';
 
+import { AmountAutoTextSize } from './AmountAutoTextSize';
+import { BudgetMonthProvider } from './BudgetMonthContext';
 import { ExpenseGroupList } from './ExpenseGroupList';
 import { IncomeGroup } from './IncomeGroup';
 
@@ -101,9 +102,7 @@ function ToBudget({ toBudget, onPress, show3Columns }: ToBudgetProps) {
             {({ type, value }) => (
               <View>
                 <PrivacyFilter>
-                  <AutoTextSize
-                    key={value}
-                    as={Text}
+                  <AmountAutoTextSize
                     minFontSizePx={6}
                     maxFontSizePx={12}
                     mode="oneline"
@@ -120,7 +119,7 @@ function ToBudget({ toBudget, onPress, show3Columns }: ToBudgetProps) {
                     }}
                   >
                     {format(value, type)}
-                  </AutoTextSize>
+                  </AmountAutoTextSize>
                 </PrivacyFilter>
               </View>
             )}
@@ -200,9 +199,7 @@ function Saved({ projected, onPress, show3Columns }: SavedProps) {
             {({ type, value }) => (
               <View>
                 <PrivacyFilter>
-                  <AutoTextSize
-                    key={value}
-                    as={Text}
+                  <AmountAutoTextSize
                     minFontSizePx={6}
                     maxFontSizePx={12}
                     mode="oneline"
@@ -219,7 +216,7 @@ function Saved({ projected, onPress, show3Columns }: SavedProps) {
                     }}
                   >
                     {format(value, type)}
-                  </AutoTextSize>
+                  </AmountAutoTextSize>
                 </PrivacyFilter>
               </View>
             )}
@@ -242,9 +239,8 @@ function Saved({ projected, onPress, show3Columns }: SavedProps) {
 type BudgetGroupsProps = {
   type: string;
   categoryGroups: CategoryGroupEntity[];
-  onEditCategoryGroup: (id: CategoryGroupEntity['id']) => void;
-  onEditCategory: (id: CategoryEntity['id']) => void;
-  month: string;
+  onEditCategoryGroup: (id: CategoryGroupEntity['id'], month: string) => void;
+  onEditCategory: (id: CategoryEntity['id'], month: string) => void;
   onBudgetAction: (month: string, action: string, args: unknown) => void;
   showBudgetedColumn: boolean;
   show3Columns: boolean;
@@ -255,7 +251,6 @@ function BudgetGroups({
   categoryGroups,
   onEditCategoryGroup,
   onEditCategory,
-  month,
   onBudgetAction,
   showBudgetedColumn,
   show3Columns,
@@ -300,7 +295,6 @@ function BudgetGroups({
       <ExpenseGroupList
         categoryGroups={expenseGroups}
         showBudgetedColumn={showBudgetedColumn}
-        month={month}
         onEditCategoryGroup={onEditCategoryGroup}
         onEditCategory={onEditCategory}
         onBudgetAction={onBudgetAction}
@@ -313,7 +307,6 @@ function BudgetGroups({
       {incomeGroup && (
         <IncomeGroup
           categoryGroup={incomeGroup}
-          month={month}
           showHiddenCategories={showHiddenCategories}
           onEditCategoryGroup={onEditCategoryGroup}
           onEditCategory={onEditCategory}
@@ -332,8 +325,8 @@ type BudgetTableProps = {
   onShowBudgetSummary: () => void;
   onBudgetAction: (month: string, action: string, args: unknown) => void;
   onRefresh: () => Promise<void>;
-  onEditCategoryGroup: (id: CategoryGroupEntity['id']) => void;
-  onEditCategory: (id: CategoryEntity['id']) => void;
+  onEditCategoryGroup: (id: CategoryGroupEntity['id'], month: string) => void;
+  onEditCategory: (id: CategoryEntity['id'], month: string) => void;
 };
 
 export function BudgetTable({
@@ -385,17 +378,18 @@ export function BudgetTable({
           }}
         >
           <SchedulesProvider query={schedulesQuery}>
-            <BudgetGroups
-              type={budgetType}
-              categoryGroups={categoryGroups}
-              showBudgetedColumn={!showSpentColumn}
-              show3Columns={show3Columns}
-              showHiddenCategories={showHiddenCategories}
-              month={month}
-              onEditCategoryGroup={onEditCategoryGroup}
-              onEditCategory={onEditCategory}
-              onBudgetAction={onBudgetAction}
-            />
+            <BudgetMonthProvider month={month}>
+              <BudgetGroups
+                type={budgetType}
+                categoryGroups={categoryGroups}
+                showBudgetedColumn={!showSpentColumn}
+                show3Columns={show3Columns}
+                showHiddenCategories={showHiddenCategories}
+                onEditCategoryGroup={onEditCategoryGroup}
+                onEditCategory={onEditCategory}
+                onBudgetAction={onBudgetAction}
+              />
+            </BudgetMonthProvider>
           </SchedulesProvider>
         </View>
       </PullToRefresh>
@@ -528,9 +522,7 @@ function BudgetTableHeader({
                   </View>
                   <View>
                     <PrivacyFilter>
-                      <AutoTextSize
-                        key={value}
-                        as={Text}
+                      <AmountAutoTextSize
                         minFontSizePx={6}
                         maxFontSizePx={12}
                         mode="oneline"
@@ -543,7 +535,7 @@ function BudgetTableHeader({
                           budgetType === 'tracking' ? value : -value,
                           formatType,
                         )}
-                      </AutoTextSize>
+                      </AmountAutoTextSize>
                     </PrivacyFilter>
                   </View>
                 </View>
@@ -596,9 +588,7 @@ function BudgetTableHeader({
                   </View>
                   <View>
                     <PrivacyFilter>
-                      <AutoTextSize
-                        key={value}
-                        as={Text}
+                      <AmountAutoTextSize
                         minFontSizePx={6}
                         maxFontSizePx={12}
                         mode="oneline"
@@ -608,7 +598,7 @@ function BudgetTableHeader({
                         }}
                       >
                         {format(value, type)}
-                      </AutoTextSize>
+                      </AmountAutoTextSize>
                     </PrivacyFilter>
                   </View>
                 </View>
@@ -639,16 +629,14 @@ function BudgetTableHeader({
                 </View>
                 <View>
                   <PrivacyFilter>
-                    <AutoTextSize
-                      key={value}
-                      as={Text}
+                    <AmountAutoTextSize
                       minFontSizePx={6}
                       maxFontSizePx={12}
                       mode="oneline"
                       style={amountStyle}
                     >
                       {format(value, type)}
-                    </AutoTextSize>
+                    </AmountAutoTextSize>
                   </PrivacyFilter>
                 </View>
               </View>

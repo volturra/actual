@@ -20,14 +20,16 @@ import { envelopeBudget, trackingBudget } from '#spreadsheet/bindings';
 
 import { BalanceCell } from './BalanceCell';
 import { BudgetCell } from './BudgetCell';
+import { useBudgetMonth, useBudgetMonthRef } from './BudgetMonthContext';
 import { getColumnWidth, ROW_HEIGHT } from './BudgetTable';
 
 type IncomeCategoryNameProps = {
   category: CategoryEntity;
-  onEdit: (id: CategoryEntity['id']) => void;
+  onEdit: (id: CategoryEntity['id'], month: string) => void;
 };
 
 function IncomeCategoryName({ category, onEdit }: IncomeCategoryNameProps) {
+  const monthRef = useBudgetMonthRef();
   const sidebarColumnWidth = getColumnWidth({
     isSidebar: true,
     offset: -10,
@@ -57,7 +59,7 @@ function IncomeCategoryName({ category, onEdit }: IncomeCategoryNameProps) {
         style={{
           maxWidth: sidebarColumnWidth,
         }}
-        onPress={() => onEdit?.(category.id)}
+        onPress={() => onEdit?.(category.id, monthRef.current)}
       >
         <View
           style={{
@@ -170,36 +172,61 @@ function IncomeCategoryCells({
 type IncomeCategoryListItemProps = ComponentPropsWithoutRef<
   typeof GridListItem<CategoryEntity>
 > & {
-  month: string;
-  onEdit: (id: CategoryEntity['id']) => void;
+  onEdit: (id: CategoryEntity['id'], month: string) => void;
   onBudgetAction: (month: string, action: string, args: unknown) => void;
 };
 
+// The list's collection is built from these props, so nothing here may
+// depend on the month: the row's content reads it from context instead.
 export function IncomeCategoryListItem({
-  month,
   onEdit,
   onBudgetAction,
   ...props
 }: IncomeCategoryListItemProps) {
   const { value: category } = props;
+
+  if (!category) {
+    return null;
+  }
+
+  return (
+    <GridListItem
+      textValue={category.name}
+      data-testid="category-row"
+      {...props}
+    >
+      <IncomeCategoryRow
+        category={category}
+        onEdit={onEdit}
+        onBudgetAction={onBudgetAction}
+      />
+    </GridListItem>
+  );
+}
+
+type IncomeCategoryRowProps = {
+  category: CategoryEntity;
+  onEdit: (id: CategoryEntity['id'], month: string) => void;
+  onBudgetAction: (month: string, action: string, args: unknown) => void;
+};
+
+function IncomeCategoryRow({
+  category,
+  onEdit,
+  onBudgetAction,
+}: IncomeCategoryRowProps) {
+  const month = useBudgetMonth();
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const [budgetType = 'envelope'] = useSyncedPref('budgetType');
   const balanceMenuModalName = `envelope-income-balance-menu`;
 
   const onShowActivity = useCallback(() => {
-    if (!category) {
-      return null;
-    }
-
     void navigate(`/categories/${category.id}?month=${month}`);
   }, [category, month, navigate]);
 
   const onCarryover = useCallback(
     (carryover: boolean) => {
-      if (!category) {
-        return;
-      }
       onBudgetAction(month, 'carryover', {
         category: category.id,
         flag: carryover,
@@ -210,9 +237,6 @@ export function IncomeCategoryListItem({
   );
 
   const onOpenBalanceMenu = useCallback(() => {
-    if (!category) {
-      return;
-    }
     dispatch(
       pushModal({
         modal: {
@@ -235,43 +259,31 @@ export function IncomeCategoryListItem({
     onCarryover,
   ]);
 
-  if (!category) {
-    return null;
-  }
-
   return (
-    <GridListItem
-      textValue={category.name}
-      data-testid="category-row"
-      {...props}
+    <View
+      style={{
+        height: ROW_HEIGHT,
+        borderColor: theme.tableBorder,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingLeft: 5,
+        paddingRight: 5,
+        borderBottomWidth: 1,
+        opacity: category.hidden ? 0.5 : undefined,
+        backgroundColor: monthUtils.isCurrentMonth(month)
+          ? theme.budgetCurrentMonth
+          : theme.budgetOtherMonth,
+      }}
     >
-      <View
-        style={{
-          height: ROW_HEIGHT,
-          borderColor: theme.tableBorder,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          paddingLeft: 5,
-          paddingRight: 5,
-          borderBottomWidth: 1,
-          opacity: category.hidden ? 0.5 : undefined,
-          backgroundColor: monthUtils.isCurrentMonth(month)
-            ? theme.budgetCurrentMonth
-            : theme.budgetOtherMonth,
-        }}
-      >
-        <IncomeCategoryName category={category} onEdit={onEdit} />
-        <IncomeCategoryCells
-          key={`${category.id}`}
-          category={category}
-          month={month}
-          onBudgetAction={onBudgetAction}
-          onPress={
-            budgetType === 'envelope' ? onOpenBalanceMenu : onShowActivity
-          }
-        />
-      </View>
-    </GridListItem>
+      <IncomeCategoryName category={category} onEdit={onEdit} />
+      <IncomeCategoryCells
+        key={`${category.id}`}
+        category={category}
+        month={month}
+        onBudgetAction={onBudgetAction}
+        onPress={budgetType === 'envelope' ? onOpenBalanceMenu : onShowActivity}
+      />
+    </View>
   );
 }

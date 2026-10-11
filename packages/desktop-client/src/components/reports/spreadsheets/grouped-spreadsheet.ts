@@ -17,9 +17,9 @@ import { fetchSpreadsheetQueryData } from './fetchSpreadsheetQueryData';
 import { filterEmptyRows } from './filterEmptyRows';
 import {
   filterReportTransactions,
+  groupRowsByLabel,
   sumItemAmountsByDate,
 } from './filterHiddenItems';
-import type { GroupByLabel } from './filterHiddenItems';
 import { recalculate } from './recalculate';
 import { sortData } from './sortData';
 import {
@@ -112,12 +112,32 @@ export function createGroupedSpreadsheet({
       showHiddenCategories,
       showUncategorized,
     );
+    const rowsByLabel = {
+      categoryGroup: {
+        assets: groupRowsByLabel(visibleAssets, 'categoryGroup'),
+        debts: groupRowsByLabel(visibleDebts, 'categoryGroup'),
+      },
+      category: {
+        assets: groupRowsByLabel(visibleAssets, 'category'),
+        debts: groupRowsByLabel(visibleDebts, 'category'),
+      },
+    };
     const amountsByDate = (
       item: UncategorizedEntity,
-      groupByLabel: GroupByLabel,
+      groupByLabel: 'categoryGroup' | 'category',
     ) => ({
-      assets: sumItemAmountsByDate(item, visibleAssets, groupByLabel),
-      debts: sumItemAmountsByDate(item, visibleDebts, groupByLabel),
+      assets: sumItemAmountsByDate(
+        item,
+        visibleAssets,
+        groupByLabel,
+        rowsByLabel[groupByLabel].assets,
+      ),
+      debts: sumItemAmountsByDate(
+        item,
+        visibleDebts,
+        groupByLabel,
+        rowsByLabel[groupByLabel].debts,
+      ),
     });
 
     const groupedData: GroupedEntity[] = categoryGroup.map(

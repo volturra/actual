@@ -1,6 +1,6 @@
 import React from 'react';
 import type { GridListItemProps } from 'react-aria-components';
-import { Trans, useTranslation } from 'react-i18next';
+import { Trans } from 'react-i18next';
 
 import { Button } from '@actual-app/components/button';
 import { SvgBookmark } from '@actual-app/components/icons/v1';
@@ -14,6 +14,9 @@ import { ActionableGridListItem } from '#components/mobile/ActionableGridListIte
 import { PayeeRuleCountLabel } from '#components/payees/PayeeRuleCountLabel';
 
 type PayeesListItemProps = {
+  // Passed in rather than translated here: every payee's item is rendered to
+  // build the list's collection, so a translation hook per item adds up.
+  label: string;
   ruleCount: number;
   isRuleCountLoading?: boolean;
   onDelete: () => void;
@@ -22,18 +25,13 @@ type PayeesListItemProps = {
 
 export function PayeesListItem({
   value: payee,
+  label,
   ruleCount,
   isRuleCountLoading,
   onDelete,
   onViewRules,
   ...props
 }: PayeesListItemProps) {
-  const { t } = useTranslation();
-
-  const label = payee.transfer_acct
-    ? t('Transfer: {{name}}', { name: payee.name })
-    : payee.name;
-
   return (
     <ActionableGridListItem
       id={payee.id}

@@ -72,10 +72,33 @@ export type GroupByLabel =
   | 'account'
   | 'tagBucketId';
 
+export type RowsByLabel = Map<QueryDataEntity[GroupByLabel], QueryDataEntity[]>;
+
 export type ItemAmountsByDate = {
   assets: Map<string, number>;
   debts: Map<string, number>;
 };
+
+/**
+ * Groups rows by their `groupByLabel` value, keeping their order, so
+ * `sumItemAmountsByDate` can go over only the rows of one item.
+ */
+export function groupRowsByLabel(
+  visibleRows: QueryDataEntity[],
+  groupByLabel: GroupByLabel,
+): RowsByLabel {
+  const rowsByLabel: RowsByLabel = new Map();
+  for (const row of visibleRows) {
+    const key = row[groupByLabel];
+    const rows = rowsByLabel.get(key);
+    if (rows) {
+      rows.push(row);
+    } else {
+      rowsByLabel.set(key, [row]);
+    }
+  }
+  return rowsByLabel;
+}
 
 /**
  * Sums the amounts of the rows that belong to `item`, keyed by row date.
@@ -86,24 +109,28 @@ export type ItemAmountsByDate = {
  * `filterHiddenItems` and the `groupByLabel` match once per interval, but it
  * goes over the rows a single time, so callers can look up each interval with
  * `sums.get(interval) ?? 0`.
+ *
+ * `rowsByLabel` must come from `groupRowsByLabel` on the same rows and label.
+ * It lets it go over only the item's own rows instead of every row.
  */
 export function sumItemAmountsByDate(
   item: UncategorizedEntity,
   visibleRows: QueryDataEntity[],
   groupByLabel: GroupByLabel,
+  rowsByLabel: RowsByLabel,
 ): Map<string, number> {
   const groupsByCategory =
     groupByLabel === 'category' || groupByLabel === 'categoryGroup';
   const itemId = item.id ?? null;
   // An uncategorized bucket takes every row its bucket check lets through.
   const matchesEveryRow = !!item.uncategorized_id && groupsByCategory;
+  const itemRows = matchesEveryRow
+    ? visibleRows
+    : (rowsByLabel.get(itemId) ?? []);
 
   const sums = new Map<string, number>();
-  for (const row of visibleRows) {
-    if (
-      (!groupsByCategory || isInCategoryBucket(item, row)) &&
-      (matchesEveryRow || row[groupByLabel] === itemId)
-    ) {
+  for (const row of itemRows) {
+    if (!groupsByCategory || isInCategoryBucket(item, row)) {
       sums.set(row.date, (sums.get(row.date) ?? 0) + row.amount);
     }
   }

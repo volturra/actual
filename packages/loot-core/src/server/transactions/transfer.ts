@@ -9,16 +9,47 @@ async function getPayee(acct) {
   ]);
 }
 
-async function getTransferredAccount(transaction) {
-  if (transaction.payee) {
-    const result = await db.first<Pick<db.DbViewPayee, 'transfer_acct'>>(
-      'SELECT transfer_acct FROM v_payees WHERE id = ?',
-      [transaction.payee],
-    );
+// Transfer payee id -> the account it transfers to
+export type TransferAccounts = Map<string, string>;
 
-    return result?.transfer_acct || null;
+/**
+ * Looks up every transfer payee with one query, for callers that run
+ * `onInsert`/`onUpdate` over many transactions at once. Same view as the
+ * single-transaction lookup in `getTransferredAccount`: a payee missing from
+ * the map (a regular or unknown payee, or a transfer payee of a deleted
+ * account) has no transfer account.
+ */
+export async function getTransferAccounts(): Promise<TransferAccounts> {
+  const rows = await db.all<Pick<db.DbViewPayee, 'id' | 'transfer_acct'>>(
+    'SELECT id, transfer_acct FROM v_payees WHERE transfer_acct IS NOT NULL',
+  );
+  const result: TransferAccounts = new Map();
+  for (const row of rows) {
+    // Skips empty ids, as the single lookup's `|| null` does
+    if (row.transfer_acct) {
+      result.set(row.id, row.transfer_acct);
+    }
   }
-  return null;
+  return result;
+}
+
+async function getTransferredAccount(
+  transaction,
+  transferAccounts?: TransferAccounts,
+) {
+  // A split parent is never a transfer itself (see `onUpdate`)
+  if (transaction.is_parent || !transaction.payee) {
+    return null;
+  }
+  if (transferAccounts) {
+    return transferAccounts.get(transaction.payee) ?? null;
+  }
+  const result = await db.first<Pick<db.DbViewPayee, 'transfer_acct'>>(
+    'SELECT transfer_acct FROM v_payees WHERE id = ?',
+    [transaction.payee],
+  );
+
+  return result?.transfer_acct || null;
 }
 
 async function clearCategory(transaction, transferAcct) {
@@ -137,8 +168,14 @@ export async function updateTransfer(transaction, transferredAccount) {
   }
 }
 
-export async function onInsert(transaction) {
-  const transferredAccount = await getTransferredAccount(transaction);
+export async function onInsert(
+  transaction,
+  transferAccounts?: TransferAccounts,
+) {
+  const transferredAccount = await getTransferredAccount(
+    transaction,
+    transferAccounts,
+  );
 
   if (transferredAccount) {
     return addTransfer(transaction, transferredAccount);
@@ -151,12 +188,25 @@ export async function onDelete(transaction) {
   }
 }
 
-export async function onUpdate(transaction) {
-  const transferredAccount = await getTransferredAccount(transaction);
-
+export async function onUpdate(
+  transaction,
+  transferAccounts?: TransferAccounts,
+) {
   if (transaction.is_parent) {
-    return removeTransfer(transaction);
+    // A split parent is never a transfer itself (its children can be).
+    // Only write when there is an old transfer to remove: rewriting a
+    // `transfer_id` that is already null changes nothing but still sends
+    // a sync message and adds an undo entry
+    if (transaction.transfer_id) {
+      return removeTransfer(transaction);
+    }
+    return { id: transaction.id, transfer_id: null };
   }
+
+  const transferredAccount = await getTransferredAccount(
+    transaction,
+    transferAccounts,
+  );
 
   if (transferredAccount && !transaction.transfer_id) {
     return addTransfer(transaction, transferredAccount);

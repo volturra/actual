@@ -203,6 +203,14 @@ describe('Spreadsheet', () => {
       expect(condition()).toBe(true);
     }
 
+    // Advance through one pause, until the sheet gives way again or is done
+    async function stepOnce(spreadsheet: Spreadsheet) {
+      vi.advanceTimersByTime(0);
+      await waitUntil(
+        () => !spreadsheet.running || spreadsheet.pausedComputation != null,
+      );
+    }
+
     const balances = {
       'account!balance-1': -15832,
       'account!balance-2': 1000,
@@ -242,13 +250,19 @@ describe('Spreadsheet', () => {
       vi.useRealTimers();
     });
 
-    test('give other tasks a turn between query cells', async () => {
+    test('give other tasks a turn before and between query cells', async () => {
       const spreadsheet = await setupQueryCells();
       const onFinish = vi.fn();
       spreadsheet.onFinish(onFinish);
 
+      // The run starts by giving way, before any query runs
       await waitUntil(() => spreadsheet.pausedComputation != null);
       const [first, second] = spreadsheet.computeQueue;
+      expect(spreadsheet.pausedComputation.idx).toBe(0);
+      expect(spreadsheet.getValue(first)).toBe(null);
+
+      await stepOnce(spreadsheet);
+      expect(spreadsheet.pausedComputation.idx).toBe(1);
       expect(spreadsheet.getValue(first)).toBe(balances[first]);
       expect(spreadsheet.getValue(second)).toBe(null);
       expect(onFinish).not.toHaveBeenCalled();
@@ -331,9 +345,12 @@ describe('Spreadsheet', () => {
       });
       const [first, second] = spreadsheet.computeQueue;
 
-      // The first query starts on the next tick. Close the sheet while it runs.
-      await Promise.resolve();
+      // The run starts by giving way. Let the first query start, and close the
+      // sheet while it runs.
+      await waitUntil(() => spreadsheet.pausedComputation != null);
+      vi.advanceTimersByTime(0);
       expect(spreadsheet.running).toBe(true);
+      expect(spreadsheet.pausedComputation).toBe(null);
       expect(spreadsheet.getValue(first)).toBe(null);
       spreadsheet.unload();
       await waitUntil(() => spreadsheet.getValue(first) != null);
@@ -346,6 +363,8 @@ describe('Spreadsheet', () => {
     test('recompute query cells when data changes mid-run', async () => {
       const spreadsheet = await setupQueryCells();
       await waitUntil(() => spreadsheet.pausedComputation != null);
+      // Past the pause the run starts with, to the one after the first query
+      await stepOnce(spreadsheet);
       const [first, second] = spreadsheet.computeQueue;
       expect(spreadsheet.getValue(first)).toBe(balances[first]);
       expect(spreadsheet.getValue(second)).toBe(null);
@@ -374,14 +393,6 @@ describe('Spreadsheet', () => {
       expect(spreadsheet.getValue(second)).toBe(balances[second] + 500);
       expect(onFinish).toHaveBeenCalledTimes(1);
     });
-
-    // Advance through one pause, until the sheet gives way again or is done
-    async function stepOnce(spreadsheet: Spreadsheet) {
-      vi.advanceTimersByTime(0);
-      await waitUntil(
-        () => !spreadsheet.running || spreadsheet.pausedComputation != null,
-      );
-    }
 
     test('do not pile up query cells when data keeps changing', async () => {
       await insertTransactions();
@@ -470,6 +481,8 @@ describe('Spreadsheet', () => {
       spreadsheet.onFinish(onFinish);
 
       await waitUntil(() => spreadsheet.pausedComputation != null);
+      expect(spreadsheet.pausedComputation.idx).toBe(0);
+      await stepOnce(spreadsheet);
       expect(spreadsheet.pausedComputation.idx).toBe(1);
       await stepOnce(spreadsheet);
       // The failed query gives way too, before the third one runs
@@ -492,6 +505,36 @@ describe('Spreadsheet', () => {
 });
 
 describe('Spreadsheet query cells', () => {
+  test('a request already waiting runs before a run of query cells', async () => {
+    await insertTransactions();
+    const spreadsheet = new Spreadsheet();
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+
+    // A request that was queued before the query cell started computing
+    const seenByRequest = new Promise(resolve =>
+      setImmediate(() => resolve(spreadsheet.getValue('g!balance'))),
+    );
+
+    expect(await seenByRequest).toBe(null);
+    // The run still completes without anything else happening
+    await new Promise(resolve => spreadsheet.onFinish(resolve));
+    expect(spreadsheet.running).toBe(false);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+  });
+
+  test('a run of query cells completes even with nothing else waiting', async () => {
+    await insertTransactions();
+    const spreadsheet = new Spreadsheet();
+    const computed = trackComputed(spreadsheet);
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    spreadsheet.createQuery('g', 'other', sumQuery({ account: '2' }));
+
+    await finished(spreadsheet);
+    expect(spreadsheet.running).toBe(false);
+    expect(computed).toEqual(['g!balance', 'g!other']);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+  });
+
   function sumQuery(filter: Record<string, unknown>) {
     return q('transactions')
       .filter(filter)

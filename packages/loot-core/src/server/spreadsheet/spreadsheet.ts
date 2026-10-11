@@ -221,7 +221,15 @@ export class Spreadsheet {
     // consistent (otherwise it would only sometimes finish sync)
     void Promise.resolve().then(() => {
       if (!this.running) {
-        this.runComputations();
+        if (this.onlyQueriesQueued() && this.computeQueue.length > 0) {
+          // Each query cell runs a query synchronously, which can take a
+          // while. Start the run giving way, so requests that were already
+          // waiting (like the ones a page sends when it opens) go first.
+          this.running = true;
+          this.pauseComputations(0);
+        } else {
+          this.runComputations();
+        }
       } else if (this.pausedComputation && !this.onlyQueriesQueued()) {
         // Other cells were queued while query cells were giving way. Compute
         // them now, before any other request runs, like an idle sheet would.
@@ -264,13 +272,21 @@ export class Spreadsheet {
         idx = 0;
         this.events.emit('change', { names });
       }
-      this.pausedComputation = {
-        idx,
-        cancel: yieldToOtherTasks(() => this.resumeComputations()),
-      };
+      this.pauseComputations(idx);
     } else {
       this.runComputations(idx);
     }
+  }
+
+  /**
+   * Give other requests a turn, then continue with the cell at `idx`. This
+   * always resumes, even if no other request is waiting.
+   */
+  pauseComputations(idx: number): void {
+    this.pausedComputation = {
+      idx,
+      cancel: yieldToOtherTasks(() => this.resumeComputations()),
+    };
   }
 
   resumeComputations(): void {

@@ -6,6 +6,7 @@ import * as arbs from '#mocks/arbitrary-schema';
 import * as db from '#server/db';
 import { batchMessages, setSyncingMode } from '#server/sync';
 import { q } from '#shared/query';
+import { sumMatchedAmounts, ungroupTransactions } from '#shared/transactions';
 import { groupById } from '#shared/util';
 import { aqlQuery } from '..';
 
@@ -235,6 +236,58 @@ describe('transaction executors', () => {
         }),
     );
   }, 20_000);
+
+  it('the matched rows of a whole search page add up to its `$sum`', async () => {
+    const payeeIds = ['payee1', 'payee2', 'payee3', 'payee4', 'payee5'];
+
+    await fc.assert(
+      fc
+        .asyncProperty(
+          arbs.makeTransactionArray({ splitFreq: 2, payeeIds, maxLength: 100 }),
+          fc.constantFrom('payee1', 'PAYEE2', 'a', 'é', 'zzz'),
+          fc.boolean(),
+          async (arr, text, hideReconciled) => {
+            await insertTransactions(arr, payeeIds);
+
+            // The shape of the register's search, with or without hidden
+            // reconciled transactions
+            let query = q('transactions')
+              .options({ splits: 'grouped' })
+              .filter({
+                $or: {
+                  'payee.name': { $like: `%${text}%` },
+                  notes: { $like: `%${text}%` },
+                  'account.name': { $like: `%${text}%` },
+                },
+              });
+            if (hideReconciled) {
+              query = query.filter({ reconciled: { $eq: false } });
+            }
+
+            const pageCount = 150;
+            const { data: page } = await aqlQuery(
+              query.select('*').limit(pageCount).serialize(),
+            );
+            const { data: sum } = await aqlQuery(
+              query.calculate({ $sum: '$amount' }).serialize(),
+            );
+
+            expect(page.length).toBeLessThan(pageCount);
+            expect(sumMatchedAmounts(ungroupTransactions(page))).toBe(sum);
+          },
+        )
+        .beforeEach(() => {
+          setClock(null);
+          setSyncingMode('import');
+          return db.execQuery(`
+            DELETE FROM transactions;
+            DELETE FROM payees;
+            DELETE FROM payee_mapping;
+          `);
+        }),
+      { numRuns: 50 },
+    );
+  }, 60_000);
 
   function runTest(makeQuery) {
     const payeeIds = ['payee1', 'payee2', 'payee3', 'payee4', 'payee5'];
@@ -641,6 +694,79 @@ describe('grouped transactions with filters', () => {
       ['t3'],
       ['s1', 's1-a', '(s1-b)'],
     ]);
+  });
+
+  it('adds up the matched rows of a search page like `$sum`', async () => {
+    await setup();
+    // Deleted rows, a split with a deleted child and a split with a
+    // deleted parent, as in the test above
+    await insertTransactions([
+      {
+        id: 's2',
+        account: 'acct1',
+        amount: -30,
+        date: '2024-01-07',
+        is_parent: true,
+      },
+      {
+        id: 's2-a',
+        account: 'acct1',
+        amount: -10,
+        date: '2024-01-07',
+        is_child: true,
+        parent_id: 's2',
+        payee: 'cafe',
+      },
+      {
+        id: 's2-b',
+        account: 'acct1',
+        amount: -20,
+        date: '2024-01-07',
+        is_child: true,
+        parent_id: 's2',
+        payee: 'cafe',
+        tombstone: 1,
+      },
+      {
+        id: 's3',
+        account: 'acct1',
+        amount: -7,
+        date: '2024-01-08',
+        is_parent: true,
+        tombstone: 1,
+      },
+      {
+        id: 's3-a',
+        account: 'acct1',
+        amount: -7,
+        date: '2024-01-08',
+        is_child: true,
+        parent_id: 's3',
+        payee: 'cafe',
+      },
+      {
+        id: 't6',
+        account: 'acct1',
+        amount: -5,
+        date: '2024-01-09',
+        payee: 'cafe',
+        tombstone: 1,
+      },
+    ]);
+
+    async function sums(text: string) {
+      const { data: page } = await aqlQuery(search(text).serialize());
+      const { data: sum } = await aqlQuery(
+        search(text).calculate({ $sum: '$amount' }).serialize(),
+      );
+      return [sumMatchedAmounts(ungroupTransactions(page)), sum];
+    }
+
+    // t1, t2, s1-b, t4 and s2-a
+    expect(await sums('cafe')).toEqual([-410, -410]);
+    // t2, t3 and s1-a
+    expect(await sums('shop')).toEqual([-300, -300]);
+    expect(await sums('nothing')).toEqual([0, 0]);
   });
 
   it('matches escaped wildcards literally', async () => {
