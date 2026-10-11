@@ -203,19 +203,19 @@ describe('batchUpdateTransactions', () => {
     async function prepare() {
       await db.insertAccount({ id: 'one', name: 'one' });
       await db.insertAccount({ id: 'two', name: 'two' });
-      await db.insertAccount({ id: 'closed', name: 'closed' });
+      await db.insertAccount({ id: 'deleted', name: 'deleted' });
       await db.insertPayee({ id: 'to-one', name: '', transfer_acct: 'one' });
       await db.insertPayee({ id: 'to-two', name: '', transfer_acct: 'two' });
       await db.insertPayee({
-        id: 'to-closed',
+        id: 'to-deleted',
         name: '',
-        transfer_acct: 'closed',
+        transfer_acct: 'deleted',
       });
       await db.insertPayee({ id: 'shop', name: 'Shop' });
       await db.insertPayee({ id: 'gone', name: 'Gone' });
       await db.deletePayee({ id: 'gone' });
       // Transfer payees of a deleted account are hidden by `v_payees`
-      await db.deleteAccount({ id: 'closed' });
+      await db.deleteAccount({ id: 'deleted' });
 
       await db.insertTransaction({
         id: 'was-transfer',
@@ -287,11 +287,11 @@ describe('batchUpdateTransactions', () => {
             payee: 'gone',
           },
           {
-            id: 'closed-add',
+            id: 'deleted-add',
             account: 'one',
             amount: -5,
             date: '2024-02-01',
-            payee: 'to-closed',
+            payee: 'to-deleted',
           },
         ],
         updated: [
@@ -325,10 +325,10 @@ describe('batchUpdateTransactions', () => {
           tombstone: 0,
         },
         {
-          id: 'closed-add',
+          id: 'deleted-add',
           account: 'one',
           amount: -5,
-          payee: 'to-closed',
+          payee: 'to-deleted',
           has_transfer: 0,
           tombstone: 0,
         },

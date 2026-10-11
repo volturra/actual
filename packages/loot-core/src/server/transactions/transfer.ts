@@ -25,6 +25,7 @@ export async function getTransferAccounts(): Promise<TransferAccounts> {
   );
   const result: TransferAccounts = new Map();
   for (const row of rows) {
+    // Skips empty ids, as the single lookup's `|| null` does
     if (row.transfer_acct) {
       result.set(row.id, row.transfer_acct);
     }
@@ -36,8 +37,7 @@ async function getTransferredAccount(
   transaction,
   transferAccounts?: TransferAccounts,
 ) {
-  // A split parent is never a transfer itself (its children can be):
-  // `onUpdate` only removes its old transfer and `addTransfer` skips it
+  // A split parent is never a transfer itself (see `onUpdate`)
   if (transaction.is_parent || !transaction.payee) {
     return null;
   }
