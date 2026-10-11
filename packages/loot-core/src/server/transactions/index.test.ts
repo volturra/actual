@@ -385,6 +385,20 @@ describe('batchUpdateTransactions', () => {
       ]);
     });
 
+    it('removes transfers in a delete-only batch without a lookup', async () => {
+      await prepare();
+      const lookups = countPayeeLookups();
+
+      await batchUpdateTransactions({ deleted: [{ id: 'was-transfer' }] });
+
+      expect(lookups()).toBe(0);
+      expect(
+        await db.all<{ amount: number; tombstone: number }>(
+          "SELECT amount, tombstone FROM v_transactions_internal WHERE account = 'two' ORDER BY amount",
+        ),
+      ).toEqual([{ amount: 10, tombstone: 1 }]);
+    });
+
     it('maps every payee to the account the single-payee lookup gives', async () => {
       // The per-transaction lookup the batch map replaces
       const lookUpOne = async (payee: string) =>

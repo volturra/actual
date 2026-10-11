@@ -159,11 +159,14 @@ export async function batchUpdateTransactions({
   let transfersUpdated: Awaited<ReturnType<typeof transfer.onUpdate>>[];
 
   if (runTransfers) {
-    // One payee lookup for the whole batch instead of one per transaction.
-    // It reads the same state the per-transaction lookups did: the
-    // transfer writes below are batched and only applied after they all
-    // ran, and they never change payees
-    const transferAccounts = await transfer.getTransferAccounts();
+    // Every transfer payee, read once for the whole batch. The transfer
+    // writes below are batched and only applied after they all ran, and
+    // they never change payees, so the map holds for every transaction.
+    // Deletes don't need it
+    const transferAccounts =
+      allAdded.length > 0 || allUpdated.length > 0
+        ? await transfer.getTransferAccounts()
+        : new Map();
     await batchMessages(async () => {
       await Promise.all(
         allAdded.map(t => transfer.onInsert(t, transferAccounts)),
