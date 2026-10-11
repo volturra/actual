@@ -15,22 +15,9 @@ type AmountAutoTextSizeProps = FitOptions &
   };
 
 /**
- * `<AutoTextSize as={Text}>` for an amount that changes, e.g. when switching
- * months.
- *
- * Rendering `<AutoTextSize key={value}>` remounted the element (and its
- * `ResizeObserver`) on every change so that the text was refitted from
- * scratch. This keeps the element and refits it the way a freshly mounted one
- * would be fitted:
- *
- * - `autoTextSize()` reads the starting font size from the element's computed
- *   style and only ever writes `style.fontSize` (plus `display`/`white-space`,
- *   which it sets again before measuring). `Text` turns its `style` prop into
- *   a class, so a new element has no inline font size. Clearing the inline
- *   font size therefore gives the same starting size as a new element, whether
- *   it comes from `style` or `className`.
- * - The algorithm, its options and the container element are the same, so the
- *   fit is the same.
+ * Fits an amount's text to its container like `<AutoTextSize as={Text}>`,
+ * refitting the same element when the text changes (e.g. when switching
+ * months) instead of remounting it.
  */
 export function AmountAutoTextSize({
   mode,
@@ -51,6 +38,9 @@ export function AmountAutoTextSize({
       if (!innerEl || !containerEl) {
         return;
       }
+      // `autoTextSize()` starts from the computed font size and only writes
+      // the inline one, so clearing that starts from the size `Text` sets
+      // through its `style` or `className`
       innerEl.style.fontSize = '';
       const fit = autoTextSize({
         innerEl,
@@ -73,14 +63,11 @@ export function AmountAutoTextSize({
     [mode, minFontSizePx, maxFontSizePx, fontSizePrecisionPx],
   );
 
-  // Clears the old fit during the commit and requests a refit. The library
-  // throttles fitting through `requestAnimationFrame`, so the refit runs in the
-  // next frame's rAF callbacks, before that frame is painted. (The remount
-  // this replaces got its first fit from the new `ResizeObserver`, which fires
-  // after rAF, so it painted one unfitted frame first; the settled size is the
-  // same.) Only a change of the text itself needs a refit: style changes keep
-  // the element's font size in `AutoTextSize` too, and the container's size is
-  // watched by the observer.
+  // Clears the old fit during the commit and requests a refit, which the
+  // library runs in the next `requestAnimationFrame`, before that frame is
+  // painted. Only a change of the text needs a refit: `AutoTextSize` doesn't
+  // refit on style changes either, and the observer watches the container's
+  // size.
   useLayoutEffect(() => {
     if (elementRef.current) {
       elementRef.current.style.fontSize = '';
