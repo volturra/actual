@@ -152,11 +152,18 @@ export async function onDelete(transaction) {
 }
 
 export async function onUpdate(transaction) {
-  const transferredAccount = await getTransferredAccount(transaction);
-
   if (transaction.is_parent) {
-    return removeTransfer(transaction);
+    // A split parent is never a transfer itself (its children can be).
+    // Only write when there is an old transfer to remove: rewriting a
+    // `transfer_id` that is already null changes nothing but still sends
+    // a sync message and adds an undo entry
+    if (transaction.transfer_id) {
+      return removeTransfer(transaction);
+    }
+    return { id: transaction.id, transfer_id: null };
   }
+
+  const transferredAccount = await getTransferredAccount(transaction);
 
   if (transferredAccount && !transaction.transfer_id) {
     return addTransfer(transaction, transferredAccount);
