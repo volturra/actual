@@ -201,13 +201,8 @@ export function useTransactionBatchActions() {
       onSuccess?.(ids, name, value, mode);
     };
 
-    const onChange = async (...args: Parameters<typeof saveChange>) => {
-      try {
-        await saveChange(...args);
-      } finally {
-        onSettled?.();
-      }
-    };
+    const onChange = (...args: Parameters<typeof saveChange>) =>
+      runThenSettle(() => saveChange(...args), onSettled);
 
     const pushPayeeAutocompleteModal = () => {
       dispatch(
@@ -614,4 +609,19 @@ export function useTransactionBatchActions() {
     onSetTransfer,
     onMerge,
   };
+}
+
+/**
+ * Runs `fn`, then `onSettled` whether it resolved or threw; errors still
+ * propagate. Kept outside the hook because React Compiler can't compile a
+ * `try` without a `catch`: written inline it makes the compiler skip the
+ * whole hook, so its callbacks get a new identity on every render and the
+ * lists that depend on them re-render every row.
+ */
+async function runThenSettle(fn: () => Promise<void>, onSettled?: () => void) {
+  try {
+    await fn();
+  } finally {
+    onSettled?.();
+  }
 }

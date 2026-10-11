@@ -51,6 +51,19 @@ describe('useTransactionBatchActions onBatchEdit', () => {
     });
   });
 
+  it('keeps onBatchEdit stable across renders', () => {
+    // Callers pass callbacks built on onBatchEdit to virtualized lists as
+    // dependencies (the mobile transaction list), so a new identity on every
+    // render makes those lists re-render every row. This only holds while
+    // React Compiler can memoize the hook.
+    const { result, rerender } = renderHook(() => useTransactionBatchActions());
+    const { onBatchEdit } = result.current;
+
+    rerender();
+
+    expect(result.current.onBatchEdit).toBe(onBatchEdit);
+  });
+
   it('tags the edit modal when the caller refetches on settle', async () => {
     const { result } = renderHook(() => useTransactionBatchActions());
 
