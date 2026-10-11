@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-// oxlint-disable-next-line no-restricted-imports
 import { init } from './index';
 
 type Listener = (event: { data: unknown }) => void;
