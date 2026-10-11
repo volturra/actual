@@ -50,7 +50,7 @@ vi.mock('./DynamicBudgetTable', () => ({
 // Each `prewarmMonth` call waits until the test resolves it
 const prewarms = vi.hoisted(() => [] as Array<() => void>);
 vi.mock('./util', () => ({
-  prewarmAllMonths: () => Promise.resolve(),
+  prewarmAllMonths: () => Promise.resolve({ start: '2024-01', end: '2024-12' }),
   prewarmMonth: () =>
     new Promise<void>(resolve => {
       prewarms.push(resolve);

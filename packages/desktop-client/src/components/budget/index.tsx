@@ -58,15 +58,12 @@ export function Budget() {
 
   const init = useEffectEvent(() => {
     async function run() {
-      const { start, end } = await send('get-budget-bounds');
-      setBounds({ start, end });
-
-      await prewarmAllMonths(
+      const { start, end } = await prewarmAllMonths(
         budgetType,
         spreadsheet,
-        { start, end },
         startMonth,
       );
+      setBounds({ start, end });
 
       setInitialized(true);
     }

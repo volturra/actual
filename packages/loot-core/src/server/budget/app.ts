@@ -47,6 +47,7 @@ export type BudgetHandlers = {
   'budget/reset-income-carryover': typeof actions.resetIncomeCarryover;
   'get-categories': typeof getCategories;
   'get-budget-bounds': typeof getBudgetBounds;
+  'budget/get-initial-data': typeof getInitialBudgetData;
   'envelope-budget-month': typeof envelopeBudgetMonth;
   'tracking-budget-month': typeof trackingBudgetMonth;
   'category-create': typeof createCategory;
@@ -144,6 +145,7 @@ app.method(
 );
 app.method('get-categories', getCategories);
 app.method('get-budget-bounds', getBudgetBounds);
+app.method('budget/get-initial-data', getInitialBudgetData);
 app.method('envelope-budget-month', envelopeBudgetMonth);
 app.method('tracking-budget-month', trackingBudgetMonth);
 app.method('category-create', mutator(undoable(createCategory)));
@@ -204,6 +206,30 @@ async function getCategories({ hidden }: { hidden?: boolean } = {}) {
 
 async function getBudgetBounds() {
   return await budget.createAllBudgets();
+}
+
+/**
+ * The budget bounds and the cell values of `months` that fall within them,
+ * in one request: what the budget page needs before it can render. One
+ * reply instead of a bounds request and then a request per month means the
+ * page doesn't wait behind requests sent in between (e.g. balance queries).
+ */
+async function getInitialBudgetData({
+  budgetType,
+  months,
+}: {
+  budgetType?: string;
+  months: string[];
+}) {
+  const bounds = await getBudgetBounds();
+  const getMonthValues =
+    budgetType === 'tracking' ? trackingBudgetMonth : envelopeBudgetMonth;
+  const monthValues = await Promise.all(
+    months
+      .filter(month => month >= bounds.start && month <= bounds.end)
+      .map(month => getMonthValues({ month })),
+  );
+  return { bounds, values: monthValues.flat() };
 }
 
 async function envelopeBudgetMonth({ month }: { month: string }) {

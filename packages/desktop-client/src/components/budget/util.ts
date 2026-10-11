@@ -19,8 +19,6 @@ import { t } from 'i18next';
 import type { DropPosition } from '#components/sort';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
 
-import { getValidMonthBounds } from './MonthsContext';
-
 export function addToBeBudgetedGroup(groups: CategoryGroupEntity[]) {
   return [
     {
@@ -195,22 +193,28 @@ export async function prewarmMonth(
   }
 }
 
+/**
+ * Loads the months around `startMonth` into the spreadsheet cache, in one
+ * request together with the budget bounds, which it returns.
+ */
 export async function prewarmAllMonths(
   budgetType: SyncedPrefs['budgetType'],
   spreadsheet: ReturnType<typeof useSpreadsheet>,
-  bounds: { start: string; end: string },
   startMonth: string,
 ) {
   const numMonths = 3;
-
-  bounds = getValidMonthBounds(
-    bounds,
+  const months = monthUtils.rangeInclusive(
     monthUtils.subMonths(startMonth, 1),
     monthUtils.addMonths(startMonth, numMonths + 1),
   );
-  const months = monthUtils.rangeInclusive(bounds.start, bounds.end);
 
-  await Promise.all(
-    months.map(month => prewarmMonth(budgetType, spreadsheet, month)),
-  );
+  const { bounds, values } = await send('budget/get-initial-data', {
+    budgetType,
+    months,
+  });
+
+  for (const value of values) {
+    spreadsheet.prewarmCache(value.name, value);
+  }
+  return bounds;
 }
