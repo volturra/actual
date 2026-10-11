@@ -24,7 +24,7 @@ export function makeSpendingTotalsQuery(
   name: 'assets' | 'debts',
   startDate: string,
   endDate: string,
-  conditionsOpKey: string,
+  conditionsOpKey: '$and' | '$or',
   filters: unknown[],
 ) {
   return q('transactions')
