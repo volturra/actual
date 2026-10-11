@@ -72,6 +72,8 @@ export type GroupByLabel =
   | 'account'
   | 'tagBucketId';
 
+export type RowsByLabel = Map<QueryDataEntity[GroupByLabel], QueryDataEntity[]>;
+
 export type ItemAmountsByDate = {
   assets: Map<string, number>;
   debts: Map<string, number>;
@@ -84,8 +86,8 @@ export type ItemAmountsByDate = {
 export function groupRowsByLabel(
   visibleRows: QueryDataEntity[],
   groupByLabel: GroupByLabel,
-): Map<unknown, QueryDataEntity[]> {
-  const rowsByLabel = new Map<unknown, QueryDataEntity[]>();
+): RowsByLabel {
+  const rowsByLabel: RowsByLabel = new Map();
   for (const row of visibleRows) {
     const key = row[groupByLabel];
     const rows = rowsByLabel.get(key);
@@ -108,31 +110,27 @@ export function groupRowsByLabel(
  * goes over the rows a single time, so callers can look up each interval with
  * `sums.get(interval) ?? 0`.
  *
- * `rowsByLabel`, from `groupRowsByLabel` on the same rows and label, lets it
- * go over only the item's own rows instead of every row.
+ * `rowsByLabel` must come from `groupRowsByLabel` on the same rows and label.
+ * It lets it go over only the item's own rows instead of every row.
  */
 export function sumItemAmountsByDate(
   item: UncategorizedEntity,
   visibleRows: QueryDataEntity[],
   groupByLabel: GroupByLabel,
-  rowsByLabel?: Map<unknown, QueryDataEntity[]>,
+  rowsByLabel: RowsByLabel,
 ): Map<string, number> {
   const groupsByCategory =
     groupByLabel === 'category' || groupByLabel === 'categoryGroup';
   const itemId = item.id ?? null;
   // An uncategorized bucket takes every row its bucket check lets through.
   const matchesEveryRow = !!item.uncategorized_id && groupsByCategory;
-  const candidateRows =
-    matchesEveryRow || !rowsByLabel
-      ? visibleRows
-      : (rowsByLabel.get(itemId) ?? []);
+  const itemRows = matchesEveryRow
+    ? visibleRows
+    : (rowsByLabel.get(itemId) ?? []);
 
   const sums = new Map<string, number>();
-  for (const row of candidateRows) {
-    if (
-      (!groupsByCategory || isInCategoryBucket(item, row)) &&
-      (matchesEveryRow || row[groupByLabel] === itemId)
-    ) {
+  for (const row of itemRows) {
+    if (!groupsByCategory || isInCategoryBucket(item, row)) {
       sums.set(row.date, (sums.get(row.date) ?? 0) + row.amount);
     }
   }

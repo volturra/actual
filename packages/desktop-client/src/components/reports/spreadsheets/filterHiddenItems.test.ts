@@ -182,29 +182,26 @@ describe('sumItemAmountsByDate', () => {
           flags.showUncategorized,
         );
         const expected = sumPerInterval(item, data, groupByLabel, flags);
-        for (const rowsByLabel of [
-          undefined,
+        const sums = sumItemAmountsByDate(
+          item,
+          visibleRows,
+          groupByLabel,
           groupRowsByLabel(visibleRows, groupByLabel),
-        ]) {
-          const sums = sumItemAmountsByDate(
-            item,
-            visibleRows,
-            groupByLabel,
-            rowsByLabel,
-          );
-          expect(intervals.map(interval => sums.get(interval) ?? 0)).toEqual(
-            expected,
-          );
-        }
+        );
+        expect(intervals.map(interval => sums.get(interval) ?? 0)).toEqual(
+          expected,
+        );
       }
     },
   );
 
   it('sums a category by date and skips hidden and off-budget rows', () => {
+    const visibleRows = filterReportTransactions(debts, false, false, false);
     const sums = sumItemAmountsByDate(
       { id: 'food', name: 'Food', hidden: false },
-      filterReportTransactions(debts, false, false, false),
+      visibleRows,
       'category',
+      groupRowsByLabel(visibleRows, 'category'),
     );
     expect(Object.fromEntries(sums)).toEqual({
       '2025-12': -1000,
@@ -214,10 +211,12 @@ describe('sumItemAmountsByDate', () => {
   });
 
   it('puts uncategorized, transfer and off-budget rows in the "all" bucket', () => {
+    const visibleRows = filterReportTransactions(debts, true, false, true);
     const sums = sumItemAmountsByDate(
       { id: '', name: 'All', hidden: false, uncategorized_id: 'all' },
-      filterReportTransactions(debts, true, false, true),
+      visibleRows,
       'category',
+      groupRowsByLabel(visibleRows, 'category'),
     );
     expect(Object.fromEntries(sums)).toEqual({
       '2026-01': -13,
@@ -232,6 +231,7 @@ describe('sumItemAmountsByDate', () => {
         { id: 'food', name: 'Food', hidden: false },
         [],
         'category',
+        new Map(),
       ).size,
     ).toBe(0);
   });
@@ -293,7 +293,7 @@ describe('groupRowsByLabel', () => {
           groupRowsByLabel(visibleRows, label),
         );
         expect([...indexed]).toStrictEqual([
-          ...sumItemAmountsByDate(item, visibleRows, label),
+          ...legacySumItemAmountsByDate(item, visibleRows, label),
         ]);
       }
     }
@@ -407,9 +407,6 @@ describe('sumItemAmountsByDate with a per-label index (randomized)', () => {
             ];
             expect([
               ...sumItemAmountsByDate(item, visibleRows, label, rowsByLabel),
-            ]).toStrictEqual(expected);
-            expect([
-              ...sumItemAmountsByDate(item, visibleRows, label),
             ]).toStrictEqual(expected);
           }
         }

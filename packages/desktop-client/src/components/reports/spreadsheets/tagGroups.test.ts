@@ -5,6 +5,7 @@ import type { QueryDataEntity } from '#components/reports/ReportOptions';
 
 import {
   filterReportTransactions,
+  groupRowsByLabel,
   sumItemAmountsByDate,
 } from './filterHiddenItems';
 import { recalculate } from './recalculate';
@@ -76,6 +77,8 @@ describe('groupQueryDataByTags', () => {
         bucketTagNames: [],
       }),
     ]);
+    const visibleAssets = filterReportTransactions(result.assets);
+    const visibleDebts = filterReportTransactions(result.debts);
     const intervalTotals = result.groups.map(item =>
       recalculate({
         item,
@@ -83,13 +86,15 @@ describe('groupQueryDataByTags', () => {
         amountsByDate: {
           assets: sumItemAmountsByDate(
             item,
-            filterReportTransactions(result.assets),
+            visibleAssets,
             'tagBucketId',
+            groupRowsByLabel(visibleAssets, 'tagBucketId'),
           ),
           debts: sumItemAmountsByDate(
             item,
-            filterReportTransactions(result.debts),
+            visibleDebts,
             'tagBucketId',
+            groupRowsByLabel(visibleDebts, 'tagBucketId'),
           ),
         },
         startDate: '2026-01-01',
