@@ -70,6 +70,8 @@ function installBenchmarkHooks(traceEnabled: boolean) {
     /** In-flight backend requests: id -> time sent. */
     pendingRequests: Map<string, number>;
     lastWorkerAt: number;
+    /** Last React scheduler slice (time-sliced renders make no long task or commit). */
+    lastSchedulerAt: number;
   };
   const bench: Bench = {
     // Measure from page load until the first scenario resets it, so the
@@ -88,6 +90,7 @@ function installBenchmarkHooks(traceEnabled: boolean) {
     trace: [],
     pendingRequests: new Map(),
     lastWorkerAt: 0,
+    lastSchedulerAt: 0,
   };
   (window as unknown as { __bench: Bench }).__bench = bench;
   const trace = (entry: Record<string, unknown>) => {
@@ -243,6 +246,10 @@ function installBenchmarkHooks(traceEnabled: boolean) {
   }>) {
     const post = proto.postMessage;
     proto.postMessage = function (this: unknown, ...args: unknown[]) {
+      // React's scheduler posts `null` on a MessageChannel before each slice
+      if (args[0] == null && this instanceof MessagePort) {
+        bench.lastSchedulerAt = performance.now();
+      }
       trackOut(args[0]);
       return post.apply(this, args);
     };
@@ -451,6 +458,7 @@ export class BenchmarkHarness {
               bench.lastCommitAt,
               bench.lastPaintAt,
               bench.lastLongTaskEnd,
+              bench.lastSchedulerAt,
               actionDoneAt,
             );
             const settled =
