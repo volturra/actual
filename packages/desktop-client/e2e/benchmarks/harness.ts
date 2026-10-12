@@ -253,7 +253,14 @@ function installBenchmarkHooks(traceEnabled: boolean) {
       trackOut(args[0]);
       return post.apply(this, args);
     };
-    const desc = Object.getOwnPropertyDescriptor(proto, 'onmessage');
+    // Typed as function properties rather than methods: both are only ever
+    // invoked with `.call(this)`, which unbound-method can't see through
+    const desc = Object.getOwnPropertyDescriptor(proto, 'onmessage') as
+      | {
+          get?: (this: unknown) => unknown;
+          set?: (this: unknown, value: unknown) => void;
+        }
+      | undefined;
     if (desc?.set && desc.get) {
       const { get, set } = desc;
       Object.defineProperty(proto, 'onmessage', {
