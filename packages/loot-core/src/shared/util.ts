@@ -317,6 +317,30 @@ export function setNumberFormat(config: typeof numberFormatConfig) {
   numberFormatConfig = config;
 }
 
+// Creating an Intl.NumberFormat is expensive and getNumberFormat runs for
+// every formatted amount, so reuse one per locale and fraction digits.
+// Intl.NumberFormat instances are immutable. The cache key must include
+// every option passed to the Intl.NumberFormat constructor below: if an
+// option is added there (e.g. useGrouping or style), add it to the key too.
+const MAX_INTL_NUMBER_FORMAT_CACHE_SIZE = 50;
+const intlNumberFormatCache = new Map<string, Intl.NumberFormat>();
+
+function getIntlNumberFormat(locale: string, fractionDigits: number) {
+  const key = `${locale}|${fractionDigits}`;
+  let intlFormatter = intlNumberFormatCache.get(key);
+  if (!intlFormatter) {
+    intlFormatter = new Intl.NumberFormat(locale, {
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    });
+    if (intlNumberFormatCache.size >= MAX_INTL_NUMBER_FORMAT_CACHE_SIZE) {
+      intlNumberFormatCache.clear();
+    }
+    intlNumberFormatCache.set(key, intlFormatter);
+  }
+  return intlFormatter;
+}
+
 export function getNumberFormat({
   format = numberFormatConfig.format,
   hideFraction = numberFormatConfig.hideFraction,
@@ -362,21 +386,13 @@ export function getNumberFormat({
       decimalSeparator = '.';
   }
 
-  const fractionDigitsOptions: {
-    minimumFractionDigits: number;
-    maximumFractionDigits: number;
-  } =
+  const fractionDigits =
     typeof decimalPlaces === 'number'
-      ? {
-          minimumFractionDigits: decimalPlaces,
-          maximumFractionDigits: decimalPlaces,
-        }
-      : {
-          minimumFractionDigits: currentHideFraction ? 0 : 2,
-          maximumFractionDigits: currentHideFraction ? 0 : 2,
-        };
-
-  const intlFormatter = new Intl.NumberFormat(locale, fractionDigitsOptions);
+      ? decimalPlaces
+      : currentHideFraction
+        ? 0
+        : 2;
+  const intlFormatter = getIntlNumberFormat(locale, fractionDigits);
 
   // Wrapper to handle -0 edge case
   // Normalize apostrophe-dot to U+2019 for consistency across

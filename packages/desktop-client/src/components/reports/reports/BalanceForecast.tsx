@@ -47,6 +47,7 @@ import { useRuleConditionFilters } from '#hooks/useRuleConditionFilters';
 import { useSyncedPref } from '#hooks/useSyncedPref';
 import { addNotification } from '#notifications/notificationsSlice';
 import { useDispatch } from '#redux';
+import { getEarliestTransaction } from '#reports';
 
 import {
   buildBalanceForecastChartData,
@@ -213,9 +214,7 @@ function BalanceForecastInner({ widget }: BalanceForecastInnerProps) {
     async function loadMonths() {
       const currentMonthLocal = monthUtils.currentMonth();
 
-      const earliestTransactionResponse = await send(
-        'get-earliest-transaction',
-      );
+      const earliestTransactionResponse = await getEarliestTransaction();
 
       const earliestMonth = earliestTransactionResponse
         ? monthUtils.monthFromDate(d.parseISO(earliestTransactionResponse.date))

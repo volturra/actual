@@ -1,5 +1,5 @@
 // @ts-strict-ignore
-import React from 'react';
+import React, { memo } from 'react';
 import type { ComponentProps } from 'react';
 
 import { theme } from '@actual-app/components/theme';
@@ -38,7 +38,7 @@ type ExpenseCategoryProps = {
   onReorder: OnDropCallback;
 };
 
-export function ExpenseCategory({
+export const ExpenseCategory = memo(function ExpenseCategory({
   cat,
   categoryGroup,
   editingCell,
@@ -121,4 +121,4 @@ export function ExpenseCategory({
       </View>
     </Row>
   );
-}
+});

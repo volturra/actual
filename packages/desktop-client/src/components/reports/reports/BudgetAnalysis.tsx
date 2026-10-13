@@ -13,7 +13,6 @@ import { Popover } from '@actual-app/components/popover';
 import { theme } from '@actual-app/components/theme';
 import { Tooltip } from '@actual-app/components/tooltip';
 import { View } from '@actual-app/components/view';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type {
   BudgetAnalysisWidget,
@@ -47,6 +46,7 @@ import { useRuleConditionFilters } from '#hooks/useRuleConditionFilters';
 import { useSyncedPref } from '#hooks/useSyncedPref';
 import { addNotification } from '#notifications/notificationsSlice';
 import { useDispatch } from '#redux';
+import { getEarliestTransaction, getLatestTransaction } from '#reports';
 import { useUpdateDashboardWidgetMutation } from '#reports/mutations';
 
 type OptionsButtonProps = {
@@ -201,8 +201,8 @@ function BudgetAnalysisInternal({ widget }: BudgetAnalysisInternalProps) {
 
   useEffect(() => {
     async function run() {
-      const earliestTrans = await send('get-earliest-transaction');
-      const latestTrans = await send('get-latest-transaction');
+      const earliestTrans = await getEarliestTransaction();
+      const latestTrans = await getLatestTransaction();
       const latestTransDate = latestTrans
         ? fromDateRepr(latestTrans.date)
         : monthUtils.currentDay();

@@ -14,7 +14,6 @@ import { Text } from '@actual-app/components/text';
 import { theme } from '@actual-app/components/theme';
 import { Tooltip } from '@actual-app/components/tooltip';
 import { View } from '@actual-app/components/view';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type {
   CategoryEntity,
@@ -47,6 +46,7 @@ import { useNavigate } from '#hooks/useNavigate';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
 import { addNotification } from '#notifications/notificationsSlice';
 import { useDispatch } from '#redux';
+import { getEarliestTransaction } from '#reports';
 import { useUpdateDashboardWidgetMutation } from '#reports/mutations';
 
 export const defaultTimeFrame = {
@@ -169,7 +169,7 @@ function CrossoverInner({ widget }: CrossoverInnerProps) {
 
   useEffect(() => {
     async function run() {
-      const earliestTransactionData = await send('get-earliest-transaction');
+      const earliestTransactionData = await getEarliestTransaction();
 
       const currentMonth = monthUtils.currentMonth();
       const previousMonth = monthUtils.subMonths(currentMonth, 1);

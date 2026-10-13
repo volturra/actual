@@ -4,27 +4,15 @@ import type {
   IntervalEntity,
 } from '@actual-app/core/types/models';
 
-import type {
-  QueryDataEntity,
-  UncategorizedEntity,
-} from '#components/reports/ReportOptions';
+import type { UncategorizedEntity } from '#components/reports/ReportOptions';
 
-import { filterHiddenItems } from './filterHiddenItems';
+import type { ItemAmountsByDate } from './filterHiddenItems';
 
 type recalculateProps = {
   item: UncategorizedEntity;
   intervals: Array<string>;
-  assets: QueryDataEntity[];
-  debts: QueryDataEntity[];
-  groupByLabel:
-    | 'category'
-    | 'categoryGroup'
-    | 'payee'
-    | 'account'
-    | 'tagBucketId';
-  showOffBudget?: boolean;
-  showHiddenCategories?: boolean;
-  showUncategorized?: boolean;
+  // The item's sums from `sumItemAmountsByDate`.
+  amountsByDate: ItemAmountsByDate;
   startDate: string;
   endDate: string;
 };
@@ -32,12 +20,7 @@ type recalculateProps = {
 export function recalculate({
   item,
   intervals,
-  assets,
-  debts,
-  groupByLabel,
-  showOffBudget,
-  showHiddenCategories,
-  showUncategorized,
+  amountsByDate: { assets: assetsByDate, debts: debtsByDate },
   startDate,
   endDate,
 }: recalculateProps): GroupedEntity {
@@ -47,40 +30,10 @@ export function recalculate({
     (arr: IntervalEntity[], intervalItem, index) => {
       const last = arr.length === 0 ? null : arr[arr.length - 1];
 
-      const groupsByCategory =
-        groupByLabel === 'category' || groupByLabel === 'categoryGroup';
-      const intervalAssets = filterHiddenItems(
-        item,
-        assets,
-        showOffBudget,
-        showHiddenCategories,
-        showUncategorized,
-        groupsByCategory,
-      )
-        .filter(
-          asset =>
-            asset.date === intervalItem &&
-            (asset[groupByLabel] === (item.id ?? null) ||
-              (item.uncategorized_id && groupsByCategory)),
-        )
-        .reduce((a, v) => a + v.amount, 0);
+      const intervalAssets = assetsByDate.get(intervalItem) ?? 0;
       totalAssets += intervalAssets;
 
-      const intervalDebts = filterHiddenItems(
-        item,
-        debts,
-        showOffBudget,
-        showHiddenCategories,
-        showUncategorized,
-        groupsByCategory,
-      )
-        .filter(
-          debt =>
-            debt.date === intervalItem &&
-            (debt[groupByLabel] === (item.id ?? null) ||
-              (item.uncategorized_id && groupsByCategory)),
-        )
-        .reduce((a, v) => a + v.amount, 0);
+      const intervalDebts = debtsByDate.get(intervalItem) ?? 0;
       totalDebts += intervalDebts;
 
       const intervalTotals = intervalAssets + intervalDebts;

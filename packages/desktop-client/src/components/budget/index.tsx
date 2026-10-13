@@ -53,8 +53,8 @@ export function Budget() {
   const [maxMonthsPref] = useGlobalPref('maxMonths');
   const maxMonths = maxMonthsPref || 1;
   const [initialized, setInitialized] = useState(false);
-  const { data: { grouped: categoryGroups } = { grouped: [] } } =
-    useCategories();
+  const { data: categories } = useCategories();
+  const categoryGroups = categories?.grouped ?? [];
 
   const init = useEffectEvent(() => {
     async function run() {
@@ -85,9 +85,10 @@ export function Budget() {
   useEffect(() => loadBoundBudgets(), []);
 
   const onMonthSelect = async (month, numDisplayed) => {
+    // Set right away, not after the prewarm: selecting months quickly
+    // (e.g. clicking "next month" twice) runs several prewarms at once,
+    // and an earlier one finishing last must not jump back to its month.
     setStartMonthPref(month);
-
-    const warmingMonth = month;
 
     // We could be smarter about this, but this is a good start. We
     // optimize for the case where users press the left/right button
@@ -110,10 +111,6 @@ export function Budget() {
         monthUtils.addMonths(month, numDisplayed),
       );
     }
-
-    if (warmingMonth === month) {
-      setStartMonthPref(month);
-    }
   };
 
   const onToggleCollapse = () => {
@@ -121,7 +118,7 @@ export function Budget() {
   };
 
   const onApplyBudgetTemplatesInGroup = async categories => {
-    applyBudgetAction.mutate({
+    applyBudgetAction({
       month: startMonth,
       type: 'apply-multiple-templates',
       args: {
@@ -150,29 +147,33 @@ export function Budget() {
     });
   };
 
-  const saveCategory = useSaveCategoryMutation();
+  // Only keep the stable `mutate` functions. The mutation result objects
+  // change identity on every status change (idle -> pending -> success),
+  // which would recreate the handlers below and re-render the whole budget
+  // table each time a budget amount is saved.
+  const { mutate: saveCategory } = useSaveCategoryMutation();
   const onSaveCategory = category => {
-    saveCategory.mutate({ category });
+    saveCategory({ category });
   };
-  const deleteCategory = useDeleteCategoryMutation();
+  const { mutate: deleteCategory } = useDeleteCategoryMutation();
   const onDeleteCategory = id => {
-    deleteCategory.mutate({ id });
+    deleteCategory({ id });
   };
-  const reorderCategory = useReorderCategoryMutation();
-  const saveCategoryGroup = useSaveCategoryGroupMutation();
+  const { mutate: reorderCategory } = useReorderCategoryMutation();
+  const { mutate: saveCategoryGroup } = useSaveCategoryGroupMutation();
   const onSaveCategoryGroup = group => {
-    saveCategoryGroup.mutate({ group });
+    saveCategoryGroup({ group });
   };
-  const deleteCategoryGroup = useDeleteCategoryGroupMutation();
+  const { mutate: deleteCategoryGroup } = useDeleteCategoryGroupMutation();
   const onDeleteCategoryGroup = id => {
-    deleteCategoryGroup.mutate({ id });
+    deleteCategoryGroup({ id });
   };
-  const reorderCategoryGroup = useReorderCategoryGroupMutation();
-  const sortCategories = useSortCategoriesMutation();
-  const applyBudgetAction = useBudgetActions();
+  const { mutate: reorderCategoryGroup } = useReorderCategoryGroupMutation();
+  const { mutate: sortCategories } = useSortCategoriesMutation();
+  const { mutate: applyBudgetAction } = useBudgetActions();
 
   const onBudgetAction = (month, type, args) => {
-    applyBudgetAction.mutate({ month, type, args });
+    applyBudgetAction({ month, type, args });
   };
 
   if (!initialized || !categoryGroups) {
@@ -200,11 +201,11 @@ export function Budget() {
           onSaveGroup={onSaveCategoryGroup}
           onBudgetAction={onBudgetAction}
           onShowActivity={onShowActivity}
-          onReorderCategory={reorderCategory.mutate}
-          onReorderGroup={reorderCategoryGroup.mutate}
+          onReorderCategory={reorderCategory}
+          onReorderGroup={reorderCategoryGroup}
           onApplyBudgetTemplatesInGroup={onApplyBudgetTemplatesInGroup}
           onSortCategories={(groupId, direction) =>
-            sortCategories.mutate({ groupId, direction })
+            sortCategories({ groupId, direction })
           }
         />
       </TrackingBudgetProvider>
@@ -229,11 +230,11 @@ export function Budget() {
           onSaveGroup={onSaveCategoryGroup}
           onBudgetAction={onBudgetAction}
           onShowActivity={onShowActivity}
-          onReorderCategory={reorderCategory.mutate}
-          onReorderGroup={reorderCategoryGroup.mutate}
+          onReorderCategory={reorderCategory}
+          onReorderGroup={reorderCategoryGroup}
           onApplyBudgetTemplatesInGroup={onApplyBudgetTemplatesInGroup}
           onSortCategories={(groupId, direction) =>
-            sortCategories.mutate({ groupId, direction })
+            sortCategories({ groupId, direction })
           }
         />
       </EnvelopeBudgetProvider>

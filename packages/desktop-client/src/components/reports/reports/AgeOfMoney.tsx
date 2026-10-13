@@ -17,7 +17,6 @@ import { Popover } from '@actual-app/components/popover';
 import { styles } from '@actual-app/components/styles';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type {
   AgeOfMoneyGranularity,
@@ -44,6 +43,7 @@ import { useRuleConditionFilters } from '#hooks/useRuleConditionFilters';
 import { useSyncedPref } from '#hooks/useSyncedPref';
 import { addNotification } from '#notifications/notificationsSlice';
 import { useDispatch } from '#redux';
+import { getEarliestTransaction, getLatestTransaction } from '#reports';
 import { useUpdateDashboardWidgetMutation } from '#reports/mutations';
 
 import { getAgeColor } from './AgeOfMoneyCard';
@@ -116,12 +116,12 @@ function AgeOfMoneyInner({ widget }: AgeOfMoneyInnerProps) {
 
   useEffect(() => {
     async function run() {
-      const earliestTrans = await send('get-earliest-transaction');
+      const earliestTrans = await getEarliestTransaction();
       setEarliestTransaction(
         earliestTrans ? earliestTrans.date : monthUtils.currentDay(),
       );
 
-      const latestTrans = await send('get-latest-transaction');
+      const latestTrans = await getLatestTransaction();
       setLatestTransaction(
         latestTrans ? latestTrans.date : monthUtils.currentDay(),
       );

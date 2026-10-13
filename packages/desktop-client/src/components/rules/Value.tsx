@@ -24,7 +24,6 @@ type ValueProps<T> = {
   valueIsRaw?: boolean;
   inline?: boolean;
   data?: unknown;
-  describe?: (item: T) => string;
   style?: CSSProperties;
 };
 
@@ -34,8 +33,6 @@ export function Value<T>({
   valueIsRaw,
   inline = false,
   data: dataProp,
-  // @ts-expect-error fix this later
-  describe = x => x.name,
   style,
 }: ValueProps<T>) {
   const { t } = useTranslation();
@@ -128,7 +125,7 @@ export function Value<T>({
           if (data && Array.isArray(data)) {
             const item = data.find(item => item.id === value);
             if (item) {
-              return describe(item);
+              return item.name;
             } else {
               return t('(deleted)');
             }

@@ -1,4 +1,3 @@
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { q } from '@actual-app/core/shared/query';
 import type {
@@ -9,6 +8,7 @@ import * as d from 'date-fns';
 
 import { runAll } from '#components/reports/util';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
+import { makeFiltersFromConditions } from '#reports';
 
 export type AgeOfMoneyData = {
   graphData: Array<{
@@ -94,6 +94,8 @@ export function calculateAgeOfMoney(
   const ages: Array<{ date: string; age: number }> = [];
   let currentBucketIdx = 0;
   let insufficientData = false;
+  // Day numbers per distinct date string, so each date is parsed once.
+  const dayNumbers = new Map<string, number | null>();
 
   for (const expense of sortedExpenses) {
     // Expense amounts are negative, so we work with absolute value
@@ -125,14 +127,72 @@ export function calculateAgeOfMoney(
 
     // Calculate age if we had a bucket to draw from
     if (lastBucketDate) {
-      const expenseDate = d.parseISO(expense.date);
-      const bucketDate = d.parseISO(lastBucketDate);
-      const ageInDays = d.differenceInDays(expenseDate, bucketDate);
+      const ageInDays = differenceInDays(
+        expense.date,
+        lastBucketDate,
+        dayNumbers,
+      );
       ages.push({ date: expense.date, age: Math.max(0, ageInDays) });
     }
   }
 
   return { ages, insufficientData };
+}
+
+const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Convert a `YYYY-MM-DD` date to a whole number of days since the epoch,
+ * caching the result per date string. The difference of two day numbers
+ * equals date-fns `differenceInDays` of the same dates parsed with
+ * `parseISO`, but costs far less per row. Dates that match the pattern but
+ * do not exist (e.g. 2024-02-30) give NaN, as date-fns does. Other formats
+ * give null so the caller can fall back to date-fns.
+ */
+function toDayNumber(
+  date: string,
+  cache: Map<string, number | null>,
+): number | null {
+  const cached = cache.get(date);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  let dayNumber: number | null = null;
+  const match = DATE_PATTERN.exec(date);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]) - 1;
+    const day = Number(match[3]);
+    const utc = new Date(0);
+    utc.setUTCFullYear(year, month, day);
+    const isValid =
+      utc.getUTCFullYear() === year &&
+      utc.getUTCMonth() === month &&
+      utc.getUTCDate() === day;
+    dayNumber = isValid ? Math.round(utc.getTime() / MS_PER_DAY) : NaN;
+  }
+
+  cache.set(date, dayNumber);
+  return dayNumber;
+}
+
+/**
+ * Whole days from `fromDate` to `toDate`, matching
+ * `d.differenceInDays(d.parseISO(toDate), d.parseISO(fromDate))`.
+ */
+function differenceInDays(
+  toDate: string,
+  fromDate: string,
+  cache: Map<string, number | null>,
+): number {
+  const to = toDayNumber(toDate, cache);
+  const from = toDayNumber(fromDate, cache);
+  if (to === null || from === null) {
+    return d.differenceInDays(d.parseISO(toDate), d.parseISO(fromDate));
+  }
+  return to - from;
 }
 
 /**
@@ -156,13 +216,12 @@ export function getPeriodKey(
   date: string,
   granularity: AgeOfMoneyGranularity,
 ): string {
-  const parsed = d.parseISO(date);
   switch (granularity) {
     case 'daily':
       return date; // YYYY-MM-DD
     case 'weekly': {
       // Use start of week (Monday) as key
-      const weekStart = d.startOfWeek(parsed, { weekStartsOn: 1 });
+      const weekStart = d.startOfWeek(d.parseISO(date), { weekStartsOn: 1 });
       return d.format(weekStart, 'yyyy-MM-dd');
     }
     case 'monthly':
@@ -255,23 +314,33 @@ export function calculateGraphData(
   const periods = generatePeriods(startDate, endDate, granularity);
   const result: Array<{ date: string; ageOfMoney: number }> = [];
 
-  // Group ages by period
+  // Group ages by period. Consecutive ages usually share a date, so the
+  // period key is only recomputed when the date changes.
   const agesByPeriod: Record<string, number[]> = {};
+  let lastDate: string | null = null;
+  let periodAges: number[] = [];
   for (const { date, age } of ages) {
-    const periodKey = getPeriodKey(date, granularity);
-    if (!agesByPeriod[periodKey]) {
-      agesByPeriod[periodKey] = [];
+    if (date !== lastDate) {
+      lastDate = date;
+      const periodKey = getPeriodKey(date, granularity);
+      if (!agesByPeriod[periodKey]) {
+        agesByPeriod[periodKey] = [];
+      }
+      periodAges = agesByPeriod[periodKey];
     }
-    agesByPeriod[periodKey].push(age);
+    periodAges.push(age);
   }
 
   // Calculate cumulative rolling average (last 10 expenses up to each period)
-  let allAgesUpToPeriod: number[] = [];
+  const allAgesUpToPeriod: number[] = [];
 
   for (const period of periods) {
     // Add ages from this period
-    if (agesByPeriod[period]) {
-      allAgesUpToPeriod = allAgesUpToPeriod.concat(agesByPeriod[period]);
+    const agesInPeriod = agesByPeriod[period];
+    if (agesInPeriod) {
+      for (const age of agesInPeriod) {
+        allAgesUpToPeriod.push(age);
+      }
     }
 
     // Calculate average of last 10 ages
@@ -305,6 +374,39 @@ export function calculateTrend(
   if (diff > threshold) return 'up';
   if (diff < -threshold) return 'down';
   return 'stable';
+}
+
+/**
+ * Stand in for the expenses dated before `displayStart` with one expense of
+ * their total, dated the day before `displayStart`.
+ *
+ * `calculateAgeOfMoney` gives the same ages from `displayStart` onward and
+ * the same `insufficientData` either way:
+ * - Expenses consume the income buckets oldest first whatever their own
+ *   dates, so after the earlier expenses the buckets only depend on how much
+ *   they spent in total.
+ * - All earlier expenses sort before the later ones, and so does the stand-in.
+ * - `insufficientData` is set once the expenses so far exceed all income,
+ *   which only depends on the running total.
+ * - Ages dated before `displayStart` (the stand-in's included) are dropped
+ *   before anything is shown.
+ */
+export function withEarlierExpensesTotal(
+  expenses: Transaction[],
+  earlierExpensesTotal: number,
+  displayStart: string,
+): Transaction[] {
+  if (earlierExpensesTotal >= 0) {
+    return expenses;
+  }
+  return [
+    {
+      id: '',
+      date: monthUtils.subDays(displayStart, 1),
+      amount: earlierExpensesTotal,
+    },
+    ...expenses,
+  ];
 }
 
 export type AgeOfMoneyParams = {
@@ -488,7 +590,7 @@ export function createAgeOfMoneySpreadsheet({
     const fixedEnd = endDate > today ? today : endDate;
 
     const activeConditions = conditions.filter(cond => !cond.customName);
-    const { filters } = await send('make-filters-from-conditions', {
+    const { filters } = await makeFiltersFromConditions({
       conditions: activeConditions,
     });
     const conditionsOpKey = conditionsOp === 'or' ? '$or' : '$and';
@@ -497,12 +599,17 @@ export function createAgeOfMoneySpreadsheet({
       conditionsOp,
     );
 
-    // Query for ALL income transactions up to the end date
-    // FIFO requires complete income history to calculate ages correctly
-    // Includes: regular income + transfers from off-budget accounts
-    //   + (when account-filtered) transfers from filtered-out on-budget accounts
+    // FIFO needs the complete income history up to the end date, as
+    // buckets. Expenses are only listed one by one from the start of the
+    // display range: ages before it are never shown, and the expenses
+    // before it only use up the oldest buckets, which depends on nothing but
+    // their total (see `withEarlierExpensesTotal`).
+    // Includes: regular income and expenses + transfers from/to off-budget
+    //   accounts + (when account-filtered) transfers from/to filtered-out
+    //   on-budget accounts
     // Excludes: on-budget transfers within the filtered account set
-    function makeIncomeQuery() {
+    const displayStart = monthUtils.firstDayOfMonth(start);
+    function makeBaseQuery() {
       return q('transactions')
         .filter({
           [conditionsOpKey]: filters,
@@ -511,41 +618,42 @@ export function createAgeOfMoneySpreadsheet({
           date: { $lte: fixedEnd },
           'account.offbudget': false,
           ...transferFilter,
-          amount: { $gt: 0 },
-        })
-        .select(['id', 'date', 'amount']);
+        });
     }
 
-    // Query for ALL expense transactions up to the end date
-    // FIFO requires complete expense history to properly consume income buckets
-    // Includes: regular expenses + transfers to off-budget accounts
-    //   + (when account-filtered) transfers to filtered-out on-budget accounts
-    // Excludes: on-budget transfers within the filtered account set
-    function makeExpenseQuery() {
-      return q('transactions')
-        .filter({
-          [conditionsOpKey]: filters,
-        })
-        .filter({
-          date: { $lte: fixedEnd },
-          'account.offbudget': false,
-          ...transferFilter,
-          amount: { $lt: 0 },
-        })
-        .select(['id', 'date', 'amount']);
-    }
+    // All income, and the expenses from the display start onward
+    const rowsQuery = makeBaseQuery()
+      .filter({
+        $or: [
+          { amount: { $gt: 0 } },
+          { $and: [{ amount: { $lt: 0 } }, { date: { $gte: displayStart } }] },
+        ],
+      })
+      .select(['id', 'date', 'amount']);
+    // The total of the expenses before the display start
+    const earlierExpensesQuery = makeBaseQuery()
+      .filter({ amount: { $lt: 0 }, date: { $lt: displayStart } })
+      .select([{ amount: { $sum: '$amount' } }]);
 
-    return runAll([makeIncomeQuery(), makeExpenseQuery()], data => {
-      const [incomeData, expenseData] = data as [Transaction[], Transaction[]];
+    return runAll([rowsQuery, earlierExpensesQuery], data => {
+      const [rows, earlierExpenseRows] = data as [
+        Transaction[],
+        Array<{ amount: number | null }>,
+      ];
+      const incomeData = rows.filter(t => t.amount > 0);
+      const expenseData = withEarlierExpensesTotal(
+        rows.filter(t => t.amount < 0),
+        earlierExpenseRows[0]?.amount ?? 0,
+        displayStart,
+      );
 
-      // Calculate ages using FIFO method on ALL historical data
+      // Calculate ages using FIFO method on the whole history
       const { ages, insufficientData } = calculateAgeOfMoney(
         incomeData,
         expenseData,
       );
 
       // Filter ages to only those within the display range
-      const displayStart = monthUtils.firstDayOfMonth(start);
       const filteredAges = ages.filter(({ date }) => date >= displayStart);
 
       // Generate graph data from filtered ages with specified granularity

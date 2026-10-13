@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { listen, send } from '@actual-app/core/platform/client/connection';
@@ -28,9 +28,25 @@ type CellObservers = { [name: string]: CellObserverCallback[] };
 
 const GLOBAL_SHEET_NAME = '__global';
 
+// Most recently seen cell values, used to render a cell's value
+// synchronously when it is (re)bound instead of waiting for a `get-cell`
+// round-trip. The budget page prewarms several months at once (about 700
+// cells per month on a large budget, see `prewarmAllMonths`), so this has
+// to hold several thousand entries or the prewarmed values are evicted
+// before they are used. An entry is a short name plus a primitive value
+// (a few hundred bytes at most), so a full cache stays in the low MBs.
+const VALUE_CACHE_SIZE = 10_000;
+
+function resolveBindingName(sheetName: string, binding: Binding): string {
+  const name = typeof binding === 'string' ? binding : binding.name;
+  return `${sheetName}!${name}`;
+}
+
 function makeSpreadsheet() {
   const cellObservers: CellObservers = {};
-  const LRUValueCache = new LRUCache<string, CellCacheValue>({ max: 1200 });
+  const LRUValueCache = new LRUCache<string, CellCacheValue>({
+    max: VALUE_CACHE_SIZE,
+  });
   const cellCache: CellCache = {};
   let observersDisabled = false;
 
@@ -58,6 +74,31 @@ function makeSpreadsheet() {
       observersDisabled = false;
     }
 
+    /**
+     * Synchronously returns the last known value of a cell, if it is still
+     * in the value cache. It can briefly be out of date (e.g. right after
+     * switching budgets); `bind` always fetches or receives the current
+     * value afterwards.
+     */
+    getCachedValue(
+      sheetName: string = GLOBAL_SHEET_NAME,
+      binding: Binding,
+    ): CellCacheValue | undefined {
+      return LRUValueCache.get(resolveBindingName(sheetName, binding));
+    }
+
+    /**
+     * Forgets every cached cell value and pending request, e.g. when the
+     * open budget changes, so the next budget never renders the previous
+     * budget's values. Replies to requests made before this are ignored.
+     */
+    clear(): void {
+      LRUValueCache.clear();
+      for (const name of Object.keys(cellCache)) {
+        delete cellCache[name];
+      }
+    }
+
     prewarmCache(name: string, value: CellCacheValue): void {
       LRUValueCache.set(name, value);
     }
@@ -71,6 +112,10 @@ function makeSpreadsheet() {
             if (observers) {
               observers.forEach(func => func(node));
               cellCache[node.name] = Promise.resolve(node);
+              LRUValueCache.set(node.name, node);
+            } else if (LRUValueCache.has(node.name)) {
+              // Keep prewarmed values of cells nobody observes right now
+              // up to date so they are not rendered stale later.
               LRUValueCache.set(node.name, node);
             }
           });
@@ -89,7 +134,7 @@ function makeSpreadsheet() {
         void this.createQuery(sheetName, binding.name, binding.query);
       }
 
-      const resolvedName = `${sheetName}!${binding.name}`;
+      const resolvedName = resolveBindingName(sheetName, binding);
       const cleanup = this.observeCell(resolvedName, callback);
 
       // Always synchronously call with the existing value if it has one.
@@ -145,11 +190,25 @@ function makeSpreadsheet() {
 }
 
 type SpreadsheetProviderProps = {
+  // The id of the open budget, if any. Cell values are cached per budget.
+  budgetId?: string | undefined;
   children: ReactNode;
 };
 
-export function SpreadsheetProvider({ children }: SpreadsheetProviderProps) {
+export function SpreadsheetProvider({
+  budgetId,
+  children,
+}: SpreadsheetProviderProps) {
   const spreadsheet = useMemo(() => makeSpreadsheet(), []);
+
+  const [cachedBudgetId, setCachedBudgetId] = useState(budgetId);
+  if (cachedBudgetId !== budgetId) {
+    // Clear during render, before any cell of the new budget binds (child
+    // effects run before this component's effects), so neither the cached
+    // values nor late replies of the previous budget reach it.
+    spreadsheet.clear();
+    setCachedBudgetId(budgetId);
+  }
 
   useEffect(() => {
     return spreadsheet.listen();

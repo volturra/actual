@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { QueryDataEntity } from '#components/reports/ReportOptions';
 
+import {
+  filterReportTransactions,
+  groupRowsByLabel,
+  sumItemAmountsByDate,
+} from './filterHiddenItems';
 import { recalculate } from './recalculate';
 import { groupQueryDataByTags, UNTAGGED_BUCKET_ID } from './tagGroups';
 
@@ -72,13 +77,26 @@ describe('groupQueryDataByTags', () => {
         bucketTagNames: [],
       }),
     ]);
+    const visibleAssets = filterReportTransactions(result.assets);
+    const visibleDebts = filterReportTransactions(result.debts);
     const intervalTotals = result.groups.map(item =>
       recalculate({
         item,
         intervals: ['2026-01-01'],
-        assets: result.assets,
-        debts: result.debts,
-        groupByLabel: 'tagBucketId',
+        amountsByDate: {
+          assets: sumItemAmountsByDate(
+            item,
+            visibleAssets,
+            'tagBucketId',
+            groupRowsByLabel(visibleAssets, 'tagBucketId'),
+          ),
+          debts: sumItemAmountsByDate(
+            item,
+            visibleDebts,
+            'tagBucketId',
+            groupRowsByLabel(visibleDebts, 'tagBucketId'),
+          ),
+        },
         startDate: '2026-01-01',
         endDate: '2026-01-01',
       }),

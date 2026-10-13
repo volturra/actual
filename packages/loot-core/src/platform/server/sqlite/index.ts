@@ -6,7 +6,7 @@ import { logger } from '#platform/server/log';
 
 import { normalise } from './normalise';
 import type { SqlParam } from './types';
-import { unicodeLike } from './unicodeLike';
+import { normalisedLike, unicodeLike } from './unicodeLike';
 
 export type { SqlParam } from './types';
 
@@ -107,38 +107,45 @@ export function runQuery<T>(
     verifyParamTypes(sql, params);
   }
 
-  const stmt = typeof sql === 'string' ? db.prepare(sql) : sql;
+  const isPrepared = typeof sql !== 'string';
+  const stmt = isPrepared ? sql : db.prepare(sql);
 
   try {
     if (fetchAll) {
-      try {
-        stmt.bind(params);
-        const columns = stmt.getColumnNames();
-        const rows = [];
+      stmt.bind(params);
+      const columns = stmt.getColumnNames();
+      const rows = [];
 
-        while (stmt.step()) {
-          const values = stmt.get();
-          const row = {};
-          for (let i = 0; i < columns.length; i++) {
-            row[columns[i]] = values[i];
-          }
-          rows.push(row);
+      while (stmt.step()) {
+        const values = stmt.get();
+        const row = {};
+        for (let i = 0; i < columns.length; i++) {
+          row[columns[i]] = values[i];
         }
-        return rows;
-      } catch (e) {
-        logger.log(sql);
-        throw e;
+        rows.push(row);
       }
+      return rows;
     }
 
     stmt.run(params);
     return { changes: db.getRowsModified() };
+  } catch (e) {
+    if (fetchAll) {
+      logger.log(sql);
+    }
+    throw e;
   } finally {
-    // sql.js keeps statements alive in the WASM heap until they are freed.
-    if (typeof sql === 'string') {
-      stmt.free();
-    } else {
+    // Always finish the statement, also when a step failed. A statement
+    // that fails part way (for example with SQLITE_BUSY, or when the
+    // IndexedDB file layer throws) is left running by sql.js. A running
+    // write keeps every later COMMIT on this connection failing with
+    // "cannot commit transaction - SQL statements in progress", and a
+    // running read keeps holding its lock. sql.js also keeps statements
+    // alive in the WASM heap until they are freed.
+    if (isPrepared) {
       stmt.reset();
+    } else {
+      stmt.free();
     }
   }
 }
@@ -267,6 +274,7 @@ export async function openDatabase(pathOrBuffer?: string | Uint8Array) {
   db.create_function('UNICODE_LIKE', unicodeLike);
   db.create_function('REGEXP', regexp);
   db.create_function('NORMALISE', normalise);
+  db.create_function('NORMALISED_LIKE', normalisedLike);
   return db;
 }
 

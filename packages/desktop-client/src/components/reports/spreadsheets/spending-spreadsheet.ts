@@ -1,6 +1,8 @@
 import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { q } from '@actual-app/core/shared/query';
+import { makeSpendingTotalsQuery } from '@actual-app/core/shared/spending-totals';
+import type { SpendingTotalsRow } from '@actual-app/core/shared/spending-totals';
 import type {
   CategoryEntity,
   CategoryGroupEntity,
@@ -16,12 +18,16 @@ import { resolveSpendingAverageRange } from '#components/reports/spendingAverage
 import { fromDateRepr } from '#components/reports/util';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
 import { aqlQuery } from '#queries/aqlQuery';
+import {
+  createInFlightSharing,
+  getEarliestTransaction,
+  makeFiltersFromConditions,
+} from '#reports';
 
 import {
   filterCategoriesByConditions,
   isSupportedCategoryCondition,
 } from './budgetDataQuery';
-import { makeQuery } from './makeQuery';
 
 type createSpendingSpreadsheetProps = {
   conditions?: RuleConditionEntity[];
@@ -80,7 +86,6 @@ export function createSpendingSpreadsheet({
   const endDate = monthUtils.getMonthEnd(compareMonth + '-01');
   const startDateTo = compareToMonth + '-01';
   const endDateTo = monthUtils.getMonthEnd(compareToMonth + '-01');
-  const interval = 'Daily';
   const compareInterval = monthUtils.dayRangeInclusive(
     compareMonth + '-01',
     endDate,
@@ -91,9 +96,7 @@ export function createSpendingSpreadsheet({
     setData: (data: SpendingEntity) => void,
   ) => {
     const earliestTrans =
-      averageRange?.mode === 'all-time'
-        ? await send('get-earliest-transaction')
-        : null;
+      averageRange?.mode === 'all-time' ? await getEarliestTransaction() : null;
     const earliestMonth = earliestTrans
       ? monthUtils.monthFromDate(fromDateRepr(earliestTrans.date))
       : null;
@@ -105,62 +108,46 @@ export function createSpendingSpreadsheet({
     const averageMonths = new Set(resolvedAverageRange.months);
     const startDate = (resolvedAverageRange.startMonth ?? compareMonth) + '-01';
 
-    const { filters } = await send('make-filters-from-conditions', {
+    const { filters } = await makeFiltersFromConditions({
       conditions: conditions.filter(cond => !cond.customName),
     });
 
     const conditionsOpKey = conditionsOp === 'or' ? '$or' : '$and';
 
-    const [assets, debts] = await Promise.all([
-      aqlQuery(
-        makeQuery(
-          'assets',
-          startDate,
-          endDate,
-          interval,
-          conditionsOpKey,
-          filters,
-        ),
-      ).then(({ data }) => data),
-      aqlQuery(
-        makeQuery(
-          'debts',
-          startDate,
-          endDate,
-          interval,
-          conditionsOpKey,
-          filters,
-        ),
-      ).then(({ data }) => data),
-    ]);
+    // The rows of the month compared to are only needed when that month is
+    // outside the main range. Inside it, the main range already holds them.
+    const isCompareToOutsideRange =
+      endDateTo < startDate || startDateTo > endDate;
+    const filterKey = JSON.stringify([conditionsOpKey, filters]);
+    const fetchTotals = (
+      name: 'assets' | 'debts',
+      fromDate: string,
+      toDate: string,
+    ) =>
+      shareSpendingTotals(
+        JSON.stringify([name, fromDate, toDate, filterKey]),
+        () =>
+          aqlQuery(
+            makeSpendingTotalsQuery(
+              name,
+              fromDate,
+              toDate,
+              conditionsOpKey,
+              filters,
+            ),
+          ).then(({ data }) => data),
+      );
 
-    const [assetsTo, debtsTo] = await Promise.all([
-      aqlQuery(
-        makeQuery(
-          'assets',
-          startDateTo,
-          endDateTo,
-          interval,
-          conditionsOpKey,
-          filters,
-        ),
-      ).then(({ data }) => data),
-      aqlQuery(
-        makeQuery(
-          'debts',
-          startDateTo,
-          endDateTo,
-          interval,
-          conditionsOpKey,
-          filters,
-        ),
-      ).then(({ data }) => data),
+    const [assets, debts, overlapAssets, overlapDebts] = await Promise.all([
+      fetchTotals('assets', startDate, endDate),
+      fetchTotals('debts', startDate, endDate),
+      isCompareToOutsideRange
+        ? fetchTotals('assets', startDateTo, endDateTo)
+        : Promise.resolve([]),
+      isCompareToOutsideRange
+        ? fetchTotals('debts', startDateTo, endDateTo)
+        : Promise.resolve([]),
     ]);
-
-    const overlapAssets =
-      endDateTo < startDate || startDateTo > endDate ? assetsTo : [];
-    const overlapDebts =
-      endDateTo < startDate || startDateTo > endDate ? debtsTo : [];
 
     const combineAssets = [...assets, ...overlapAssets];
     const combineDebts = [...debts, ...overlapDebts];
@@ -228,7 +215,7 @@ export function createSpendingSpreadsheet({
       budgets.reduce((a, v) => a + v.amount, 0) / compareInterval.length;
 
     const intervals = monthUtils.dayRangeInclusive(startDate, endDate);
-    if (endDateTo < startDate || startDateTo > endDate) {
+    if (isCompareToOutsideRange) {
       intervals.push(...monthUtils.dayRangeInclusive(startDateTo, endDateTo));
     }
 
@@ -244,7 +231,7 @@ export function createSpendingSpreadsheet({
       return { month, perMonthAssets: 0, perMonthDebts: 0 };
     });
 
-    if (endDateTo < startDate || startDateTo > endDate) {
+    if (isCompareToOutsideRange) {
       months.unshift({
         month: compareToMonth,
         perMonthAssets: 0,
@@ -352,3 +339,7 @@ export function createSpendingSpreadsheet({
     });
   };
 }
+
+// The This Month, Budget Overview and 3-Month Average cards of the dashboard
+// mount together and ask for the same totals.
+const shareSpendingTotals = createInFlightSharing<SpendingTotalsRow[]>();

@@ -9,7 +9,6 @@ import { styles } from '@actual-app/components/styles';
 import { Text } from '@actual-app/components/text';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type {
   balanceTypeOpType,
@@ -68,6 +67,7 @@ import { useReport as useCustomReport } from '#hooks/useReport';
 import { useRuleConditionFilters } from '#hooks/useRuleConditionFilters';
 import { useSyncedPref } from '#hooks/useSyncedPref';
 import { useTags } from '#hooks/useTags';
+import { getEarliestTransaction, getLatestTransaction } from '#reports';
 
 /**
  * Transform `selectedCategories` into `conditions`.
@@ -152,7 +152,7 @@ function CustomReportInner({
   const dateFormat = useDateFormat() || 'MM/dd/yyyy';
 
   const { data: categories = { grouped: [], list: [] } } = useCategories();
-  const { data: tags = [] } = useTags();
+  const { data: tags = [], isPending: isTagsPending } = useTags();
   const { isNarrowWidth } = useResponsive();
   const [_firstDayOfWeekIdx] = useSyncedPref('firstDayOfWeekIdx');
   const firstDayOfWeekIdx = _firstDayOfWeekIdx || '0';
@@ -432,8 +432,12 @@ function CustomReportInner({
     async function run() {
       onApplyFilterConditions(report.conditions, report.conditionsOp);
 
-      const earliestTransaction = await send('get-earliest-transaction');
-      const latestTransaction = await send('get-latest-transaction');
+      // The report waits for these dates before it loads, so fall back to
+      // today if a lookup fails instead of loading forever.
+      const [earliestTransaction, latestTransaction] = await Promise.all([
+        getEarliestTransaction().catch(() => null),
+        getLatestTransaction().catch(() => null),
+      ]);
       const currentDay = monthUtils.currentDay();
       const earliestTransactionDate = earliestTransaction?.date ?? currentDay;
       const latestTransactionDate = latestTransaction?.date ?? currentDay;
@@ -605,8 +609,13 @@ function CustomReportInner({
     firstDayOfWeekIdx,
     dateFormat,
   ]);
-  const graphData = useReport('default', getGraphData);
-  const groupedData = useReport('grouped', getGroupData);
+  // The effect above re-applies the filter conditions and sets the date range
+  // once the earliest and latest transactions are known. Anything loaded
+  // before then would be thrown away, so wait for it. The tags feed the
+  // report too, so loading before they arrive would load it twice.
+  const isReady = latestTransactionDate !== '' && !isTagsPending;
+  const graphData = useReport('default', isReady ? getGraphData : null);
+  const groupedData = useReport('grouped', isReady ? getGroupData : null);
 
   const data: DataEntity | null = graphData
     ? { ...graphData, groupedData }

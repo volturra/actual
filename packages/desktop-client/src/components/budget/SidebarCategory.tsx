@@ -1,5 +1,5 @@
 // @ts-strict-ignore
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import type { CSSProperties, Ref } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -64,6 +64,9 @@ export function SidebarCategory({
 
   const temporary = category.id === 'new';
   const triggerRef = useRef(null);
+  // The hover-only buttons are mounted the first time the row is hovered,
+  // not for every category up front.
+  const [showHoverButtons, setShowHoverButtons] = useState(false);
   const { handleContextMenu } = useContextMenu({
     triggerRef,
     items: [
@@ -100,23 +103,26 @@ export function SidebarCategory({
     >
       <TextOneLine data-testid="category-name">{category.name}</TextOneLine>
       <View style={{ flexShrink: 0, marginLeft: 5 }}>
-        <Button
-          variant="bare"
-          className="hover-visible"
-          style={{ color: 'currentColor', padding: 3 }}
-          onPress={handleContextMenu}
-        >
-          <SvgCheveronDown
-            width={14}
-            height={14}
-            style={{ color: 'currentColor' }}
-          />
-        </Button>
+        {showHoverButtons && (
+          <Button
+            variant="bare"
+            className="hover-visible"
+            style={{ color: 'currentColor', padding: 3 }}
+            onPress={handleContextMenu}
+          >
+            <SvgCheveronDown
+              width={14}
+              height={14}
+              style={{ color: 'currentColor' }}
+            />
+          </Button>
+        )}
       </View>
       <SidebarCategoryButtons
         category={category}
         dragging={dragging}
         goalsShown={goalsShown}
+        showHoverButtons={showHoverButtons}
       />
     </View>
   );
@@ -147,6 +153,7 @@ export function SidebarCategory({
         }),
         ...style,
       }}
+      onMouseEnter={() => setShowHoverButtons(true)}
       onKeyDown={e => {
         if (e.key === 'Enter') {
           onEditName(null);

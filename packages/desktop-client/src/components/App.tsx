@@ -176,6 +176,7 @@ export function App() {
   const store = useStore();
   const isTestEnv = useIsTestEnv();
   const queryClient = useQueryClient();
+  const [budgetId] = useMetadataPref('id');
 
   useEffect(() => handleGlobalEvents(store, queryClient), [store, queryClient]);
 
@@ -207,7 +208,7 @@ export function App() {
       <ExposeNavigate />
       <AriaRouterProvider>
         <HotkeysProvider initiallyActiveScopes={['app']}>
-          <SpreadsheetProvider>
+          <SpreadsheetProvider budgetId={budgetId}>
             <SidebarProvider>
               <BudgetMonthCountProvider>
                 <DndProvider backend={HTML5Backend}>

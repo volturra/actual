@@ -10598,12 +10598,21 @@ __metadata:
   languageName: node
   linkType: hard
 
-"babel-plugin-react-compiler@npm:^1.0.0":
+"babel-plugin-react-compiler@npm:1.0.0":
   version: 1.0.0
   resolution: "babel-plugin-react-compiler@npm:1.0.0"
   dependencies:
     "@babel/types": "npm:^7.26.0"
   checksum: 10/51358f4da7dd338afd93ca647af3b5b95fdedd2ffde78719fbba5c542e3d66d338f020bc61234caf4ddf25cddbf517ae101ff76e362e3244d1047c1e64d90a60
+  languageName: node
+  linkType: hard
+
+"babel-plugin-react-compiler@patch:babel-plugin-react-compiler@npm%3A1.0.0#~/.yarn/patches/babel-plugin-react-compiler-npm-1.0.0.patch":
+  version: 1.0.0
+  resolution: "babel-plugin-react-compiler@patch:babel-plugin-react-compiler@npm%3A1.0.0#~/.yarn/patches/babel-plugin-react-compiler-npm-1.0.0.patch::version=1.0.0&hash=a85cc9"
+  dependencies:
+    "@babel/types": "npm:^7.26.0"
+  checksum: 10/140e03b38c4bf132b59f09d46639cc5dd1a319f27895ff02cfd73dbd5de4caa6dac2e99fba454e53e4f144c41c564f03962fb78c806c264e5cdf32ab45216f6f
   languageName: node
   linkType: hard
 

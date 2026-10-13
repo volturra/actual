@@ -122,7 +122,7 @@ describe('sheet language', () => {
     );
   });
 
-  it('`like` should use unicode and normalise function', () => {
+  it('`like` should use the normalised unicode like function', () => {
     const result = generateSQLWithState(
       q('transactions')
         .select('payee')
@@ -130,12 +130,10 @@ describe('sheet language', () => {
         .serialize(),
       schemaWithRefs,
     );
-    expect(result.sql).toMatch(
-      `UNICODE_LIKE('%test%', NORMALISE(payees1.name))`,
-    );
+    expect(result.sql).toMatch(`NORMALISED_LIKE('%test%', payees1.name)`);
   });
 
-  it('`notlike` should use unicode and normalise function', () => {
+  it('`notlike` should use the normalised unicode like function', () => {
     const result = generateSQLWithState(
       q('transactions')
         .select('payee')
@@ -143,9 +141,7 @@ describe('sheet language', () => {
         .serialize(),
       schemaWithRefs,
     );
-    expect(result.sql).toMatch(
-      `NOT UNICODE_LIKE('%test%', NORMALISE(payees1.name))`,
-    );
+    expect(result.sql).toMatch(`NOT NORMALISED_LIKE('%test%', payees1.name)`);
   });
 
   it('`select` allows nested functions', () => {

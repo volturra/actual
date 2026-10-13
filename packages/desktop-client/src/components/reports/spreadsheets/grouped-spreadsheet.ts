@@ -1,4 +1,3 @@
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type { GroupedEntity } from '@actual-app/core/types/models';
 
@@ -6,12 +5,21 @@ import {
   categoryLists,
   ReportOptions,
 } from '#components/reports/ReportOptions';
-import type { QueryDataEntity } from '#components/reports/ReportOptions';
+import type {
+  QueryDataEntity,
+  UncategorizedEntity,
+} from '#components/reports/ReportOptions';
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
+import { makeFiltersFromConditions } from '#reports';
 
 import type { createCustomSpreadsheetProps } from './custom-spreadsheet';
 import { fetchSpreadsheetQueryData } from './fetchSpreadsheetQueryData';
 import { filterEmptyRows } from './filterEmptyRows';
+import {
+  filterReportTransactions,
+  groupRowsByLabel,
+  sumItemAmountsByDate,
+} from './filterHiddenItems';
 import { recalculate } from './recalculate';
 import { sortData } from './sortData';
 import {
@@ -47,7 +55,7 @@ export function createGroupedSpreadsheet({
       return;
     }
 
-    const { filters } = await send('make-filters-from-conditions', {
+    const { filters } = await makeFiltersFromConditions({
       conditions: conditions.filter(cond => !cond.customName),
     });
     const conditionsOpKey = conditionsOp === 'or' ? '$or' : '$and';
@@ -91,17 +99,53 @@ export function createGroupedSpreadsheet({
             ReportOptions.intervalRange.get(interval) || 'rangeInclusive'
           ](startDate, endDate);
 
+    // These filters don't depend on the group, so apply them once here.
+    const visibleAssets = filterReportTransactions(
+      assets,
+      showOffBudget,
+      showHiddenCategories,
+      showUncategorized,
+    );
+    const visibleDebts = filterReportTransactions(
+      debts,
+      showOffBudget,
+      showHiddenCategories,
+      showUncategorized,
+    );
+    const rowsByLabel = {
+      categoryGroup: {
+        assets: groupRowsByLabel(visibleAssets, 'categoryGroup'),
+        debts: groupRowsByLabel(visibleDebts, 'categoryGroup'),
+      },
+      category: {
+        assets: groupRowsByLabel(visibleAssets, 'category'),
+        debts: groupRowsByLabel(visibleDebts, 'category'),
+      },
+    };
+    const amountsByDate = (
+      item: UncategorizedEntity,
+      groupByLabel: 'categoryGroup' | 'category',
+    ) => ({
+      assets: sumItemAmountsByDate(
+        item,
+        visibleAssets,
+        groupByLabel,
+        rowsByLabel[groupByLabel].assets,
+      ),
+      debts: sumItemAmountsByDate(
+        item,
+        visibleDebts,
+        groupByLabel,
+        rowsByLabel[groupByLabel].debts,
+      ),
+    });
+
     const groupedData: GroupedEntity[] = categoryGroup.map(
       group => {
         const grouped = recalculate({
           item: group,
           intervals,
-          assets,
-          debts,
-          groupByLabel: 'categoryGroup',
-          showOffBudget,
-          showHiddenCategories,
-          showUncategorized,
+          amountsByDate: amountsByDate(group, 'categoryGroup'),
           startDate,
           endDate,
         });
@@ -112,12 +156,7 @@ export function createGroupedSpreadsheet({
             const calc = recalculate({
               item,
               intervals,
-              assets,
-              debts,
-              groupByLabel: 'category',
-              showOffBudget,
-              showHiddenCategories,
-              showUncategorized,
+              amountsByDate: amountsByDate(item, 'category'),
               startDate,
               endDate,
             });

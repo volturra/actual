@@ -6,11 +6,9 @@ import {
   SvgCalendar3,
 } from '@actual-app/components/icons/v2';
 import { styles } from '@actual-app/components/styles';
-import { Text } from '@actual-app/components/text';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
 import type { CategoryEntity } from '@actual-app/core/types/models';
-import { AutoTextSize } from 'auto-text-size';
 
 import { makeAmountGrey } from '#components/budget/util';
 import { PrivacyFilter } from '#components/PrivacyFilter';
@@ -19,6 +17,7 @@ import { useCategoryScheduleGoalTemplateIndicator } from '#hooks/useCategorySche
 import { useFormat } from '#hooks/useFormat';
 import type { Binding } from '#spreadsheet';
 
+import { AmountAutoTextSize } from './AmountAutoTextSize';
 import { getColumnWidth, PILL_STYLE } from './BudgetTable';
 
 type SpentCellProps = {
@@ -69,9 +68,7 @@ export function SpentCell({
             })}
           >
             <PrivacyFilter>
-              <AutoTextSize
-                key={value}
-                as={Text}
+              <AmountAutoTextSize
                 minFontSizePx={6}
                 maxFontSizePx={12}
                 mode="oneline"
@@ -84,7 +81,7 @@ export function SpentCell({
                 }}
               >
                 {format(value, type)}
-              </AutoTextSize>
+              </AmountAutoTextSize>
             </PrivacyFilter>
           </Button>
           {schedule && scheduleStatus && (

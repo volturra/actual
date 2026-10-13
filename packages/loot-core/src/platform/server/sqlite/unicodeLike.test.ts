@@ -1,4 +1,9 @@
-import { unicodeLike } from './unicodeLike';
+import {
+  NORMALISED_CACHE_MAX_LENGTH,
+  NORMALISED_CACHE_MAX_SIZE,
+  normalisedLike,
+  unicodeLike,
+} from './unicodeLike';
 
 describe('unicode LIKE functionality', () => {
   it('empty pattern should not match to a value', () => {
@@ -68,5 +73,59 @@ describe('unicode LIKE functionality', () => {
 
   it('should treat \\\\ as a literal \\ character', () => {
     expect(unicodeLike('c:\\\\test', 'c:\\test')).toBe(1);
+  });
+});
+
+describe('normalisedLike', () => {
+  it('matches the normalised value', () => {
+    expect(normalisedLike('%cafe%', 'Le Café')).toBe(1);
+    expect(normalisedLike('%strasse%', 'Hauptstraße')).toBe(1);
+    expect(normalisedLike('%lodz%', 'Łódź')).toBe(1);
+    expect(normalisedLike('%tea%', 'Coffee')).toBe(0);
+  });
+
+  it('treats null and empty values like an empty string', () => {
+    expect(normalisedLike('%', null)).toBe(1);
+    expect(normalisedLike('%', '')).toBe(1);
+    expect(normalisedLike('%a%', null)).toBe(0);
+    expect(normalisedLike('%a%', '')).toBe(0);
+  });
+
+  it('never matches an empty pattern', () => {
+    expect(normalisedLike(null, 'value')).toBe(0);
+    expect(normalisedLike('', 'value')).toBe(0);
+    expect(normalisedLike(null, null)).toBe(0);
+  });
+
+  it('gives the same results after its memo of values fills up', () => {
+    for (let i = 0; i < 12000; i++) {
+      const value = `Payée ${i}`;
+      expect(normalisedLike(`%payee ${i}%`, value)).toBe(1);
+      expect(normalisedLike(`%payee ${i}x%`, value)).toBe(0);
+    }
+  });
+
+  it('matches long values, which it does not memoise, the same way', () => {
+    const padding = 'Ünïcödé nötes '.repeat(40);
+    // Fill the memo of values first, so long values meet a full memo
+    for (let i = 0; i < NORMALISED_CACHE_MAX_SIZE; i++) {
+      expect(normalisedLike('%', `Fill ${i}`)).toBe(1);
+    }
+    // Long values are normalised on every call, so keep this loop short
+    for (let i = 0; i < 400; i++) {
+      // Alternate between long values and short ones that go in the memo
+      const value = i % 2 ? `${padding}Café ${i}` : `Café ${i}`;
+      expect(value.length > NORMALISED_CACHE_MAX_LENGTH).toBe(i % 2 === 1);
+      expect(normalisedLike(`%cafe ${i}%`, value)).toBe(1);
+      expect(normalisedLike(`%unicode notes%cafe ${i}%`, value)).toBe(i % 2);
+      expect(normalisedLike(`%cafe ${i}x%`, value)).toBe(0);
+    }
+    // Values just below, at and above the length cap
+    const cap = NORMALISED_CACHE_MAX_LENGTH;
+    for (const length of [cap - 1, cap, cap + 1]) {
+      const value = 'É'.repeat(length);
+      expect(normalisedLike(`%${'e'.repeat(length)}%`, value)).toBe(1);
+      expect(normalisedLike(`%${'e'.repeat(length + 1)}%`, value)).toBe(0);
+    }
   });
 });

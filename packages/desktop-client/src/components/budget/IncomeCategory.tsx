@@ -1,5 +1,5 @@
 // @ts-strict-ignore
-import React from 'react';
+import React, { memo } from 'react';
 import type { ComponentProps } from 'react';
 
 import type { CategoryEntity } from '@actual-app/core/types/models';
@@ -28,7 +28,7 @@ type IncomeCategoryProps = {
   onShowActivity: (id: CategoryEntity['id'], month: string) => void;
 };
 
-export function IncomeCategory({
+export const IncomeCategory = memo(function IncomeCategory({
   cat,
   isLast,
   editingCell,
@@ -99,4 +99,4 @@ export function IncomeCategory({
       </RenderMonths>
     </Row>
   );
-}
+});

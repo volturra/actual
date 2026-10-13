@@ -183,6 +183,7 @@ export function AccountHeader({
   onMergeTransactions,
 }: AccountHeaderProps) {
   const { t } = useTranslation();
+  const transactionsById = new Map(transactions.map(tx => [tx.id, tx]));
 
   const [reconcileOpen, setReconcileOpen] = useState(false);
   const searchInput = useRef<HTMLInputElement>(null);
@@ -385,7 +386,7 @@ export function AccountHeader({
             </View>
           ) : (
             <SelectedTransactionsButton
-              getTransaction={id => transactions.find(t => t.id === id)}
+              getTransaction={id => transactionsById.get(id)}
               onShow={onShowTransactions}
               onDuplicate={onBatchDuplicate}
               onDelete={onBatchDelete}

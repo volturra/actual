@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import * as monthUtils from '@actual-app/core/shared/months';
 import { getUpcomingDays } from '@actual-app/core/shared/schedules';
@@ -9,6 +8,7 @@ import type {
   ScheduleEntity,
 } from '@actual-app/core/types/models';
 import type { Locale } from 'date-fns';
+import { t } from 'i18next';
 import type { TFunction } from 'i18next';
 
 import { useCategoryScheduleGoalTemplates } from './useCategoryScheduleGoalTemplates';
@@ -37,7 +37,6 @@ export function useCategoryScheduleGoalTemplateIndicator({
   category,
   month,
 }: UseCategoryScheduleGoalTemplateProps): UseCategoryScheduleGoalTemplateResult {
-  const { t } = useTranslation();
   const locale = useLocale();
 
   const [upcomingScheduledTransactionLength] = useSyncedPref(
@@ -100,7 +99,7 @@ export function useCategoryScheduleGoalTemplateIndicator({
       ),
       description,
     };
-  }, [locale, month, scheduleStatuses, schedules, t, upcomingDays]);
+  }, [locale, month, scheduleStatuses, schedules, upcomingDays]);
 }
 
 function getScheduleStatusDescription({

@@ -12,15 +12,25 @@ type SidebarCategoryButtonsProps = {
   category: CategoryEntity;
   dragging: boolean;
   goalsShown: boolean;
+  /**
+   * Whether the row has been hovered. The notes button is hidden
+   * (`display: none`) until then unless the category has a note.
+   */
+  showHoverButtons: boolean;
 };
 
 export const SidebarCategoryButtons = ({
   category,
   dragging,
   goalsShown,
+  showHoverButtons,
 }: SidebarCategoryButtonsProps) => {
   const isGoalTemplatesUIEnabled = useFeatureFlag('goalTemplatesUIEnabled');
   const notes = useNotes(category.id) || '';
+  const notesPlaceholderShown =
+    !goalsShown &&
+    isGoalTemplatesUIEnabled &&
+    (!!category.goal_def?.length || !!category.cleanup_def?.length);
 
   return (
     <>
@@ -36,16 +46,14 @@ export const SidebarCategoryButtons = ({
         </View>
       )}
       <View style={{ flexShrink: 0 }}>
-        <NotesButton
-          id={category.id}
-          style={dragging ? { color: 'currentColor' } : undefined}
-          defaultColor={theme.pageTextLight}
-          showPlaceholder={
-            !goalsShown &&
-            isGoalTemplatesUIEnabled &&
-            (!!category.goal_def?.length || !!category.cleanup_def?.length)
-          }
-        />
+        {(showHoverButtons || notes || notesPlaceholderShown) && (
+          <NotesButton
+            id={category.id}
+            style={dragging ? { color: 'currentColor' } : undefined}
+            defaultColor={theme.pageTextLight}
+            showPlaceholder={notesPlaceholderShown}
+          />
+        )}
       </View>
     </>
   );

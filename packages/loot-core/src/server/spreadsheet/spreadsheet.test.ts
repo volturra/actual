@@ -1,8 +1,12 @@
 // @ts-strict-ignore
 import { generateTransaction } from '#mocks';
 import * as db from '#server/db';
+import { q } from '#shared/query';
 
 import { Spreadsheet } from './spreadsheet';
+
+// Kept from before the timers are faked, to let real work happen in tests
+const realSetImmediate = setImmediate;
 
 beforeEach(global.emptyDatabase());
 
@@ -187,5 +191,597 @@ describe('Spreadsheet', () => {
 
     expect(spreadsheet.getValue('foo!x')).toBe(1);
     expect(spreadsheet.getValue('foo!y')).toBe(2);
+  });
+
+  describe('query cells', () => {
+    // `setImmediate` is faked in these tests, so the sheet only resumes after
+    // giving way when a test advances the timers
+    async function waitUntil(condition: () => boolean) {
+      for (let i = 0; i < 100 && !condition(); i++) {
+        await new Promise(resolve => realSetImmediate(resolve));
+      }
+      expect(condition()).toBe(true);
+    }
+
+    // Advance through one pause, until the sheet gives way again or is done
+    async function stepOnce(spreadsheet: Spreadsheet) {
+      vi.advanceTimersByTime(0);
+      await waitUntil(
+        () => !spreadsheet.running || spreadsheet.pausedComputation != null,
+      );
+    }
+
+    const balances = {
+      'account!balance-1': -15832,
+      'account!balance-2': 1000,
+    };
+
+    function balanceQuery(account: string) {
+      return q('transactions')
+        .filter({ account })
+        .options({ splits: 'none' })
+        .calculate({ $sum: '$amount' })
+        .serialize();
+    }
+
+    async function setupQueryCells() {
+      await insertTransactions();
+      await db.insertTransaction(
+        generateTransaction({
+          amount: 1000,
+          account: '2',
+          date: '2017-01-09',
+        })[0],
+      );
+
+      const spreadsheet = new Spreadsheet();
+      spreadsheet.transaction(() => {
+        spreadsheet.createQuery('account', 'balance-1', balanceQuery('1'));
+        spreadsheet.createQuery('account', 'balance-2', balanceQuery('2'));
+      });
+      return spreadsheet;
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setImmediate', 'clearImmediate'] });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    test('give other tasks a turn before and between query cells', async () => {
+      const spreadsheet = await setupQueryCells();
+      const onFinish = vi.fn();
+      spreadsheet.onFinish(onFinish);
+
+      // The run starts by giving way, before any query runs
+      await waitUntil(() => spreadsheet.pausedComputation != null);
+      const [first, second] = spreadsheet.computeQueue;
+      expect(spreadsheet.pausedComputation.idx).toBe(0);
+      expect(spreadsheet.getValue(first)).toBe(null);
+
+      await stepOnce(spreadsheet);
+      expect(spreadsheet.pausedComputation.idx).toBe(1);
+      expect(spreadsheet.getValue(first)).toBe(balances[first]);
+      expect(spreadsheet.getValue(second)).toBe(null);
+      expect(onFinish).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(0);
+      await waitUntil(() => !spreadsheet.running);
+      expect(spreadsheet.getValue(second)).toBe(balances[second]);
+      expect(onFinish).toHaveBeenCalledWith({ names: [first, second] });
+    });
+
+    test('compute other cells queued meanwhile right away', async () => {
+      const spreadsheet = await setupQueryCells();
+      await waitUntil(() => spreadsheet.pausedComputation != null);
+      const [, second] = spreadsheet.computeQueue;
+
+      spreadsheet.createDynamic('foo', 'x', { initialValue: 1, run: () => 5 });
+
+      // Without any timer running: nothing gives way while `x` is pending
+      await waitUntil(() => !spreadsheet.running);
+      expect(spreadsheet.getValue('foo!x')).toBe(5);
+      expect(spreadsheet.getValue(second)).toBe(balances[second]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    test('do not give way in a run that computes other cells', async () => {
+      await insertTransactions();
+      const spreadsheet = new Spreadsheet();
+      spreadsheet.transaction(() => {
+        spreadsheet.set('foo!x', 5);
+        spreadsheet.createQuery('account', 'balance-1', balanceQuery('1'));
+        spreadsheet.createQuery('account', 'balance-2', balanceQuery('2'));
+      });
+      const onFinish = vi.fn();
+      spreadsheet.onFinish(onFinish);
+
+      await waitUntil(() => onFinish.mock.calls.length > 0);
+      expect(spreadsheet.getValue('account!balance-1')).toBe(-15832);
+      expect(spreadsheet.getValue('account!balance-2')).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    test('stop computing once unloaded', async () => {
+      const spreadsheet = await setupQueryCells();
+      await waitUntil(() => spreadsheet.pausedComputation != null);
+      const [, second] = spreadsheet.computeQueue;
+
+      spreadsheet.unload();
+      vi.advanceTimersByTime(0);
+      expect(spreadsheet.running).toBe(false);
+      expect(spreadsheet.pausedComputation).toBe(null);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(spreadsheet.getValue(second)).toBe(null);
+    });
+
+    test('mark the cache safe when unloaded with only query cells left', async () => {
+      await insertTransactions();
+      const setCacheStatus = vi.fn();
+      const spreadsheet = new Spreadsheet(undefined, setCacheStatus);
+      // A sync changes data behind a cache barrier, which ends while the
+      // query cells it queued are still giving way
+      spreadsheet.startCacheBarrier();
+      spreadsheet.transaction(() => {
+        spreadsheet.createQuery('account', 'balance-1', balanceQuery('1'));
+        spreadsheet.createQuery('account', 'balance-2', balanceQuery('2'));
+      });
+      await waitUntil(() => spreadsheet.pausedComputation != null);
+      spreadsheet.endCacheBarrier();
+      expect(setCacheStatus).toHaveBeenLastCalledWith({ clean: false });
+
+      spreadsheet.unload();
+      expect(setCacheStatus).toHaveBeenLastCalledWith({ clean: true });
+    });
+
+    test('stop once the query in flight when unloaded finishes', async () => {
+      await insertTransactions();
+      const spreadsheet = new Spreadsheet();
+      spreadsheet.transaction(() => {
+        spreadsheet.createQuery('account', 'balance-1', balanceQuery('1'));
+        spreadsheet.createQuery('account', 'balance-2', balanceQuery('2'));
+      });
+      const [first, second] = spreadsheet.computeQueue;
+
+      // The run starts by giving way. Let the first query start, and close the
+      // sheet while it runs.
+      await waitUntil(() => spreadsheet.pausedComputation != null);
+      vi.advanceTimersByTime(0);
+      expect(spreadsheet.running).toBe(true);
+      expect(spreadsheet.pausedComputation).toBe(null);
+      expect(spreadsheet.getValue(first)).toBe(null);
+      spreadsheet.unload();
+      await waitUntil(() => spreadsheet.getValue(first) != null);
+      expect(spreadsheet.running).toBe(false);
+      expect(spreadsheet.pausedComputation).toBe(null);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(spreadsheet.getValue(second)).toBe(null);
+    });
+
+    test('recompute query cells when data changes mid-run', async () => {
+      const spreadsheet = await setupQueryCells();
+      await waitUntil(() => spreadsheet.pausedComputation != null);
+      // Past the pause the run starts with, to the one after the first query
+      await stepOnce(spreadsheet);
+      const [first, second] = spreadsheet.computeQueue;
+      expect(spreadsheet.getValue(first)).toBe(balances[first]);
+      expect(spreadsheet.getValue(second)).toBe(null);
+
+      // A sync or undo changes both accounts while the run gives way
+      for (const account of ['1', '2']) {
+        await db.insertTransaction(
+          generateTransaction({ amount: 500, account, date: '2017-01-10' })[0],
+        );
+      }
+      spreadsheet.triggerDatabaseChanges(
+        new Map([['transactions', new Map()]]),
+        new Map(),
+      );
+      const onFinish = vi.fn();
+      spreadsheet.onFinish(onFinish);
+
+      for (let i = 0; i < 10 && spreadsheet.running; i++) {
+        vi.advanceTimersByTime(0);
+        await waitUntil(
+          () => !spreadsheet.running || spreadsheet.pausedComputation != null,
+        );
+      }
+      expect(spreadsheet.running).toBe(false);
+      expect(spreadsheet.getValue(first)).toBe(balances[first] + 500);
+      expect(spreadsheet.getValue(second)).toBe(balances[second] + 500);
+      expect(onFinish).toHaveBeenCalledTimes(1);
+    });
+
+    test('do not pile up query cells when data keeps changing', async () => {
+      await insertTransactions();
+      const spreadsheet = new Spreadsheet();
+      const accounts = ['1', '2', '3', '4', '5'];
+      spreadsheet.transaction(() => {
+        for (const account of accounts) {
+          spreadsheet.createQuery(
+            'account',
+            `balance-${account}`,
+            balanceQuery(account),
+          );
+        }
+      });
+      const changes = [];
+      spreadsheet.addEventListener('change', event => changes.push(event));
+      const onFinish = vi.fn();
+      spreadsheet.onFinish(onFinish);
+      await waitUntil(() => spreadsheet.pausedComputation != null);
+
+      // A sync keeps changing the data while the run gives way
+      let longestQueue = 0;
+      for (let i = 0; i < 100; i++) {
+        spreadsheet.triggerDatabaseChanges(
+          new Map([['transactions', new Map()]]),
+          new Map(),
+        );
+        await waitUntil(() => spreadsheet.pausedComputation != null);
+        longestQueue = Math.max(longestQueue, spreadsheet.computeQueue.length);
+        await stepOnce(spreadsheet);
+      }
+      expect(longestQueue).toBeLessThanOrEqual(3 * accounts.length);
+      expect(changes.length).toBeGreaterThan(0);
+      expect(onFinish).toHaveBeenCalledTimes(1);
+
+      for (let i = 0; i < 20 && spreadsheet.running; i++) {
+        await stepOnce(spreadsheet);
+      }
+      expect(spreadsheet.running).toBe(false);
+      expect(spreadsheet.getValue('account!balance-1')).toBe(-15832);
+    });
+
+    test('add a query cell created while giving way to the run', async () => {
+      const spreadsheet = await setupQueryCells();
+      await waitUntil(() => spreadsheet.pausedComputation != null);
+      const [first, second] = spreadsheet.computeQueue;
+
+      // The client binds another balance while the run gives way
+      spreadsheet.createQuery('account', 'balance-3', balanceQuery('2'));
+      const onFinish = vi.fn();
+      spreadsheet.onFinish(onFinish);
+      await new Promise(resolve => realSetImmediate(resolve));
+
+      // Only query cells are queued, so the run keeps giving way
+      expect(spreadsheet.pausedComputation).not.toBe(null);
+      expect(spreadsheet.getValue(second)).toBe(null);
+      expect(spreadsheet.computeQueue).toEqual([
+        first,
+        second,
+        'account!balance-3',
+      ]);
+
+      for (let i = 0; i < 10 && spreadsheet.running; i++) {
+        await stepOnce(spreadsheet);
+      }
+      expect(spreadsheet.running).toBe(false);
+      expect(spreadsheet.getValue(second)).toBe(balances[second]);
+      expect(spreadsheet.getValue('account!balance-3')).toBe(1000);
+      expect(onFinish).toHaveBeenCalledTimes(1);
+    });
+
+    test('keep giving way after a query cell fails', async () => {
+      await insertTransactions();
+      const spreadsheet = new Spreadsheet();
+      spreadsheet.transaction(() => {
+        spreadsheet.createQuery('account', 'balance-1', balanceQuery('1'));
+        spreadsheet.createQuery('account', 'balance-2', balanceQuery('2'));
+        spreadsheet.createQuery('account', 'balance-3', balanceQuery('3'));
+      });
+      const [first, second, third] = spreadsheet.computeQueue;
+      // Make the second query reject when it runs
+      Object.assign(spreadsheet.getNode(second).sql.state, {
+        namedParameters: [{ paramName: 'missing', paramType: 'string' }],
+      });
+      const onFinish = vi.fn();
+      spreadsheet.onFinish(onFinish);
+
+      await waitUntil(() => spreadsheet.pausedComputation != null);
+      expect(spreadsheet.pausedComputation.idx).toBe(0);
+      await stepOnce(spreadsheet);
+      expect(spreadsheet.pausedComputation.idx).toBe(1);
+      await stepOnce(spreadsheet);
+      // The failed query gives way too, before the third one runs
+      expect(spreadsheet.pausedComputation?.idx).toBe(2);
+      expect(spreadsheet.getValue(third)).toBe(null);
+
+      await stepOnce(spreadsheet);
+      expect(spreadsheet.running).toBe(false);
+      const expected = {
+        'account!balance-1': -15832,
+        'account!balance-2': 0,
+        'account!balance-3': 0,
+      };
+      expect(spreadsheet.getValue(first)).toBe(expected[first]);
+      expect(spreadsheet.getValue(second)).toBe(null);
+      expect(spreadsheet.getValue(third)).toBe(expected[third]);
+      expect(onFinish).toHaveBeenCalledWith({ names: [first, second, third] });
+    });
+  });
+});
+
+describe('Spreadsheet query cells', () => {
+  test('a request already waiting runs before a run of query cells', async () => {
+    await insertTransactions();
+    const spreadsheet = new Spreadsheet();
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+
+    // A request that was queued before the query cell started computing
+    const seenByRequest = new Promise(resolve =>
+      setImmediate(() => resolve(spreadsheet.getValue('g!balance'))),
+    );
+
+    expect(await seenByRequest).toBe(null);
+    // The run still completes without anything else happening
+    await new Promise(resolve => spreadsheet.onFinish(resolve));
+    expect(spreadsheet.running).toBe(false);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+  });
+
+  test('a run of query cells completes even with nothing else waiting', async () => {
+    await insertTransactions();
+    const spreadsheet = new Spreadsheet();
+    const computed = trackComputed(spreadsheet);
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    spreadsheet.createQuery('g', 'other', sumQuery({ account: '2' }));
+
+    await finished(spreadsheet);
+    expect(spreadsheet.running).toBe(false);
+    expect(computed).toEqual(['g!balance', 'g!other']);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+  });
+
+  function sumQuery(filter: Record<string, unknown>) {
+    return q('transactions')
+      .filter(filter)
+      .calculate({ $sum: '$amount' })
+      .serialize();
+  }
+
+  function trackComputed(spreadsheet: Spreadsheet) {
+    const computed: string[] = [];
+    spreadsheet.addEventListener('change', ({ names }) => {
+      computed.push(...names);
+    });
+    return computed;
+  }
+
+  function finished(spreadsheet: Spreadsheet) {
+    return new Promise(resolve => {
+      // Computations start on the next tick
+      setTimeout(() => spreadsheet.onFinish(resolve), 0);
+    });
+  }
+
+  test('binding the same query again does not rerun it', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+    const computed = trackComputed(spreadsheet);
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+
+    // A new but equal object, as it arrives from the client on every bind
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+
+    expect(computed).toEqual(['g!balance']);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+  });
+
+  test('binding a different query reruns it', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+    const computed = trackComputed(spreadsheet);
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ category: 'cat1' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(-3200);
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ category: 'cat2' }));
+    await finished(spreadsheet);
+
+    expect(computed).toEqual(['g!balance', 'g!balance']);
+    expect(spreadsheet.getValue('g!balance')).toBe(-12632);
+  });
+
+  test('a data change reruns a cell bound with the same query', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+    const computed = trackComputed(spreadsheet);
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+
+    const [transaction] = generateTransaction({
+      amount: -1000,
+      account: '1',
+      date: '2017-01-20',
+    });
+    await db.insertTransaction(transaction);
+    spreadsheet.triggerDatabaseChanges(
+      new Map(),
+      new Map([['transactions', new Map([[transaction.id, transaction]])]]),
+    );
+    await finished(spreadsheet);
+    expect(computed).toEqual(['g!balance', 'g!balance']);
+    expect(spreadsheet.getValue('g!balance')).toBe(-16832);
+
+    // Binding again afterwards reuses the fresh value
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    expect(computed).toHaveLength(2);
+    expect(spreadsheet.getValue('g!balance')).toBe(-16832);
+  });
+
+  test('binding again reruns a query skipped after an error', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+
+    spreadsheet.transaction(() => {
+      spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+      spreadsheet.createDynamic('g', 'broken', {
+        initialValue: 0,
+        run: () => {
+          throw new Error('broken cell');
+        },
+      });
+    });
+    // The broken cell runs first and stops the computations
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(null);
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+  });
+
+  function insertAndNotify(spreadsheet: Spreadsheet, amount: number) {
+    const [transaction] = generateTransaction({
+      amount,
+      account: '1',
+      date: '2017-01-20',
+    });
+    return db.insertTransaction(transaction).then(() => {
+      spreadsheet.triggerDatabaseChanges(
+        new Map(),
+        new Map([['transactions', new Map([[transaction.id, transaction]])]]),
+      );
+    });
+  }
+
+  test('a later error still reports query cells computed before it', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    // Depends on the query cell, so it is computed after it
+    spreadsheet.createDynamic('g', 'broken', {
+      initialValue: 0,
+      dependencies: ['balance'],
+      run: () => {
+        throw new Error('broken cell');
+      },
+    });
+    await finished(spreadsheet);
+
+    const computed = trackComputed(spreadsheet);
+    await insertAndNotify(spreadsheet, -1000);
+    await finished(spreadsheet);
+
+    expect(computed).toEqual(['g!balance']);
+    expect(spreadsheet.getValue('g!balance')).toBe(-16832);
+  });
+
+  test('onFinish fires when a later error stops the run', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    spreadsheet.createDynamic('g', 'broken', {
+      initialValue: 0,
+      dependencies: ['balance'],
+      run: () => {
+        throw new Error('broken cell');
+      },
+    });
+    await finished(spreadsheet);
+
+    await insertAndNotify(spreadsheet, -1000);
+    const onFinish = vi.fn();
+    spreadsheet.onFinish(onFinish);
+    await finished(spreadsheet);
+    expect(onFinish).toHaveBeenCalledWith({ names: ['g!balance'] });
+  });
+
+  test('a query that fails to compile leaves the previous one bound', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+
+    const invalid = q('transactions')
+      .filter({ not_a_field: 1 })
+      .select(['id'])
+      .serialize();
+    expect(() => spreadsheet.createQuery('g', 'balance', invalid)).toThrow();
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+
+    await insertAndNotify(spreadsheet, -1000);
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(-16832);
+  });
+
+  test('binding again reruns a query whose run failed', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+
+    const view = 'v_transactions_internal_alive';
+    const { sql } = await db.first<{ sql: string }>(
+      'SELECT sql FROM sqlite_master WHERE name = ?',
+      [view],
+    );
+    db.execQuery(`DROP VIEW ${view}`);
+
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(null);
+
+    db.execQuery(sql);
+    spreadsheet.createQuery('g', 'balance', sumQuery({ account: '1' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!balance')).toBe(-15832);
+  });
+
+  test('a category merge reruns transaction query cells', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+
+    spreadsheet.createQuery('g', 'cat2', sumQuery({ category: 'cat2' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!cat2')).toBe(-12632);
+
+    // The query joins `categories` (to check the reference), so merging a
+    // category into it invalidates the cell
+    await db.deleteCategory({ id: 'cat1' }, 'cat2');
+    spreadsheet.triggerDatabaseChanges(
+      new Map(),
+      new Map([
+        ['category_mapping', new Map([['cat1', { id: 'cat1' }]])],
+        ['categories', new Map([['cat1', { id: 'cat1' }]])],
+      ]),
+    );
+    await finished(spreadsheet);
+
+    expect(spreadsheet.getValue('g!cat2')).toBe(-15832);
+  });
+
+  test('a mapping-only write reruns transaction query cells', async () => {
+    const spreadsheet = new Spreadsheet();
+    await insertTransactions();
+
+    spreadsheet.createQuery('g', 'cat2', sumQuery({ category: 'cat2' }));
+    await finished(spreadsheet);
+    expect(spreadsheet.getValue('g!cat2')).toBe(-12632);
+
+    await db.update('category_mapping', { id: 'cat1', transferId: 'cat2' });
+    spreadsheet.triggerDatabaseChanges(
+      new Map(),
+      new Map([['category_mapping', new Map([['cat1', { id: 'cat1' }]])]]),
+    );
+    await finished(spreadsheet);
+
+    expect(spreadsheet.getValue('g!cat2')).toBe(-15832);
   });
 });

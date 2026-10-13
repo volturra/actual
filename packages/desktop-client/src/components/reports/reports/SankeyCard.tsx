@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next';
 import { Block } from '@actual-app/components/block';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type { SankeyWidget } from '@actual-app/core/types/models';
 import * as d from 'date-fns';
@@ -36,6 +35,7 @@ import { useReport } from '#components/reports/useReport';
 import { useCategories } from '#hooks/useCategories';
 import { useLocale } from '#hooks/useLocale';
 import { useResizeObserver } from '#hooks/useResizeObserver';
+import { getEarliestTransaction, getLatestTransaction } from '#reports';
 
 const defaultGetBaseGraph = async (
   _spreadsheet: unknown,
@@ -64,15 +64,14 @@ export function SankeyCard({
     useCategories();
 
   useEffect(() => {
-    void Promise.all([
-      send('get-earliest-transaction'),
-      send('get-latest-transaction'),
-    ]).then(([earliest, latest]) => {
-      const today = monthUtils.currentDay();
-      setEarliestTransaction(earliest?.date ?? today);
-      setLatestTransaction(latest?.date ?? today);
-      setDatesInitialized(true);
-    });
+    void Promise.all([getEarliestTransaction(), getLatestTransaction()]).then(
+      ([earliest, latest]) => {
+        const today = monthUtils.currentDay();
+        setEarliestTransaction(earliest?.date ?? today);
+        setLatestTransaction(latest?.date ?? today);
+        setDatesInitialized(true);
+      },
+    );
   }, []);
 
   const [start, end] = calculateTimeRange(

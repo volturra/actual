@@ -23,6 +23,9 @@ async function getCell({
   sheetName: string;
   name: string;
 }) {
+  // Query cells are computed one at a time, with other requests running in
+  // between, so mid-run this can return null (not computed yet) or an old
+  // value for one. Its final value is sent to the client through `change`.
   const node = sheet.get()._getNode(resolveName(sheetName, name));
   return { name: node.name, value: node.value };
 }
@@ -47,8 +50,9 @@ async function createQuery({
   name: string;
   query: QueryState;
 }) {
-  // Always run it regardless of cache. We don't know anything has changed
-  // between the cache value being saved and now
+  // The first call for a cell always runs the query, regardless of the cache:
+  // we don't know whether anything changed between the cache value being
+  // saved and now. Later calls with the same query reuse the live value.
   sheet.get().createQuery(sheetName, name, query);
   return 'ok';
 }

@@ -47,14 +47,9 @@ export class PagedQuery<TResponse = unknown> extends LiveQuery<TResponse> {
   private _onPageData?: (data: Data<TResponse>) => void;
   private _pageCount: number;
   private _fetchDataPromise: Promise<void> | null;
-  private _totalCount: number;
 
   get hasNext() {
     return !this._hasReachedEnd;
-  }
-
-  get totalCount() {
-    return this._totalCount;
   }
 
   constructor(
@@ -65,27 +60,17 @@ export class PagedQuery<TResponse = unknown> extends LiveQuery<TResponse> {
     options: PagedQueryOptions = {},
   ) {
     super(query, onData, onError, options);
-    this._totalCount = 0;
     this._pageCount = options.pageCount || 500;
     this._fetchDataPromise = null;
     this._hasReachedEnd = false;
     this._onPageData = onPageData;
   }
 
-  private fetchCount = () => {
-    return aqlQuery(this.query.calculate({ $count: '*' })).then(({ data }) => {
-      this._totalCount = data;
-    });
-  };
-
   run = () => {
     this.subscribe();
 
     this._fetchDataPromise = this.fetchData(async () => {
       this._hasReachedEnd = false;
-
-      // Also fetch the total count
-      void this.fetchCount();
 
       // If data is null, we haven't fetched anything yet so just
       // fetch the first page
@@ -122,9 +107,6 @@ export class PagedQuery<TResponse = unknown> extends LiveQuery<TResponse> {
   refetchUpToRow = async (id, defaultOrderBy) => {
     this._fetchDataPromise = this.fetchData(async () => {
       this._hasReachedEnd = false;
-
-      // Also fetch the total count
-      void this.fetchCount();
 
       const orderDesc = getPrimaryOrderBy(this.query, defaultOrderBy);
       if (orderDesc == null) {
@@ -179,16 +161,36 @@ export class PagedQuery<TResponse = unknown> extends LiveQuery<TResponse> {
   // The public version of this function is created below and
   // throttled by `once`
   private _fetchNext = async () => {
-    while (this.inflightRequestId) {
+    // Give a caller that is replacing this query in the same tick a chance
+    // to unsubscribe it first. In the register, the table's
+    // `onItemsRendered` (which calls `fetchNext`) runs in the same React
+    // commit as, but before, the `setState` callback that swaps in the new
+    // query, so without this the old query's next page would be fetched and
+    // shown
+    await Promise.resolve();
+
+    // An unsubscribed query must not deliver any more data, and must not wait
+    // on its in-flight requests either: their results are discarded
+    if (!this.isRunning) {
+      return;
+    }
+
+    while (this.inflightRequestId && this.isRunning) {
       await this._fetchDataPromise;
     }
 
     const previousData = this.data;
 
-    if (!this._hasReachedEnd) {
+    // Like `fetchData`, an unsubscribed query must not deliver any more data
+    // to its listeners: it has been replaced or torn down
+    if (!this._hasReachedEnd && this.isRunning) {
       const { data } = await aqlQuery(
         this.query.limit(this._pageCount).offset(previousData.length),
       );
+
+      if (!this.isRunning) {
+        return;
+      }
 
       // If either there is an existing request in flight or the data
       // has already changed underneath it, we can't reliably concat
@@ -216,10 +218,4 @@ export class PagedQuery<TResponse = unknown> extends LiveQuery<TResponse> {
   };
 
   fetchNext: () => Promise<void> = once(this._fetchNext);
-
-  optimisticUpdate = (updateFn: (data: Data<TResponse>) => Data<TResponse>) => {
-    const previousData = this.data;
-    this._optimisticUpdate(updateFn);
-    this._totalCount += this.data.length - previousData.length;
-  };
 }

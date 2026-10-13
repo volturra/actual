@@ -109,6 +109,11 @@ export const init: T.Init = function (serverChn, handlers) {
   const MAX_RECONNECT_ATTEMPTS = 500;
   let reconnectAttempts = 0;
 
+  // Tell the client right away that the backend is ready. The interval below
+  // keeps retrying in case the client was not listening yet; the client
+  // handles a repeated 'connect'.
+  serverChannel.postMessage({ type: 'connect' });
+
   const reconnectToClientInterval = setInterval(() => {
     logger.info('Backend: Trying to connect to client');
     serverChannel.postMessage({ type: 'connect' });

@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { useResponsive } from '@actual-app/components/hooks/useResponsive';
+import { t } from 'i18next';
 
 import { addNotification } from '#notifications/notificationsSlice';
 import type { Notification } from '#notifications/notificationsSlice';
@@ -20,7 +20,6 @@ const timeout = 10000;
 export function useUndo(): UndoActions {
   const dispatch = useDispatch();
   const { isNarrowWidth } = useResponsive();
-  const { t } = useTranslation();
 
   const showUndoNotification = useCallback(
     (notification: Notification) => {
@@ -42,7 +41,7 @@ export function useUndo(): UndoActions {
         }),
       );
     },
-    [dispatch, isNarrowWidth, t],
+    [dispatch, isNarrowWidth],
   );
 
   const showRedoNotification = useCallback(
@@ -65,7 +64,7 @@ export function useUndo(): UndoActions {
         }),
       );
     },
-    [dispatch, isNarrowWidth, t],
+    [dispatch, isNarrowWidth],
   );
 
   return {

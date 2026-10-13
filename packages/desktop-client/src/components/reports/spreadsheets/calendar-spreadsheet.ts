@@ -1,4 +1,3 @@
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { q } from '@actual-app/core/shared/query';
 import type { RuleConditionEntity } from '@actual-app/core/types/models';
@@ -7,6 +6,7 @@ import * as d from 'date-fns';
 
 import type { useSpreadsheet } from '#hooks/useSpreadsheet';
 import { aqlQuery } from '#queries/aqlQuery';
+import { makeFiltersFromConditions } from '#reports';
 
 export type CalendarDataType = {
   date: Date;
@@ -37,12 +37,9 @@ export function calendarSpreadsheet(
     let filters: unknown[];
 
     try {
-      const { filters: filtersLocal } = await send(
-        'make-filters-from-conditions',
-        {
-          conditions: conditions.filter(cond => !cond.customName),
-        },
-      );
+      const { filters: filtersLocal } = await makeFiltersFromConditions({
+        conditions: conditions.filter(cond => !cond.customName),
+      });
       filters = filtersLocal;
     } catch (error) {
       console.error('Failed to make filters from conditions:', error);

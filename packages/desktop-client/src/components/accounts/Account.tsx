@@ -94,7 +94,16 @@ import type { AppDispatch } from '#redux/store';
 import { updateNewTransactions } from '#transactions/transactionsSlice';
 
 import { AccountEmptyMessage } from './AccountEmptyMessage';
+import {
+  getFilteredAmount,
+  holdsEveryMatch,
+  trackAppendedPages,
+} from './getFilteredAmount';
 import { AccountHeader } from './Header';
+import {
+  createModalCloseRefetchTracker,
+  modalStackNeedsRefetch,
+} from './modalCloseRefetch';
 
 type ConditionEntity = Partial<RuleConditionEntity> | TransactionFilterEntity;
 
@@ -116,9 +125,11 @@ type AllTransactionsProps = {
   ) => ReactElement;
 };
 
+const EMPTY_TRANSACTIONS: TransactionEntity[] = [];
+
 function AllTransactions({
   account,
-  transactions,
+  transactions: transactionsProp,
   balances,
   showBalances,
   filtered,
@@ -142,7 +153,8 @@ function AllTransactions({
     splitsExpandedDispatch,
   ]);
 
-  transactions ??= [];
+  // A const, not `??=`, which React Compiler cannot compile.
+  const transactions = transactionsProp ?? EMPTY_TRANSACTIONS;
 
   const runningBalance = useMemo(() => {
     if (!showBalances) {
@@ -211,6 +223,9 @@ function getField(field?: string) {
   }
 }
 
+// Groups (transactions with their splits) the register loads per page
+const PAGE_COUNT = 150;
+
 type AccountInternalProps = {
   accountId?:
     | AccountEntity['id']
@@ -232,6 +247,7 @@ type AccountInternalProps = {
   columnOrder: TransactionTableColumnId[];
   saveColumns: (columns: TransactionTableColumn[], applyToAll: boolean) => void;
   modalShowing?: boolean;
+  modalNeedsRefetch?: boolean;
   accounts: AccountEntity[];
   newTransactions: Array<TransactionEntity['id']>;
   matchedTransactions: Array<TransactionEntity['id']>;
@@ -404,6 +420,8 @@ class AccountInternal extends PureComponent<
     }
   }
 
+  didModalsCloseNeedingRefetch = createModalCloseRefetchTracker();
+
   componentDidUpdate(prevProps: AccountInternalProps) {
     // If the active account changes - close the transaction entry mode
     if (this.state.isAdding && this.props.accountId !== prevProps.accountId) {
@@ -412,8 +430,9 @@ class AccountInternal extends PureComponent<
 
     // If the user was on a different screen and is now coming back to
     // the transactions, automatically refresh the transaction to make
-    // sure we have updated state
-    if (prevProps.modalShowing && !this.props.modalShowing) {
+    // sure we have updated state. Skipped when every modal shown was
+    // opened by code that refreshes the register itself (`openerRefreshes`)
+    if (this.didModalsCloseNeedingRefetch(prevProps, this.props)) {
       // This is clearly a hack. Need a better way to track which
       // things are listening to transactions and refetch
       // automatically (use ActualQL?)
@@ -473,7 +492,14 @@ class AccountInternal extends PureComponent<
     return queries.transactions(accountId);
   };
 
-  updateQuery(query: Query, isFiltered: boolean = false) {
+  updateQuery(
+    query: Query,
+    {
+      isFiltered = false,
+      // Whether `query` filters on `queries.transactionsSearch`
+      isSearch = false,
+    }: { isFiltered?: boolean; isSearch?: boolean } = {},
+  ) {
     if (this.paged) {
       this.paged.unsubscribe();
     }
@@ -487,8 +513,11 @@ class AccountInternal extends PureComponent<
       query = query.filter({ reconciled: { $eq: false } });
     }
 
+    const appendedPages = trackAppendedPages();
     this.paged = pagedQuery(query.select('*'), {
+      onPageData: appendedPages.onPageData,
       onData: async (groupedData, prevData) => {
+        const isOneFetch = appendedPages.takeIsOneFetch();
         const data = ungroupTransactions([...groupedData]);
         const firstLoad = prevData == null;
 
@@ -537,7 +566,18 @@ class AccountInternal extends PureComponent<
         const balances = this.state.showBalances
           ? await this.calculateBalances()
           : null;
-        const filteredAmount = await this.getFilteredAmount();
+        // The rows of a search that hold every match give its sum
+        // without running the search again
+        const filteredAmount = await getFilteredAmount(
+          this.paged?.query,
+          isFiltered,
+          holdsEveryMatch(
+            { isSearch, isOneFetch, groupCount: groupedData.length },
+            PAGE_COUNT,
+          )
+            ? data
+            : undefined,
+        );
         this.setState(
           {
             transactions: data,
@@ -559,7 +599,7 @@ class AccountInternal extends PureComponent<
         );
       },
       options: {
-        pageCount: 150,
+        pageCount: PAGE_COUNT,
         onlySync: true,
       },
     });
@@ -592,10 +632,9 @@ class AccountInternal extends PureComponent<
 
   onSearchDone = debounce(() => {
     if (this.state.search === '') {
-      this.updateQuery(
-        this.currentQuery,
-        this.state.filterConditions.length > 0,
-      );
+      this.updateQuery(this.currentQuery, {
+        isFiltered: this.state.filterConditions.length > 0,
+      });
     } else {
       this.updateQuery(
         queries.transactionsSearch(
@@ -603,7 +642,7 @@ class AccountInternal extends PureComponent<
           this.state.search,
           this.props.dateFormat,
         ),
-        true,
+        { isFiltered: true, isSearch: true },
       );
     }
   }, 150);
@@ -963,6 +1002,9 @@ class AccountInternal extends PureComponent<
             columns,
             onSave: this.onSaveColumns,
           },
+          // Changes no transactions; `onSaveColumns` rebuilds the query when
+          // a column change needs different data
+          openerRefreshes: true,
         },
       }),
     );
@@ -1046,23 +1088,16 @@ class AccountInternal extends PureComponent<
     } as const;
   }
 
-  getFilteredAmount = async () => {
-    if (!this.paged) {
-      return 0;
-    }
-
-    const { data: amount } = await aqlQuery(
-      this.paged.query.calculate({ $sum: '$amount' }),
-    );
-    return amount;
-  };
-
   isNew = (id: TransactionEntity['id']) => {
     return this.props.newTransactions.includes(id);
   };
 
   isMatched = (id: TransactionEntity['id']) => {
     return this.props.matchedTransactions.includes(id);
+  };
+
+  onCloseAddTransaction = () => {
+    this.setState({ isAdding: false });
   };
 
   onCreatePayee = async (name: string) => {
@@ -1146,9 +1181,10 @@ class AccountInternal extends PureComponent<
     void this.props.onBatchEdit({
       name,
       ids,
-      onSuccess: updatedIds => {
+      onRefetch: () => {
         void this.refetchTransactions();
-
+      },
+      onSuccess: updatedIds => {
         if (this.table.current) {
           this.table.current.edit(updatedIds[0], 'select', false);
         }
@@ -1611,7 +1647,7 @@ class AccountInternal extends PureComponent<
           filterConditions: conditions,
         },
         () => {
-          this.updateQuery(this.currentQuery, true);
+          this.updateQuery(this.currentQuery, { isFiltered: true });
         },
       );
     } else {
@@ -1732,7 +1768,7 @@ class AccountInternal extends PureComponent<
     // when transactions have the same values in the sorted column(s)
     this.currentQuery = this.currentQuery.orderBy({ sort_order: sortAscDesc });
 
-    this.updateQuery(this.currentQuery, isFiltered);
+    this.updateQuery(this.currentQuery, { isFiltered });
   };
 
   onSort = (headerClicked: string, ascDesc: 'asc' | 'desc') => {
@@ -1984,9 +2020,7 @@ class AccountInternal extends PureComponent<
                     this.onMakeAsNonSplitTransactions
                   }
                   onRefetch={this.refetchTransactions}
-                  onCloseAddTransaction={() =>
-                    this.setState({ isAdding: false })
-                  }
+                  onCloseAddTransaction={this.onCloseAddTransaction}
                   onCreatePayee={this.onCreatePayee}
                   onApplyFilter={this.onApplyFilter}
                 />
@@ -2074,6 +2108,9 @@ export function Account() {
   } = useTransactionTableColumns(params.id);
 
   const modalShowing = useSelector(state => state.modals.modalStack.length > 0);
+  const modalNeedsRefetch = useSelector(state =>
+    modalStackNeedsRefetch(state.modals.modalStack),
+  );
   const accountsSyncing = useSelector(state => state.account.accountsSyncing);
   const filterConditions = location?.state?.filterConditions || [];
 
@@ -2131,6 +2168,7 @@ export function Account() {
             saveColumns={saveColumns}
             payees={payees}
             modalShowing={modalShowing}
+            modalNeedsRefetch={modalNeedsRefetch}
             accountsSyncing={accountsSyncing}
             filterConditions={filterConditions}
             categoryGroups={categoryGroups}

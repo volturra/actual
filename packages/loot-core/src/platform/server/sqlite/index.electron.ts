@@ -7,7 +7,7 @@ import { logger } from '#platform/server/log';
 
 import { normalise } from './normalise';
 import type { SqlParam } from './types';
-import { unicodeLike } from './unicodeLike';
+import { normalisedLike, unicodeLike } from './unicodeLike';
 
 export type { SqlParam } from './types';
 
@@ -138,6 +138,7 @@ export function openDatabase(pathOrBuffer: string | Buffer): SQL.Database {
   db.function('UNICODE_LIKE', { deterministic: true }, unicodeLike);
   db.function('REGEXP', { deterministic: true }, regexp);
   db.function('NORMALISE', { deterministic: true }, normalise);
+  db.function('NORMALISED_LIKE', { deterministic: true }, normalisedLike);
   return db;
 }
 

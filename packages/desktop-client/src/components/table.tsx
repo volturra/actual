@@ -642,10 +642,14 @@ export function SelectCell({
   style,
   onSelect,
   onEdit,
-  icon = <SvgCheckmark width={6} height={6} />,
+  icon: iconProp,
   buttonProps = {},
   ...props
 }: SelectCellProps) {
+  // In the body because React Compiler cannot compile a JSX default.
+  const icon =
+    // null hides icon
+    iconProp === undefined ? <SvgCheckmark width={6} height={6} /> : iconProp;
   return (
     <Cell
       {...props}
@@ -1047,6 +1051,16 @@ export const Table = forwardRef(
       },
     }));
 
+    // Above the effect: React Compiler rejects use before declaration.
+    function saveScrollDelayed() {
+      saveScrollWidth(
+        scrollContainer.current?.offsetParent
+          ? scrollContainer.current?.offsetParent.clientWidth
+          : 0,
+        scrollContainer.current ? scrollContainer.current.clientWidth : 0,
+      );
+    }
+
     useLayoutEffect(() => {
       // We wait for the list to mount because AutoSizer needs to run
       // before it's mounted
@@ -1063,15 +1077,6 @@ export const Table = forwardRef(
         return () => clearTimeout(timeout);
       }
     });
-
-    function saveScrollDelayed() {
-      saveScrollWidth(
-        scrollContainer.current?.offsetParent
-          ? scrollContainer.current?.offsetParent.clientWidth
-          : 0,
-        scrollContainer.current ? scrollContainer.current.clientWidth : 0,
-      );
-    }
 
     function renderRow({ index, style, key }) {
       const item = items[index];

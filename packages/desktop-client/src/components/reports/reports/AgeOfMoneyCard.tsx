@@ -6,7 +6,6 @@ import { useResponsive } from '@actual-app/components/hooks/useResponsive';
 import { styles } from '@actual-app/components/styles';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
-import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import type { AgeOfMoneyWidget } from '@actual-app/core/types/models';
 
@@ -19,6 +18,7 @@ import { ReportCardName } from '#components/reports/ReportCardName';
 import { calculateTimeRange } from '#components/reports/reportRanges';
 import { createAgeOfMoneySpreadsheet } from '#components/reports/spreadsheets/age-of-money-spreadsheet';
 import { useReport } from '#components/reports/useReport';
+import { getLatestTransaction } from '#reports';
 
 // Determine status color based on age
 export function getAgeColor(age: number | null) {
@@ -62,7 +62,7 @@ export function AgeOfMoneyCard({
 
   useEffect(() => {
     async function fetchLatestTransaction() {
-      const latestTrans = await send('get-latest-transaction');
+      const latestTrans = await getLatestTransaction();
       setLatestTransaction(
         latestTrans ? latestTrans.date : monthUtils.currentDay(),
       );

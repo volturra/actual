@@ -154,6 +154,28 @@ export function ungroupTransactions(transactions: TransactionEntity[]) {
   }, []);
 }
 
+/**
+ * Sum of the amounts of the leaf rows a search matched in an ungrouped
+ * `splits: grouped` result: every non-parent row the backend did not mark
+ * `_unmatched`. A search makes the backend check each row against the filter
+ * and mark the split children that don't match, so when the result holds
+ * every group this is the same set of rows, and the same total, as
+ * `query.calculate({ $sum: '$amount' })`, which is also 0 when no row matched.
+ */
+export function sumMatchedAmounts(
+  transactions: ReadonlyArray<
+    Pick<TransactionEntity, 'amount' | 'is_parent' | '_unmatched'>
+  >,
+): number {
+  let sum = 0;
+  for (const transaction of transactions) {
+    if (!transaction.is_parent && !transaction._unmatched) {
+      sum += transaction.amount;
+    }
+  }
+  return sum;
+}
+
 export function groupTransaction(
   split: TransactionEntity[],
 ): TransactionEntity {
