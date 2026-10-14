@@ -373,10 +373,14 @@ describe('Budget', () => {
     const reseed = vi
       .spyOn(budget, 'reseedSumAmounts')
       .mockRejectedValueOnce(new Error('reseed failed'));
-    await expect(runHandler(handlers['reset-budget-cache'])).rejects.toThrow(
-      'reseed failed',
-    );
-    reseed.mockRestore();
+    try {
+      await expect(runHandler(handlers['reset-budget-cache'])).rejects.toThrow(
+        'reseed failed',
+      );
+    } finally {
+      reseed.mockRestore();
+    }
+    expect(setCacheStatus).toHaveBeenLastCalledWith({ clean: false });
 
     // Later computations don't mark the half-rebuilt cache clean either
     await runMutator(async () => {

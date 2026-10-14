@@ -3,4 +3,4 @@ category: Bugfix
 authors: [volturra]
 ---
 
-Keep the budget cache from being treated as up to date after a failed "Reset budget cache", so the budget reloads correctly next time.
+Fix the budget showing wrong amounts after a failed "Reset budget cache".

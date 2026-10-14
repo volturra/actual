@@ -148,8 +148,9 @@ async function getRemoteFiles() {
 async function resetBudgetCache() {
   const spreadsheet = sheet.get();
 
-  // Hold the cache dirty for the whole reset so an interrupted one doesn't
-  // leave a half-written cache looking clean.
+  // Hold the cache dirty for the whole reset. If the reset fails, the cache
+  // is invalidated so the half-written cache keeps looking dirty after the
+  // barrier lifts, and the budget loads fresh when it's next opened.
   spreadsheet.startCacheBarrier();
 
   try {
@@ -183,11 +184,9 @@ async function resetBudgetCache() {
     spreadsheet.saveCachedCells(seededCells);
 
     await sheet.waitOnSpreadsheet();
-    spreadsheet.cacheInvalid = false;
+    spreadsheet.cacheRebuilt();
   } catch (e) {
-    // The cache was cleared but not refilled. Keep it dirty, even after
-    // later computations, so the budget loads fresh when it's next opened.
-    spreadsheet.cacheInvalid = true;
+    spreadsheet.invalidateCache();
     throw e;
   } finally {
     spreadsheet.endCacheBarrier();
