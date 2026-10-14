@@ -500,7 +500,7 @@ function CustomReportInner({
     categories: categories.list,
     payees,
     accounts,
-    tags,
+    tags: isTagsPending ? undefined : tags,
     tagScope: groupBy === 'Tag' ? tagScope : undefined,
   });
 

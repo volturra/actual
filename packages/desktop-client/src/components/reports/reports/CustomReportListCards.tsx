@@ -75,13 +75,13 @@ function CustomReportListCardsInner({
   const { data: payees = [] } = usePayees();
   const { data: accounts = [] } = useAccounts();
   const { data: categories = { list: [], grouped: [] } } = useCategories();
-  const { data: tags = [] } = useTags();
+  const { data: tags = [], isPending: isTagsPending } = useTags();
 
   const hasWarning = calculateHasWarning(report.conditions ?? [], {
     categories: categories.list,
     payees,
     accounts,
-    tags,
+    tags: isTagsPending ? undefined : tags,
     tagScope: report.groupBy === 'Tag' ? report.tagScope : undefined,
   });
 
