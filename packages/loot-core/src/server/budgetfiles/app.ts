@@ -183,6 +183,12 @@ async function resetBudgetCache() {
     spreadsheet.saveCachedCells(seededCells);
 
     await sheet.waitOnSpreadsheet();
+    spreadsheet.cacheInvalid = false;
+  } catch (e) {
+    // The cache was cleared but not refilled. Keep it dirty, even after
+    // later computations, so the budget loads fresh when it's next opened.
+    spreadsheet.cacheInvalid = true;
+    throw e;
   } finally {
     spreadsheet.endCacheBarrier();
   }

@@ -65,6 +65,9 @@ export class Spreadsheet {
     budgetType: BudgetType;
   };
   cacheBarrier;
+  // Set when the cache was cleared but couldn't be rebuilt. Unlike the
+  // barrier, it holds until a rebuild succeeds or the budget is reopened.
+  cacheInvalid: boolean;
   computeQueue;
   dirtyCells;
   events;
@@ -99,6 +102,7 @@ export class Spreadsheet {
     this.transactionDepth = 0;
     this.saveCache = saveCache;
     this.setCacheStatus = setCacheStatus;
+    this.cacheInvalid = false;
     this.dirtyCells = [];
     this.computeQueue = [];
     this.pausedComputation = null;
@@ -435,7 +439,7 @@ export class Spreadsheet {
   }
 
   markCacheSafe() {
-    if (!this.cacheBarrier) {
+    if (!this.cacheBarrier && !this.cacheInvalid) {
       if (this.setCacheStatus) {
         this.setCacheStatus({ clean: true });
       }
