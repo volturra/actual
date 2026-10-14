@@ -352,6 +352,48 @@ describe('Budget', () => {
     // Everything else really was recomputed
     expect(computed).toContain(`${sheetName}!to-budget`);
   });
+
+  test('a failed budget cache reset keeps the cache dirty', async () => {
+    const spreadsheet = await sheet.loadSpreadsheet(db);
+    const setCacheStatus = vi.fn();
+    spreadsheet.setCacheStatus = setCacheStatus;
+
+    await runMutator(async () => {
+      await db.insertCategoryGroup({
+        id: 'incomeGroup',
+        name: 'incomeGroup',
+        is_income: 1,
+      });
+      await db.insertCategoryGroup({ id: 'group1', name: 'group1' });
+    });
+    await runHandler(handlers['get-budget-bounds']);
+    await sheet.waitOnSpreadsheet();
+    setCacheStatus.mockClear();
+
+    const reseed = vi
+      .spyOn(budget, 'reseedSumAmounts')
+      .mockRejectedValueOnce(new Error('reseed failed'));
+    try {
+      await expect(runHandler(handlers['reset-budget-cache'])).rejects.toThrow(
+        'reseed failed',
+      );
+    } finally {
+      reseed.mockRestore();
+    }
+    expect(setCacheStatus).toHaveBeenLastCalledWith({ clean: false });
+
+    // Later computations don't mark the half-rebuilt cache clean either
+    await runMutator(async () => {
+      await db.insertCategory({ name: 'foo', cat_group: 'group1' });
+    });
+    await sheet.waitOnSpreadsheet();
+    expect(setCacheStatus).not.toHaveBeenCalledWith({ clean: true });
+
+    // A reset that succeeds rebuilds the cache and marks it clean again
+    setCacheStatus.mockClear();
+    await runHandler(handlers['reset-budget-cache']);
+    expect(setCacheStatus).toHaveBeenLastCalledWith({ clean: true });
+  });
 });
 
 describe('Categories', () => {
