@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
@@ -60,7 +60,7 @@ function FormulaInner({ widget }: FormulaInnerProps) {
   const { isNarrowWidth } = useResponsive();
   const themeColors = useThemeColors();
 
-  const queriesRef = useRef(widget?.meta?.queries || {});
+  const [queries, setQueries] = useState(widget?.meta?.queries || {});
   const [queriesVersion, setQueriesVersion] = useState(0);
   const {
     data: { list: categories, grouped: categoryGroups } = {
@@ -101,7 +101,7 @@ function FormulaInner({ widget }: FormulaInnerProps) {
     error,
   } = useFormulaExecution(
     formula,
-    queriesRef.current,
+    queries,
     queriesVersion,
     undefined,
     simpleAccounts,
@@ -139,19 +139,16 @@ function FormulaInner({ widget }: FormulaInnerProps) {
   }, [categories, categoryGroups]);
   const { result: colorResult, error: colorError } = useFormulaExecution(
     colorFormula,
-    queriesRef.current,
+    queries,
     queriesVersion,
     colorVariables,
     simpleAccounts,
   );
 
-  const handleQueriesChange = useCallback(
-    (newQueries: typeof queriesRef.current) => {
-      queriesRef.current = newQueries;
-      setQueriesVersion(v => v + 1);
-    },
-    [],
-  );
+  const handleQueriesChange = useCallback((newQueries: typeof queries) => {
+    setQueries(newQueries);
+    setQueriesVersion(v => v + 1);
+  }, []);
 
   const updateDashboardWidgetMutation = useUpdateDashboardWidgetMutation();
 
@@ -176,7 +173,7 @@ function FormulaInner({ widget }: FormulaInnerProps) {
           ...(widget.meta ?? {}),
           name,
           formula,
-          queries: queriesRef.current,
+          queries,
           fontSizeMode,
           staticFontSize,
           showTitle,
@@ -206,7 +203,7 @@ function FormulaInner({ widget }: FormulaInnerProps) {
           meta: {
             ...(widget.meta ?? {}),
             formula,
-            queries: queriesRef.current,
+            queries,
             fontSizeMode,
             staticFontSize,
             showTitle,
@@ -375,7 +372,7 @@ function FormulaInner({ widget }: FormulaInnerProps) {
                 value={formula}
                 onChange={setFormula}
                 mode="query"
-                queries={queriesRef.current}
+                queries={queries}
                 categoryBadges={categoryBadges}
                 singleLine={false}
                 showLineNumbers
@@ -463,7 +460,7 @@ function FormulaInner({ widget }: FormulaInnerProps) {
                   variables={colorVariables}
                   onChange={setColorFormula}
                   mode="query"
-                  queries={queriesRef.current}
+                  queries={queries}
                   categoryBadges={categoryBadges}
                   singleLine
                   showLineNumbers={false}
@@ -492,7 +489,7 @@ function FormulaInner({ widget }: FormulaInnerProps) {
           }}
         >
           <QueryManager
-            queries={queriesRef.current}
+            queries={queries}
             onQueriesChange={handleQueriesChange}
           />
         </View>

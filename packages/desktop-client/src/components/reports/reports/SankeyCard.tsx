@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactElement } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -158,15 +158,14 @@ export function SankeyCard({
   ]);
 
   const baseGraph = useReport('sankey', baseGraphParams ?? defaultGetBaseGraph);
-  const baseGraphRef = useRef(baseGraph);
+  // Keep showing the last loaded graph while new params load (`baseGraph`
+  // is null until then).
+  const [lastBaseGraph, setLastBaseGraph] = useState(baseGraph);
+  if (baseGraph && baseGraph !== lastBaseGraph) {
+    setLastBaseGraph(baseGraph);
+  }
 
-  useEffect(() => {
-    if (baseGraph) {
-      baseGraphRef.current = baseGraph;
-    }
-  }, [baseGraph]);
-
-  const displayBaseGraph = baseGraph || baseGraphRef.current;
+  const displayBaseGraph = baseGraph || lastBaseGraph;
   const compactData = useMemo(() => {
     if (!displayBaseGraph) {
       return null;

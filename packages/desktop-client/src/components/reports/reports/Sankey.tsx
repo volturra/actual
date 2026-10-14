@@ -619,15 +619,14 @@ function SankeyInner({ widget }: SankeyInnerProps) {
   ) => setData(new Map());
 
   const baseGraph = useReport('sankey', baseGraphParams ?? defaultGetBaseGraph);
-  const baseGraphRef = useRef(baseGraph);
+  // Keep showing the last loaded graph while new params load (`baseGraph`
+  // is null until then).
+  const [lastBaseGraph, setLastBaseGraph] = useState(baseGraph);
+  if (baseGraph && baseGraph !== lastBaseGraph) {
+    setLastBaseGraph(baseGraph);
+  }
 
-  useEffect(() => {
-    if (baseGraph) {
-      baseGraphRef.current = baseGraph;
-    }
-  }, [baseGraph]);
-
-  const displayBaseGraph = baseGraph || baseGraphRef.current;
+  const displayBaseGraph = baseGraph || lastBaseGraph;
   const displayData: SankeyData | null = useMemo(() => {
     if (!displayBaseGraph) {
       return null;

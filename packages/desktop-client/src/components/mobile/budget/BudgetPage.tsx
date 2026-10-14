@@ -2,6 +2,7 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -854,8 +855,13 @@ function OverspendingBanner({ month, onBudgetAction, budgetType, ...props }) {
     totalAmount: totalOverspending,
   } = useOverspentCategories({ month });
 
+  // `onOpenCoverCategoryModal` is handed to the category selection modal,
+  // which stays open across covers, so it reads the latest amounts through
+  // this ref. Updated after commit so render stays pure.
   const amountsByCategoryRef = useRef(amountsByCategory);
-  amountsByCategoryRef.current = amountsByCategory;
+  useLayoutEffect(() => {
+    amountsByCategoryRef.current = amountsByCategory;
+  });
 
   const categoryGroupsToShow = useMemo(
     () =>

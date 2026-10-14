@@ -1,5 +1,5 @@
 // oxlint-disable typescript-paths/absolute-parent-import
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 
 import { Block } from '@actual-app/components/block';
@@ -107,19 +107,24 @@ export function BalanceForecastCard({
         ? t('Failed to load forecast')
         : null;
   const normalizedForecastData = forecastData ?? null;
-  const committedChartRange = useRef({ start, end });
+  // The range of the last forecast that finished loading, shown while
+  // placeholder data for a new range is on screen.
+  const [committedChartRange, setCommittedChartRange] = useState({
+    start,
+    end,
+  });
 
   const onCardHover = () => setIsCardHovered(true);
   const onCardHoverEnd = () => setIsCardHovered(false);
 
-  const chartRange = isPlaceholderData
-    ? committedChartRange.current
-    : { start, end };
-  useEffect(() => {
-    if (normalizedForecastData && !isPlaceholderData) {
-      committedChartRange.current = { start, end };
-    }
-  }, [end, isPlaceholderData, normalizedForecastData, start]);
+  if (
+    normalizedForecastData &&
+    !isPlaceholderData &&
+    (committedChartRange.start !== start || committedChartRange.end !== end)
+  ) {
+    setCommittedChartRange({ start, end });
+  }
+  const chartRange = isPlaceholderData ? committedChartRange : { start, end };
 
   const chartData = buildBalanceForecastChartData({
     forecastData: normalizedForecastData,

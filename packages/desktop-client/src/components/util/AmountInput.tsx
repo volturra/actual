@@ -116,6 +116,21 @@ export function AmountInput({
     }
   }, [getAmount]);
 
+  function fireUpdate(amount) {
+    onUpdate?.(amount);
+
+    if (sign) {
+      setSymbol(sign);
+    } else {
+      if (amount > 0) {
+        setSymbol('+');
+      } else if (amount < 0) {
+        setSymbol('-');
+      }
+    }
+    setValue(format(Math.abs(amount), 'financial'));
+  }
+
   function onSwitch() {
     if (sign) {
       return;
@@ -142,21 +157,6 @@ export function AmountInput({
 
     setValue(newText || '');
     onChangeValue?.(newText);
-  }
-
-  function fireUpdate(amount) {
-    onUpdate?.(amount);
-
-    if (sign) {
-      setSymbol(sign);
-    } else {
-      if (amount > 0) {
-        setSymbol('+');
-      } else if (amount < 0) {
-        setSymbol('-');
-      }
-    }
-    setValue(format(Math.abs(amount), 'financial'));
   }
 
   function onInputAmountBlur(e) {

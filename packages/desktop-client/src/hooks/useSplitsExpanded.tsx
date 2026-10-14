@@ -4,7 +4,6 @@ import React, {
   useEffect,
   useMemo,
   useReducer,
-  useRef,
 } from 'react';
 import type { Dispatch, ReactNode } from 'react';
 
@@ -97,8 +96,6 @@ export function SplitsExpandedProvider({
   children,
   initialMode = 'expand',
 }: SplitsExpandedProviderProps) {
-  const previousState = useRef<SplitState | null>(null);
-
   const [state, dispatch] = useReducer(
     (state: SplitState, action: Actions): SplitState => {
       switch (action.type) {
@@ -159,11 +156,12 @@ export function SplitsExpandedProvider({
           throw new Error('Unrecognized action');
       }
     },
-    previousState.current || {
+    initialMode,
+    (mode): SplitState => ({
       ids: new Set<string>(),
-      mode: initialMode,
+      mode,
       transitionId: null,
-    },
+    }),
   );
 
   useEffect(() => {
@@ -174,13 +172,6 @@ export function SplitsExpandedProvider({
       }, 250);
     }
   }, [state.transitionId]);
-
-  useEffect(() => {
-    // In a finished state, cache the state
-    if (state.transitionId == null) {
-      previousState.current = state;
-    }
-  }, [state]);
 
   const value = useMemo(() => ({ state, dispatch }), [state, dispatch]);
 

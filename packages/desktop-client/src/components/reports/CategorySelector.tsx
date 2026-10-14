@@ -29,7 +29,7 @@ type CategorySelectorProps = {
 
 export function CategorySelector({
   categoryGroups,
-  selectedCategories,
+  selectedCategories: selectedCategoriesProp,
   setSelectedCategories,
   showHiddenCategories = true,
 }: CategorySelectorProps) {
@@ -46,9 +46,10 @@ export function CategorySelector({
     filteredGroup(categoryGroup).map(category => selectAll.push(category)),
   );
 
-  if (selectedCategories === undefined) {
-    selectedCategories = categoryGroups.flatMap(cg => cg.categories);
-  }
+  const selectedCategories =
+    selectedCategoriesProp === undefined
+      ? categoryGroups.flatMap(cg => cg.categories)
+      : selectedCategoriesProp;
 
   const selectedCategoryMap = useMemo(
     () => selectedCategories.map(selected => selected.id),
