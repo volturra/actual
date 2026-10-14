@@ -1,6 +1,6 @@
 ---
-category: Bugfix
+category: Maintenance
 authors: [volturra]
 ---
 
-Stop custom reports split by tag from briefly warning about a missing tag while tags are still loading.
+Avoid a spurious missing-tag warning in custom reports scoped to selected tags while tags load.

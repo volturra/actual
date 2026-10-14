@@ -49,7 +49,7 @@ describe('calculateHasWarning tag scope', () => {
       calculateHasWarning([], {
         ...entities,
         tags: undefined,
-        tagScope: { mode: 'selected', tagIds: ['visible-id'] },
+        tagScope: { mode: 'selected', tagIds: ['missing-id'] },
       }),
     ).toBe(false);
   });
