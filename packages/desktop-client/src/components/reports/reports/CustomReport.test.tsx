@@ -23,6 +23,7 @@ vi.mock('#hooks/useReport', () => ({
 vi.mock('#hooks/useAccounts', () => ({ useAccounts: () => ({}) }));
 vi.mock('#hooks/useCategories', () => ({ useCategories: () => ({}) }));
 vi.mock('#hooks/usePayees', () => ({ usePayees: () => ({}) }));
+vi.mock('#hooks/useTags', () => ({ useTags: () => ({}) }));
 vi.mock('#components/reports/ReportSidebar', () => ({
   ReportSidebar: () => null,
 }));

@@ -60,6 +60,7 @@ function Card({
           payees={[]}
           accounts={[]}
           categories={{ list: [], grouped: [] }}
+          tags={[]}
           earliestTransaction={latestTransaction && '2025-01-15'}
           latestTransaction={latestTransaction}
         />

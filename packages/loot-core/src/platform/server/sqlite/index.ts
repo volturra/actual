@@ -113,10 +113,16 @@ export function runQuery<T>(
   try {
     if (fetchAll) {
       stmt.bind(params);
+      const columns = stmt.getColumnNames();
       const rows = [];
 
       while (stmt.step()) {
-        rows.push(stmt.getAsObject());
+        const values = stmt.get();
+        const row = {};
+        for (let i = 0; i < columns.length; i++) {
+          row[columns[i]] = values[i];
+        }
+        rows.push(row);
       }
       return rows;
     }
@@ -134,7 +140,8 @@ export function runQuery<T>(
     // IndexedDB file layer throws) is left running by sql.js. A running
     // write keeps every later COMMIT on this connection failing with
     // "cannot commit transaction - SQL statements in progress", and a
-    // running read keeps holding its lock.
+    // running read keeps holding its lock. sql.js also keeps statements
+    // alive in the WASM heap until they are freed.
     if (isPrepared) {
       stmt.reset();
     } else {
