@@ -49,6 +49,22 @@ function makeSpreadsheet() {
   });
   const cellCache: CellCache = {};
   let observersDisabled = false;
+  // `get` calls made in the same task, sent together as one `get-cells`
+  // request once the task is done.
+  let pendingGets: Array<{
+    cell: { sheetName: string; name: string };
+    resolve: (value: CellCacheValue) => void;
+    reject: (error: unknown) => void;
+  }> | null = null;
+
+  function flushPendingGets() {
+    const gets = pendingGets ?? [];
+    pendingGets = null;
+    send('get-cells', { cells: gets.map(get => get.cell) }).then(
+      values => gets.forEach((get, index) => get.resolve(values[index])),
+      error => gets.forEach(get => get.reject(error)),
+    );
+  }
 
   class Spreadsheet {
     observeCell(name: string, callback: CellObserverCallback): () => void {
@@ -169,8 +185,16 @@ function makeSpreadsheet() {
       return cleanup;
     }
 
-    get(sheetName: string, name: string) {
-      return send('get-cell', { sheetName, name });
+    get(sheetName: string, name: string): Promise<CellCacheValue> {
+      // Binding a month of budget cells calls this hundreds of times in a
+      // row; batch them so they cost one round-trip instead of one each.
+      return new Promise((resolve, reject) => {
+        if (!pendingGets) {
+          pendingGets = [];
+          queueMicrotask(flushPendingGets);
+        }
+        pendingGets.push({ cell: { sheetName, name }, resolve, reject });
+      });
     }
 
     getCellNames(sheetName: string) {
