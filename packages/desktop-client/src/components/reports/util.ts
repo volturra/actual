@@ -42,6 +42,7 @@ export function indexCashFlow<
 /**
  * Checks if the given conditions have issues
  * (i.e. a non-existing category/payee/account/tag being used).
+ * Hidden tags count as missing.
  */
 
 export function calculateHasWarning(
@@ -50,26 +51,30 @@ export function calculateHasWarning(
     categories,
     accounts,
     payees,
-    tags = [],
+    tags,
     tagScope,
   }: {
     categories: CategoryEntity[];
     accounts: AccountEntity[];
     payees: PayeeEntity[];
-    tags?: TagEntity[];
+    /**
+     * `undefined` while the tags are still loading. The tag scope check is
+     * skipped then, so selected tags aren't reported missing before they
+     * arrive.
+     */
+    tags: TagEntity[] | undefined;
     tagScope?: CustomReportTagScope;
   },
 ) {
   const categoryIds = new Set(categories.map(({ id }) => id));
   const payeeIds = new Set(payees.map(({ id }) => id));
   const accountIds = new Set(accounts.map(({ id }) => id));
-  const tagIds = new Set(tags.filter(tag => !tag.hidden).map(({ id }) => id));
 
-  if (
-    tagScope?.mode === 'selected' &&
-    tagScope.tagIds.some(id => !tagIds.has(id))
-  ) {
-    return true;
+  if (tags && tagScope?.mode === 'selected') {
+    const tagIds = new Set(tags.filter(tag => !tag.hidden).map(({ id }) => id));
+    if (tagScope.tagIds.some(id => !tagIds.has(id))) {
+      return true;
+    }
   }
 
   if (!conditions) {

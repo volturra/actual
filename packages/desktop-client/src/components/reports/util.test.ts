@@ -43,4 +43,14 @@ describe('calculateHasWarning tag scope', () => {
       }),
     ).toBe(true);
   });
+
+  it("doesn't warn about selected tags while the tags are loading", () => {
+    expect(
+      calculateHasWarning([], {
+        ...entities,
+        tags: undefined,
+        tagScope: { mode: 'selected', tagIds: ['missing-id'] },
+      }),
+    ).toBe(false);
+  });
 });
