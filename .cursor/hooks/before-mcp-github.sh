@@ -2,10 +2,10 @@
 # Cursor `beforeMCPExecution` adapter.
 #
 # Dispatches github MCP calls to the matching shared guard(s) in
-# scripts/agent-hooks/: comment/review/issue writers must be 🤖-prefixed
-# (github-comment-style.sh), issue_write must not create issues
-# (no-issue-create.sh), and create_pull_request must leave the PR template
-# blank (pr-template-blank.sh).
+# scripts/agent-hooks/: issue_write must not create issues (no-issue-create.sh).
+# This fork doesn't wire upstream's 🤖-prefix (github-comment-style.sh) or
+# blank-PR-template (pr-template-blank.sh) guards; see
+# .github/agents/pr-and-commit-rules.md.
 # Cursor input on stdin: { tool_name, tool_input, ... }. Output on stdout:
 # { permission: "allow" | "deny", userMessage, agentMessage }.
 
@@ -39,15 +39,7 @@ tool=$(printf '%s' "$input" | jq -re '.tool_name' 2>/dev/null) ||
   deny "Invalid Cursor hook payload: could not read .tool_name."
 case "$tool" in
   mcp__github__issue_write)
-    guards="no-issue-create.sh github-comment-style.sh" ;;
-  mcp__github__add_issue_comment | \
-    mcp__github__add_comment_to_pending_review | \
-    mcp__github__add_reply_to_pull_request_comment | \
-    mcp__github__pull_request_review_write | \
-    mcp__github__sub_issue_write)
-    guards=github-comment-style.sh ;;
-  mcp__github__create_pull_request)
-    guards=pr-template-blank.sh ;;
+    guards=no-issue-create.sh ;;
   *) allow ;;
 esac
 
