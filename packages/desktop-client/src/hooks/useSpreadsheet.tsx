@@ -57,13 +57,21 @@ function makeSpreadsheet() {
     reject: (error: unknown) => void;
   }> | null = null;
 
-  function flushPendingGets() {
+  async function flushPendingGets() {
     const gets = pendingGets ?? [];
     pendingGets = null;
-    send('get-cells', { cells: gets.map(get => get.cell) }).then(
-      values => gets.forEach((get, index) => get.resolve(values[index])),
-      error => gets.forEach(get => get.reject(error)),
-    );
+    try {
+      const values = await send('get-cells', {
+        cells: gets.map(get => get.cell),
+      });
+      if (!Array.isArray(values) || values.length !== gets.length) {
+        throw new Error('get-cells returned an unexpected result');
+      }
+      gets.forEach((get, index) => get.resolve(values[index]));
+    } catch (error) {
+      // Settle every caller so none of them waits forever.
+      gets.forEach(get => get.reject(error));
+    }
   }
 
   class Spreadsheet {
@@ -191,7 +199,7 @@ function makeSpreadsheet() {
       return new Promise((resolve, reject) => {
         if (!pendingGets) {
           pendingGets = [];
-          queueMicrotask(flushPendingGets);
+          queueMicrotask(() => void flushPendingGets());
         }
         pendingGets.push({ cell: { sheetName, name }, resolve, reject });
       });

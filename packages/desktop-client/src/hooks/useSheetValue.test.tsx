@@ -438,6 +438,34 @@ describe('useSheetValue', () => {
     });
   });
 
+  it('ignores a batched reply for cells that changed while it was in flight', async () => {
+    const { getSpreadsheet } = setup({ sheet: 'budget202401' });
+    await resolveGetCell('budget202401!to-budget', 100);
+
+    const spreadsheet = getSpreadsheet();
+    const first = vi.fn();
+    const second = vi.fn();
+    spreadsheet.bind('budget202402', 'to-budget', first);
+    spreadsheet.bind('budget202403', 'to-budget', second);
+    await flushGets();
+
+    emitCellsChanged([
+      { name: 'budget202402!to-budget', value: 250 },
+      { name: 'budget202403!to-budget', value: 350 },
+    ]);
+    await resolveGetCell('budget202402!to-budget', 200);
+    await resolveGetCell('budget202403!to-budget', 300);
+
+    expect(first).toHaveBeenLastCalledWith({
+      name: 'budget202402!to-budget',
+      value: 250,
+    });
+    expect(second).toHaveBeenLastCalledWith({
+      name: 'budget202403!to-budget',
+      value: 350,
+    });
+  });
+
   it('does not cache changes to cells that are neither cached nor observed', () => {
     const { getSpreadsheet } = setup({ sheet: 'budget202401' });
 
