@@ -139,7 +139,7 @@ function getChildTagNotes(categoryName: string, amount: number): string {
   return tags.join(' ');
 }
 
-async function insertDemoTags(handlers: Handlers) {
+export async function insertDemoTags(handlers: Handlers) {
   for (const tagDef of DEMO_TAGS) {
     await handlers['tags-create'](tagDef);
   }
