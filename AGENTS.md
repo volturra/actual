@@ -525,7 +525,7 @@ Before committing changes, ensure:
 
 ## Pull Request Guidelines
 
-See [PR and Commit Rules](.github/agents/pr-and-commit-rules.md) for complete PR creation rules, including title prefix requirements, labeling, the GitHub comment/review/issue 🤖 prefix, and PR template handling.
+See [PR and Commit Rules](.github/agents/pr-and-commit-rules.md) for complete PR creation rules, including title prefix requirements, labeling, and PR descriptions.
 
 ## Code Review Guidelines
 
