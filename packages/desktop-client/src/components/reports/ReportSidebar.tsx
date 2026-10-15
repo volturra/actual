@@ -230,10 +230,10 @@ export function ReportSidebar({
   };
 
   const onChangeSortBy = (cond?: sortByOpType) => {
-    cond ??= 'desc';
-    setSessionReport('sortBy', cond);
+    const sortBy = cond ?? 'desc';
+    setSessionReport('sortBy', sortBy);
     onReportChange({ type: 'modify' });
-    setSortBy(cond);
+    setSortBy(sortBy);
   };
 
   const rangeOptions = useMemo(() => {

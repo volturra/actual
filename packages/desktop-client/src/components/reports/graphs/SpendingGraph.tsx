@@ -169,19 +169,18 @@ export function SpendingGraph({
 
   const selection = mode === 'single-month' ? compareTo : mode;
 
-  const thisMonthMax = data.intervalData.reduce((a, b) =>
-    a.months[compare]?.[balanceTypeOp] < b.months[compare]?.[balanceTypeOp]
-      ? a
-      : b,
-  ).months[compare]?.[balanceTypeOp];
+  const thisMonthMax = data.intervalData.reduce((a, b) => {
+    const aValue = a.months[compare]?.[balanceTypeOp];
+    const bValue = b.months[compare]?.[balanceTypeOp];
+    return aValue < bValue ? a : b;
+  }).months[compare]?.[balanceTypeOp];
   const selectionMax = ['average', 'budget'].includes(selection)
     ? data.intervalData[27][selection]
-    : data.intervalData.reduce((a, b) =>
-        a.months[selection]?.[balanceTypeOp] <
-        b.months[selection]?.[balanceTypeOp]
-          ? a
-          : b,
-      ).months[selection]?.[balanceTypeOp];
+    : data.intervalData.reduce((a, b) => {
+        const aValue = a.months[selection]?.[balanceTypeOp];
+        const bValue = b.months[selection]?.[balanceTypeOp];
+        return aValue < bValue ? a : b;
+      }).months[selection]?.[balanceTypeOp];
   const maxYAxis = selectionMax > thisMonthMax;
   const dataMax = Math.max(
     ...data.intervalData.map(i => i.months[compare]?.cumulative),

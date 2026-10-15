@@ -520,10 +520,11 @@ function SelectedTransactionsFloatingActionBar({
                         break;
                     }
 
+                    const displayText = String(displayValue);
                     showUndoNotification({
-                      message: `Successfully updated ${name} of ${ids.length} transaction${ids.length > 1 ? 's' : ''} to [${String(displayValue)}](#${String(displayValue)}).`,
+                      message: `Successfully updated ${name} of ${ids.length} transaction${ids.length > 1 ? 's' : ''} to [${displayText}](#${displayText}).`,
                       messageActions: {
-                        [String(displayValue)]: () => {
+                        [displayText]: () => {
                           switch (name) {
                             case 'account':
                               void navigate(`/accounts/${String(value)}`);

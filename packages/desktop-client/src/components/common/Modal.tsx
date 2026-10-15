@@ -34,6 +34,8 @@ import { useModalState } from '#hooks/useModalState';
 
 export const MODAL_Z_INDEX = 3000;
 
+const smallScreenMediaQuery = `@media (min-width: ${tokens.breakpoint_small})`;
+
 type ModalProps = ComponentPropsWithRef<typeof ReactAriaModal> & {
   name: string;
   isLoading?: boolean;
@@ -137,7 +139,7 @@ export const Modal = ({
                     color: theme.pageText,
                     backgroundColor: theme.modalBackground,
                     opacity: isHidden ? 0 : 1,
-                    [`@media (min-width: ${tokens.breakpoint_small})`]: {
+                    [smallScreenMediaQuery]: {
                       minWidth: tokens.breakpoint_small,
                     },
                     overflowY: 'auto',

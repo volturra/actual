@@ -840,12 +840,12 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
           return;
         }
 
+        const shouldDeleteOriginal =
+          !isAdding &&
+          unserializedTransaction.id &&
+          !unserializedTransaction.id.startsWith('temp');
         try {
-          if (
-            !isAdding &&
-            unserializedTransaction.id &&
-            !unserializedTransaction.id.startsWith('temp')
-          ) {
+          if (shouldDeleteOriginal) {
             await send('transaction-delete', {
               id: unserializedTransaction.id,
             });

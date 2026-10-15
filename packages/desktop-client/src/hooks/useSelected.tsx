@@ -4,6 +4,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useReducer,
   useRef,
 } from 'react';
@@ -262,8 +263,13 @@ export function SelectedProvider<T extends Item>({
   children,
 }: SelectedProviderProps<T>) {
   const { items: instanceItems, dispatch: instanceDispatch } = instance;
+  // Read by the async `select-all` branch below, which runs from event
+  // handlers after commit. Updating it in a layout effect (instead of during
+  // render) still gives those handlers the latest committed items.
   const latestItems = useRef(instanceItems);
-  latestItems.current = instanceItems;
+  useLayoutEffect(() => {
+    latestItems.current = instanceItems;
+  });
 
   const dispatch = useCallback(
     async (action: Actions) => {

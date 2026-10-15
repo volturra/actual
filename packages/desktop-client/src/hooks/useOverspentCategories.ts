@@ -87,7 +87,8 @@ export function useOverspentCategories({
         } else {
           // Update to remove covered category.
           setCarryoverFlagByCategory(prev => {
-            const { [categoryId]: _, ...rest } = prev;
+            const rest = { ...prev };
+            delete rest[categoryId];
             return rest;
           });
         }
@@ -113,7 +114,8 @@ export function useOverspentCategories({
         } else if (balance >= 0) {
           // Update to remove covered category.
           setOverspendingByCategory(prev => {
-            const { [categoryId]: _, ...rest } = prev;
+            const rest = { ...prev };
+            delete rest[categoryId];
             return rest;
           });
         }
