@@ -14,6 +14,16 @@ let serverHandler:
   null;
 
 export const initServer = (handlers: Record<string, Handler>) => {
+  const getCell = handlers['get-cell'];
+  if (getCell && !handlers['get-cells']) {
+    // Like the real server, answer a batched `get-cells` one cell at a time.
+    handlers = {
+      ...handlers,
+      'get-cells': args =>
+        Promise.all((args as { cells: unknown[] }).cells.map(getCell)),
+    };
+  }
+
   serverHandler = msg => {
     const { name, args, catchErrors } = msg;
     if (handlers[name]) {

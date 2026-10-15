@@ -18,18 +18,25 @@ const mocks = vi.hoisted(() => ({
   cellsChangedListeners: new Set<(cells: CellValue[]) => void>(),
 }));
 
+type CellRef = { sheetName: string; name: string };
+
 vi.mock('@actual-app/core/platform/client/connection', () => ({
-  send: vi.fn((method: string, args: { sheetName: string; name: string }) => {
-    if (method !== 'get-cell') {
+  send: vi.fn((method: string, args: { cells: CellRef[] }) => {
+    if (method !== 'get-cells') {
       return Promise.resolve(null);
     }
-    return new Promise<CellValue>(resolve => {
-      const name = `${args.sheetName}!${args.name}`;
-      mocks.pendingGets.set(name, [
-        ...(mocks.pendingGets.get(name) ?? []),
-        resolve,
-      ]);
-    });
+    return Promise.all(
+      args.cells.map(
+        cell =>
+          new Promise<CellValue>(resolve => {
+            const name = `${cell.sheetName}!${cell.name}`;
+            mocks.pendingGets.set(name, [
+              ...(mocks.pendingGets.get(name) ?? []),
+              resolve,
+            ]);
+          }),
+      ),
+    );
   }),
   listen: vi.fn((event: string, callback: (cells: CellValue[]) => void) => {
     if (event !== 'cells-changed') {
@@ -42,7 +49,14 @@ vi.mock('@actual-app/core/platform/client/connection', () => ({
   }),
 }));
 
+// Lets the spreadsheet send the `get-cells` request it batches up in a
+// microtask.
+async function flushGets() {
+  await act(() => Promise.resolve());
+}
+
 async function resolveGetCell(name: string, value: CellValue['value']) {
+  await flushGets();
   const resolvers = mocks.pendingGets.get(name);
   if (!resolvers?.length) {
     throw new Error(`No pending get-cell request for ${name}`);
@@ -375,9 +389,9 @@ describe('useSheetValue', () => {
     rerender({ binding: { name: 'to-budget', query: secondQuery } });
 
     // The new query is registered and the cell is fetched again.
-    expect(send).toHaveBeenLastCalledWith('get-cell', {
-      sheetName: 'budget202401',
-      name: 'to-budget',
+    await flushGets();
+    expect(send).toHaveBeenLastCalledWith('get-cells', {
+      cells: [{ sheetName: 'budget202401', name: 'to-budget' }],
     });
     expect(send).toHaveBeenCalledWith('create-query', {
       sheetName: 'budget202401',
@@ -386,6 +400,70 @@ describe('useSheetValue', () => {
     });
     await resolveGetCell('budget202401!to-budget', 200);
     expect(lastOf(renders)).toBe(200);
+  });
+
+  it('fetches cells bound together in one request', async () => {
+    const { getSpreadsheet } = setup({ sheet: 'budget202401' });
+    await resolveGetCell('budget202401!to-budget', 100);
+    vi.mocked(send).mockClear();
+
+    const spreadsheet = getSpreadsheet();
+    const first = vi.fn();
+    const second = vi.fn();
+    spreadsheet.bind('budget202402', 'to-budget', first);
+    spreadsheet.bind('budget202403', 'to-budget', second);
+    await flushGets();
+
+    expect(vi.mocked(send).mock.calls).toEqual([
+      [
+        'get-cells',
+        {
+          cells: [
+            { sheetName: 'budget202402', name: 'to-budget' },
+            { sheetName: 'budget202403', name: 'to-budget' },
+          ],
+        },
+      ],
+    ]);
+
+    await resolveGetCell('budget202402!to-budget', 200);
+    await resolveGetCell('budget202403!to-budget', 300);
+    expect(first).toHaveBeenLastCalledWith({
+      name: 'budget202402!to-budget',
+      value: 200,
+    });
+    expect(second).toHaveBeenLastCalledWith({
+      name: 'budget202403!to-budget',
+      value: 300,
+    });
+  });
+
+  it('ignores a batched reply for cells that changed while it was in flight', async () => {
+    const { getSpreadsheet } = setup({ sheet: 'budget202401' });
+    await resolveGetCell('budget202401!to-budget', 100);
+
+    const spreadsheet = getSpreadsheet();
+    const first = vi.fn();
+    const second = vi.fn();
+    spreadsheet.bind('budget202402', 'to-budget', first);
+    spreadsheet.bind('budget202403', 'to-budget', second);
+    await flushGets();
+
+    emitCellsChanged([
+      { name: 'budget202402!to-budget', value: 250 },
+      { name: 'budget202403!to-budget', value: 350 },
+    ]);
+    await resolveGetCell('budget202402!to-budget', 200);
+    await resolveGetCell('budget202403!to-budget', 300);
+
+    expect(first).toHaveBeenLastCalledWith({
+      name: 'budget202402!to-budget',
+      value: 250,
+    });
+    expect(second).toHaveBeenLastCalledWith({
+      name: 'budget202403!to-budget',
+      value: 350,
+    });
   });
 
   it('does not cache changes to cells that are neither cached nor observed', () => {

@@ -6,6 +6,7 @@ import { resolveName, unresolveName } from './util';
 
 export type SpreadsheetHandlers = {
   'get-cell': typeof getCell;
+  'get-cells': typeof getCells;
   'get-cell-names': typeof getCellNames;
   'create-query': typeof createQuery;
 };
@@ -13,21 +14,29 @@ export type SpreadsheetHandlers = {
 // Expose functions to the client
 export const app = createApp<SpreadsheetHandlers>();
 app.method('get-cell', getCell);
+app.method('get-cells', getCells);
 app.method('get-cell-names', getCellNames);
 app.method('create-query', createQuery);
 
-async function getCell({
-  sheetName,
-  name,
-}: {
-  sheetName: string;
-  name: string;
-}) {
+type CellRef = { sheetName: string; name: string };
+
+function readCell({ sheetName, name }: CellRef) {
   // Query cells are computed one at a time, with other requests running in
   // between, so mid-run this can return null (not computed yet) or an old
   // value for one. Its final value is sent to the client through `change`.
   const node = sheet.get()._getNode(resolveName(sheetName, name));
   return { name: node.name, value: node.value };
+}
+
+async function getCell(cell: CellRef) {
+  return readCell(cell);
+}
+
+// Reads many cells in one request. The budget page binds hundreds of cells
+// at once (every cell of a newly shown month), and one message per cell
+// costs far more than reading the cells themselves.
+async function getCells({ cells }: { cells: CellRef[] }) {
+  return cells.map(readCell);
 }
 
 async function getCellNames({ sheetName }: { sheetName: string }) {
