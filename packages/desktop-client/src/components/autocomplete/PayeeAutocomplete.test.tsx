@@ -169,7 +169,6 @@ function mockQueryResult<T>(data: T): UseQueryResult<T, Error> {
     isStale: false,
     isSuccess: true,
     isEnabled: true,
-    promise: Promise.resolve(data),
     refetch: vi.fn(),
     status: 'success',
   };
