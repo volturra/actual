@@ -169,7 +169,6 @@ function mockQueryResult<T>(data: T): UseQueryResult<T, Error> {
     isStale: false,
     isSuccess: true,
     isEnabled: true,
-    promise: Promise.resolve(data),
     refetch: vi.fn(),
     status: 'success',
   };
@@ -200,7 +199,6 @@ function mockPendingQueryResult<T>(): UseQueryResult<T, Error> {
     isStale: true,
     isSuccess: false,
     isEnabled: true,
-    promise: new Promise<T>(() => undefined),
     refetch: vi.fn(),
     status: 'pending',
   };
