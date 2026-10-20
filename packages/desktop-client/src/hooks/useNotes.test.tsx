@@ -179,9 +179,11 @@ describe('useNotes', () => {
   });
 
   it('only re-renders consumers whose note changed', async () => {
-    const renders: Record<string, number> = { 'cat-1': 0, 'cat-2': 0 };
+    const onRender = vi.fn<(id: string) => void>();
+    const renderCount = (id: string) =>
+      onRender.mock.calls.filter(([renderedId]) => renderedId === id).length;
     function Consumer({ id }: { id: string }) {
-      renders[id]++;
+      onRender(id);
       return <span>{useNotes(id)}</span>;
     }
 
@@ -193,14 +195,17 @@ describe('useNotes', () => {
       { wrapper },
     );
     await flush();
-    const before = { ...renders };
+    const before = {
+      'cat-1': renderCount('cat-1'),
+      'cat-2': renderCount('cat-2'),
+    };
 
     setNote('cat-2', 'second edited');
     await pushSync('applied');
 
     expect(screen.getByText('second edited')).toBeTruthy();
-    expect(renders['cat-1']).toBe(before['cat-1']);
-    expect(renders['cat-2']).toBe(before['cat-2'] + 1);
+    expect(renderCount('cat-1')).toBe(before['cat-1']);
+    expect(renderCount('cat-2')).toBe(before['cat-2'] + 1);
   });
 
   it('drops its observers when the last consumer unmounts', async () => {

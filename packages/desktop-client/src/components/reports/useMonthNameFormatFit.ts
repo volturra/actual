@@ -58,7 +58,8 @@ export function useMonthNameFormatFit(
           !container || container.scrollWidth <= container.clientWidth,
         );
       }, 20),
-    [index, setMonthNameFormats],
+    // The refs are stable; listing them satisfies the memo-dependencies rule.
+    [index, setMonthNameFormats, monthNameContainerRef, formatSizeContainers],
   );
 
   useEffect(
@@ -78,7 +79,7 @@ export function useMonthNameFormatFit(
     (formatIndex: number, node: HTMLSpanElement | null) => {
       if (node) formatSizeContainers.current[formatIndex] = node;
     },
-    [],
+    [formatSizeContainers],
   );
 
   return { monthNameVisible, monthNameRef, setFormatSizeContainer };

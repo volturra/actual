@@ -244,23 +244,11 @@ export function BudgetPage() {
   );
 
   const onDeleteGroup = useCallback(
-    groupId => {
+    (groupId, transferId) => {
       dispatch(collapseModals({ rootModalName: 'category-group-menu' }));
-      deleteCategoryGroup({ id: groupId });
+      deleteCategoryGroup({ id: groupId, transferId });
     },
     [deleteCategoryGroup, dispatch],
-  );
-
-  const onToggleGroupVisibility = useCallback(
-    groupId => {
-      const group = categoryGroups.find(g => g.id === groupId);
-      onSaveGroup({
-        ...group,
-        hidden: group.hidden ? false : true,
-      });
-      dispatch(collapseModals({ rootModalName: 'category-group-menu' }));
-    },
-    [categoryGroups, dispatch, onSaveGroup],
   );
 
   const onSaveCategory = useCallback(
@@ -271,23 +259,11 @@ export function BudgetPage() {
   );
 
   const onDeleteCategory = useCallback(
-    categoryId => {
+    (categoryId, transferId) => {
       dispatch(collapseModals({ rootModalName: 'category-menu' }));
-      deleteCategory({ id: categoryId });
+      deleteCategory({ id: categoryId, transferId });
     },
     [deleteCategory, dispatch],
-  );
-
-  const onToggleCategoryVisibility = useCallback(
-    categoryId => {
-      const category = categories.find(c => c.id === categoryId);
-      onSaveCategory({
-        ...category,
-        hidden: category.hidden ? false : true,
-      });
-      dispatch(collapseModals({ rootModalName: 'category-menu' }));
-    },
-    [categories, dispatch, onSaveCategory],
   );
 
   const onPrevMonth = useCallback(async () => {
@@ -407,7 +383,6 @@ export function BudgetPage() {
               onAddCategory: onOpenNewCategoryModal,
               onEditNotes: onOpenCategoryGroupNotesModal,
               onDelete: onDeleteGroup,
-              onToggleVisibility: onToggleGroupVisibility,
               onApplyBudgetTemplatesInGroup: categories =>
                 onApplyBudgetTemplatesInGroup(month, categories),
               onSortCategories: (groupId, direction) => {
@@ -425,7 +400,6 @@ export function BudgetPage() {
       onOpenCategoryGroupNotesModal,
       onOpenNewCategoryModal,
       onSaveGroup,
-      onToggleGroupVisibility,
       onApplyBudgetTemplatesInGroup,
       sortCategories,
     ],
@@ -447,7 +421,6 @@ export function BudgetPage() {
               onSave: onSaveCategory,
               onEditNotes: onOpenCategoryNotesModal,
               onDelete: onDeleteCategory,
-              onToggleVisibility: onToggleCategoryVisibility,
               ...(canEditAutomations && {
                 onEditAutomations: (categoryId: string) => {
                   dispatch(collapseModals({ rootModalName: 'category-menu' }));
@@ -475,7 +448,6 @@ export function BudgetPage() {
       onDeleteCategory,
       onOpenCategoryNotesModal,
       onSaveCategory,
-      onToggleCategoryVisibility,
     ],
   );
 
@@ -485,8 +457,7 @@ export function BudgetPage() {
 
   const onToggleHiddenCategories = useCallback(() => {
     setShowHiddenCategoriesPref(!showHiddenCategories);
-    dispatch(collapseModals({ rootModalName: 'budget-page-menu' }));
-  }, [dispatch, setShowHiddenCategoriesPref, showHiddenCategories]);
+  }, [setShowHiddenCategoriesPref, showHiddenCategories]);
 
   const onOpenBudgetMonthNotesModal = useCallback(
     month => {
