@@ -232,7 +232,7 @@ describe('ExpenseCategoryMonth', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows the goal status tooltip when hovering the balance', async () => {
+  it('shows the goal status in the balance menu', async () => {
     setUp({
       cells: {
         [`leftover-${category.id}`]: 2000,
@@ -241,17 +241,16 @@ describe('ExpenseCategoryMonth', () => {
       },
     });
     await flush();
+    fireEvent.mouseEnter(cellRoot());
+    await flush();
 
     const balance = screen.getByTestId(`${sheetName}!leftover-${category.id}`);
     expect(balance).toHaveTextContent('20.00');
     expect(screen.queryByText(/Underfunded/)).not.toBeInTheDocument();
 
-    fireEvent.mouseEnter(balance.closest('div') ?? balance);
-    await waitFor(
-      () => expect(screen.getByText(/Underfunded/)).toBeInTheDocument(),
-      { timeout: 2000 },
-    );
-    expect(screen.getByText(/Underfunded/)).toHaveTextContent(
+    const [, , balanceButton] = within(cellRoot()).getAllByRole('button');
+    fireEvent.click(balanceButton);
+    expect(await screen.findByText(/Underfunded/)).toHaveTextContent(
       'Underfunded (-20.00)',
     );
   });

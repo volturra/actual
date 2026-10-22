@@ -13,6 +13,7 @@ import {
   TestProviders,
 } from '#mocks';
 
+import { BudgetMonthProvider } from './BudgetMonthContext';
 import { ExpenseCategoryListItem } from './ExpenseCategoryListItem';
 
 vi.mock(
@@ -50,19 +51,20 @@ function renderItem() {
     <TestProviders queryClient={client} store={store}>
       <MemoryRouter>
         <SheetNameProvider name="budget202401">
-          <GridList aria-label="Categories" items={[category]}>
-            {item => (
-              <ExpenseCategoryListItem
-                value={item}
-                month="2024-01"
-                isHidden={false}
-                show3Columns
-                showBudgetedColumn
-                onEditCategory={vi.fn()}
-                onBudgetAction={onBudgetAction}
-              />
-            )}
-          </GridList>
+          <BudgetMonthProvider month="2024-01">
+            <GridList aria-label="Categories" items={[category]}>
+              {item => (
+                <ExpenseCategoryListItem
+                  value={item}
+                  isHidden={false}
+                  show3Columns
+                  showBudgetedColumn
+                  onEditCategory={vi.fn()}
+                  onBudgetAction={onBudgetAction}
+                />
+              )}
+            </GridList>
+          </BudgetMonthProvider>
         </SheetNameProvider>
       </MemoryRouter>
     </TestProviders>,
