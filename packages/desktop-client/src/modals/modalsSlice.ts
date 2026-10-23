@@ -128,7 +128,8 @@ type ModalVariant =
   | {
       name: 'simplefin-init';
       options: {
-        onSuccess: () => void;
+        onSuccess: (perBudgetFile: boolean) => void;
+        credentialSource: BankSyncCredentialSource;
       };
     }
   | {
