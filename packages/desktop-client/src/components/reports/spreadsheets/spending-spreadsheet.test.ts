@@ -226,6 +226,7 @@ function installServer() {
   const queries: SentQuery[] = [];
   initServer({
     'make-filters-from-conditions': async () => ({ filters: [] }),
+    'get-categories': async () => ({ list: [], grouped: [] }),
     query: async (state: QueryState) => {
       if (state.table !== 'transactions') {
         queries.push({ table: state.table });
