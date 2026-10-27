@@ -1,20 +1,27 @@
 import { setNumberFormat } from '@actual-app/core/shared/util';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+
+import {
+  configureTestAppStore,
+  createTestQueryClient,
+  TestProviders,
+} from '#mocks';
+import { mergeSyncedPrefs } from '#prefs/prefsSlice';
 
 import { FocusableAmountInput } from './FocusableAmountInput';
-
-vi.mock('#hooks/useSyncedPref', () => ({
-  useSyncedPref: (name: string) => [
-    name === 'defaultCurrencyCode' ? 'JPY' : undefined,
-    vi.fn(),
-  ],
-}));
 
 describe('FocusableAmountInput', () => {
   it('takes typed digits as whole units in a currency without decimals', () => {
     setNumberFormat({ format: 'comma-dot', hideFraction: false });
-    render(<FocusableAmountInput value={0} focused />);
+    const queryClient = createTestQueryClient();
+    const store = configureTestAppStore({ queryClient });
+    store.dispatch(mergeSyncedPrefs({ defaultCurrencyCode: 'JPY' }));
+    render(
+      <TestProviders queryClient={queryClient} store={store}>
+        <FocusableAmountInput value={0} focused />
+      </TestProviders>,
+    );
 
     const input = screen.getByTestId<HTMLInputElement>('amount-input');
     for (const digit of '1500') {

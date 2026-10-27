@@ -1,19 +1,28 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { AmountInput } from './AmountInput';
+import {
+  configureTestAppStore,
+  createTestQueryClient,
+  TestProviders,
+} from '#mocks';
+import { mergeSyncedPrefs } from '#prefs/prefsSlice';
 
-vi.mock('#hooks/useSyncedPref', () => ({
-  useSyncedPref: (name: string) => [
-    { defaultCurrencyCode: 'JPY', hideFraction: 'true' }[name],
-    vi.fn(),
-  ],
-}));
+import { AmountInput } from './AmountInput';
 
 describe('AmountInput', () => {
   it('keeps a hidden fraction until the text is edited', () => {
     const onUpdate = vi.fn();
-    render(<AmountInput value={150050} onUpdate={onUpdate} />);
+    const queryClient = createTestQueryClient();
+    const store = configureTestAppStore({ queryClient });
+    store.dispatch(
+      mergeSyncedPrefs({ defaultCurrencyCode: 'JPY', hideFraction: 'true' }),
+    );
+    render(
+      <TestProviders queryClient={queryClient} store={store}>
+        <AmountInput value={150050} onUpdate={onUpdate} />
+      </TestProviders>,
+    );
     const input = screen.getByRole('textbox');
 
     fireEvent.focus(input);
