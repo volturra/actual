@@ -45,7 +45,6 @@ function format(
   value: unknown,
   type: FormatType,
   formatter: { format: (value: number) => string },
-  decimalPlaces: number,
 ): FormatResult {
   switch (type) {
     case 'string': {
@@ -97,11 +96,7 @@ function format(
 
       return {
         numericValue: localValue,
-        formattedString: integerToCurrency(
-          localValue,
-          formatter,
-          decimalPlaces,
-        ),
+        formattedString: integerToCurrency(localValue, formatter),
       };
     }
     default:
@@ -204,7 +199,6 @@ export function useFormat(): UseFormatResult {
         value,
         type,
         intlFormatter,
-        activeCurrency.decimalPlaces,
       );
 
       let styledValue = formattedString;
@@ -232,33 +226,24 @@ export function useFormat(): UseFormatResult {
     ],
   );
 
-  const toAmount = useCallback(
-    (value: number) => integerToAmount(value, activeCurrency.decimalPlaces),
-    [activeCurrency.decimalPlaces],
-  );
-
-  const fromAmount = useCallback(
-    (value: number) => amountToInteger(value, activeCurrency.decimalPlaces),
-    [activeCurrency.decimalPlaces],
-  );
-
   const forEdit = useCallback(
     (value: IntegerAmount) => {
-      const amount = toAmount(value);
+      const amount = integerToAmount(value);
+      // Show a stored fraction (¥1,500.50) so saving the text unedited
+      // doesn't round it away, unless fractions are hidden
       const decimalPlaces =
-        hideFractionPref === 'true' ? 0 : activeCurrency.decimalPlaces;
+        hideFractionPref === 'true'
+          ? 0
+          : value % 100 !== 0
+            ? 2
+            : activeCurrency.decimalPlaces;
       const editFormatter = getNumberFormat({
         format: numberFormatConfig.format,
         decimalPlaces,
       }).formatter;
       return editFormatter.format(amount);
     },
-    [
-      toAmount,
-      hideFractionPref,
-      activeCurrency.decimalPlaces,
-      numberFormatConfig.format,
-    ],
+    [hideFractionPref, activeCurrency.decimalPlaces, numberFormatConfig.format],
   );
 
   const fromEdit = useCallback(
@@ -286,12 +271,12 @@ export function useFormat(): UseFormatResult {
       }
 
       if (numericValue !== null && !isNaN(numericValue)) {
-        return fromAmount(numericValue);
+        return amountToInteger(numericValue);
       }
 
       return defaultValue;
     },
-    [fromAmount],
+    [],
   );
 
   return Object.assign(formatDisplay, {

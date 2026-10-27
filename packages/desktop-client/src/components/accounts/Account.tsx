@@ -226,6 +226,15 @@ function getField(field?: string) {
 // Groups (transactions with their splits) the register loads per page
 const PAGE_COUNT = 150;
 
+// The transaction a link to the account asks to bring into view, e.g. the
+// other side of a transfer
+function getFocusTransactionId(
+  location: ReturnType<typeof useLocation>,
+): TransactionEntity['id'] | null {
+  const id: unknown = location.state?.focusTransactionId;
+  return typeof id === 'string' ? id : null;
+}
+
 type AccountInternalProps = {
   accountId?:
     | AccountEntity['id']
@@ -306,6 +315,7 @@ type AccountInternalState = {
     prevAscDesc?: 'asc' | 'desc' | undefined;
   } | null;
   filteredAmount: null | number;
+  focusedTransactionId: TransactionEntity['id'] | null;
 };
 
 export type TableRef = RefObject<{
@@ -327,6 +337,8 @@ class AccountInternal extends PureComponent<
   unlisten?: () => void;
   dispatchSelected?: (action: Actions) => void;
   _isOptimisticUpdate: boolean = false;
+  // A transaction to bring into view once the account is loaded
+  pendingFocusId: TransactionEntity['id'] | null = null;
 
   constructor(props: AccountInternalProps) {
     super(props);
@@ -350,6 +362,7 @@ class AccountInternal extends PureComponent<
       isAdding: false,
       sort: null,
       filteredAmount: null,
+      focusedTransactionId: null,
     };
   }
 
@@ -410,6 +423,7 @@ class AccountInternal extends PureComponent<
 
     // Important that any async work happens last so that the
     // listeners are set up synchronously
+    this.pendingFocusId = getFocusTransactionId(this.props.location);
     this.fetchTransactions(this.state.filterConditions);
 
     // If there is a pending undo, apply it immediately (this happens
@@ -514,7 +528,7 @@ class AccountInternal extends PureComponent<
     }
 
     const appendedPages = trackAppendedPages();
-    this.paged = pagedQuery(query.select('*'), {
+    const paged = pagedQuery<TransactionEntity>(query.select('*'), {
       onPageData: appendedPages.onPageData,
       onData: async (groupedData, prevData) => {
         const isOneFetch = appendedPages.takeIsOneFetch();
@@ -590,6 +604,9 @@ class AccountInternal extends PureComponent<
           () => {
             if (firstLoad) {
               this.table.current?.scrollToTop();
+              if (paged === this.paged) {
+                void this.showPendingFocus(paged);
+              }
             }
 
             setTimeout(() => {
@@ -603,14 +620,17 @@ class AccountInternal extends PureComponent<
         onlySync: true,
       },
     });
+    this.paged = paged;
   }
 
   // oxlint-disable-next-line react/no-unsafe
   UNSAFE_componentWillReceiveProps(nextProps: AccountInternalProps) {
     if (this.props.accountId !== nextProps.accountId) {
+      this.pendingFocusId = getFocusTransactionId(nextProps.location);
       this.setState(
         {
           loading: true,
+          focusedTransactionId: null,
           search: '',
           showBalances: nextProps.showBalances,
           balances: null,
@@ -624,6 +644,42 @@ class AccountInternal extends PureComponent<
       );
     }
   }
+
+  // Brings the pending transaction into view, loading the account up to it
+  // if needed. Leaves the account at the top when the query doesn't have it,
+  // e.g. while reconciled transactions are hidden.
+  showPendingFocus = async (paged: PagedQuery<TransactionEntity>) => {
+    const id = this.pendingFocusId;
+    this.pendingFocusId = null;
+    // Only in the default date order; the lookup relies on it
+    if (id == null || this.state.sort != null) {
+      return;
+    }
+    if (!this.state.transactions.some(t => t.id === id)) {
+      await paged.refetchUpToRow(id, { field: 'date', order: 'desc' });
+    }
+
+    const transaction = ungroupTransactions(paged.data).find(t => t.id === id);
+    if (
+      transaction == null ||
+      (transaction.reconciled && !this.state.showReconciled) ||
+      // The query was replaced meanwhile, e.g. by a sort or another account
+      !paged.isRunning
+    ) {
+      return;
+    }
+    if (transaction.parent_id) {
+      this.props.splitsExpandedDispatch({
+        type: 'open-split',
+        id: transaction.parent_id,
+      });
+    }
+    this.setState({ focusedTransactionId: id });
+  };
+
+  onFocusedTransactionShown = () => {
+    this.setState({ focusedTransactionId: null });
+  };
 
   onSearch = (value: string) => {
     this.paged?.unsubscribe();
@@ -2031,6 +2087,8 @@ class AccountInternal extends PureComponent<
                     this.onMakeAsNonSplitTransactions
                   }
                   onRefetch={this.refetchTransactions}
+                  focusedTransactionId={this.state.focusedTransactionId}
+                  onFocusedTransactionShown={this.onFocusedTransactionShown}
                   onCloseAddTransaction={this.onCloseAddTransaction}
                   onCreatePayee={this.onCreatePayee}
                   onApplyFilter={this.onApplyFilter}
