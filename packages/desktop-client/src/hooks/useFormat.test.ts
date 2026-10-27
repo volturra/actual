@@ -20,7 +20,7 @@ function renderWithCurrency(defaultCurrencyCode: string) {
   store.dispatch(mergeSyncedPrefs({ defaultCurrencyCode }));
   return renderHook(() => useFormat(), {
     wrapper: ({ children }: { children: ReactNode }) =>
-      createElement(TestProviders, { queryClient, store }, children),
+      createElement(TestProviders, { queryClient, store, children }),
   });
 }
 
