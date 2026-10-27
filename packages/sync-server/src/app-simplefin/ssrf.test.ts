@@ -1,6 +1,7 @@
 import dns from 'dns';
 
 import request from 'supertest';
+import type * as Undici from 'undici';
 
 import type * as LoadConfig from '#load-config';
 import { SecretName, secretsService } from '#services/secrets-service';
@@ -16,6 +17,13 @@ vi.mock('#load-config', async importOriginal => {
   );
   return original;
 });
+
+// The app imports fetch from undici; route it through the global stubs below.
+vi.mock('undici', async importOriginal => ({
+  ...(await importOriginal<typeof Undici>()),
+  fetch: (...args: Parameters<typeof globalThis.fetch>) =>
+    globalThis.fetch(...args),
+}));
 
 vi.mock('dns', () => ({ default: { lookup: vi.fn() } }));
 

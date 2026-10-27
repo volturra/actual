@@ -10,6 +10,12 @@ import { assertUrlAllowed } from '#util/ssrf';
 
 import { handlers as app } from './app-simplefin';
 
+// The app imports fetch from undici; route it through the global stubs below.
+vi.mock('undici', async importOriginal => ({
+  ...(await importOriginal()),
+  fetch: (...args) => globalThis.fetch(...args),
+}));
+
 vi.mock('#util/ssrf', async importOriginal => ({
   ...(await importOriginal()),
   assertUrlAllowed: vi.fn().mockResolvedValue(undefined),
