@@ -1,6 +1,7 @@
 import dns from 'dns';
 
 import request from 'supertest';
+import { fetch, Response } from 'undici';
 import type * as Undici from 'undici';
 
 import type * as LoadConfig from '#load-config';
@@ -9,6 +10,11 @@ import { SecretName, secretsService } from '#services/secrets-service';
 import { handlers } from './app-simplefin';
 
 const allowedNetworks = vi.hoisted(() => [] as string[]);
+vi.mock('undici', async importOriginal => ({
+  ...(await importOriginal<typeof Undici>()),
+  fetch: vi.fn(),
+}));
+
 vi.mock('#load-config', async importOriginal => {
   const original = await importOriginal<typeof LoadConfig>();
   const get = original.config.get.bind(original.config);
@@ -18,26 +24,19 @@ vi.mock('#load-config', async importOriginal => {
   return original;
 });
 
-// The app imports fetch from undici; route it through the global stubs below.
-vi.mock('undici', async importOriginal => ({
-  ...(await importOriginal<typeof Undici>()),
-  fetch: (...args: Parameters<typeof globalThis.fetch>) =>
-    globalThis.fetch(...args),
-}));
-
 vi.mock('dns', () => ({ default: { lookup: vi.fn() } }));
 
 beforeEach(() => {
   secretsService.reset(SecretName.simplefin_token);
   secretsService.reset(SecretName.simplefin_accessKey);
-  vi.stubGlobal('fetch', vi.fn());
+  vi.mocked(fetch).mockReset();
 });
 
 afterEach(() => {
   secretsService.reset(SecretName.simplefin_token);
   secretsService.reset(SecretName.simplefin_accessKey);
   allowedNetworks.length = 0;
-  vi.unstubAllGlobals();
+  vi.mocked(fetch).mockReset();
   vi.resetAllMocks();
 });
 

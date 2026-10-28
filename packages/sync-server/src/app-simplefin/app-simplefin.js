@@ -1,7 +1,5 @@
 import createDebug from 'debug';
 import express from 'express';
-// Node's global fetch bundles an older undici that can't drive the npm undici
-// Agent behind the SSRF dispatcher, so use the matching fetch.
 import { fetch } from 'undici';
 
 import { handleError } from '#app-gocardless/util/handle-error';
