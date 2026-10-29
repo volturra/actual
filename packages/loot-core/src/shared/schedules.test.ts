@@ -810,6 +810,33 @@ describe('schedules', () => {
       expect(result).toEqual(['2020-12-25']);
     });
 
+    it('lists a day once when the weekend shift moves several occurrences onto it', () => {
+      const dateCond = {
+        op: 'isapprox' as const,
+        field: 'date' as const,
+        value: {
+          start: '2026-11-01',
+          interval: 1,
+          frequency: 'daily' as const,
+          patterns: [],
+          skipWeekend: true,
+          weekendSolveMode: 'after' as const,
+          endMode: 'never' as const,
+          endOccurrences: 1,
+          endDate: '2099-01-01',
+        },
+      };
+
+      // Saturday 7 and Sunday 8 November both move to Monday 9 November
+      const result = getOccurrencesBetween(
+        dateCond,
+        '2026-11-06',
+        '2026-11-11',
+      );
+
+      expect(result).toEqual(['2026-11-06', '2026-11-09', '2026-11-10']);
+    });
+
     it('excludes a raw occurrence landing exactly on startDay when the weekend adjustment shifts it backward out of range', () => {
       // Same schedule as above. The raw occurrence on 2020-12-19 sits
       // exactly on startDay, so a naive raw-range query would keep it. But

@@ -495,7 +495,13 @@ export function getOccurrencesBetween(
         schedule.data.weekendSolve,
       ),
     );
-    if (adjustedDate >= startDay && adjustedDate < endDay) {
+    // A weekend shift can move several occurrences (e.g. a daily schedule's
+    // Saturday and Sunday) onto the same day, which the app shows once
+    if (
+      adjustedDate >= startDay &&
+      adjustedDate < endDay &&
+      dates[dates.length - 1] !== adjustedDate
+    ) {
       dates.push(adjustedDate);
     }
   }
