@@ -686,7 +686,9 @@ class AccountInternal extends PureComponent<
     this.setState({ search: value }, this.onSearchDone);
   };
 
-  onSearchDone = debounce(() => {
+  onSearchDone = debounce(() => this.applySearch(), 150);
+
+  applySearch = () => {
     if (this.state.search === '') {
       this.updateQuery(this.currentQuery, {
         isFiltered: this.state.filterConditions.length > 0,
@@ -701,7 +703,7 @@ class AccountInternal extends PureComponent<
         { isFiltered: true, isSearch: true },
       );
     }
-  }, 150);
+  };
 
   onSync = async () => {
     const accountId = this.props.accountId;
@@ -998,19 +1000,12 @@ class AccountInternal extends PureComponent<
         });
         break;
       }
-      case 'toggle-reconciled':
-        if (this.state.showReconciled) {
-          this.props.setShowReconciled(false);
-          this.setState({ showReconciled: false }, () =>
-            this.fetchTransactions(this.state.filterConditions),
-          );
-        } else {
-          this.props.setShowReconciled(true);
-          this.setState({ showReconciled: true }, () =>
-            this.fetchTransactions(this.state.filterConditions),
-          );
-        }
+      case 'toggle-reconciled': {
+        const showReconciled = !this.state.showReconciled;
+        this.props.setShowReconciled(showReconciled);
+        this.setState({ showReconciled }, this.applySearch);
         break;
+      }
       case 'toggle-net-worth-chart':
         if (this.props.showNetWorthChart) {
           this.props.setShowNetWorthChart(false);
