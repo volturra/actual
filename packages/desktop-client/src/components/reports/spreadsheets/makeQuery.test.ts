@@ -56,13 +56,18 @@ function sameIntervalRange(
   endDate: string,
   interval: string,
 ) {
-  const length = interval === 'Monthly' ? 7 : interval === 'Yearly' ? 4 : 10;
+  const length =
+    interval === 'Monthly' || interval === 'Quarterly'
+      ? 7
+      : interval === 'Yearly'
+        ? 4
+        : 10;
   return (date: string) =>
     date.slice(0, length) >= startDate.slice(0, length) &&
     date.slice(0, length) <= endDate.slice(0, length);
 }
 
-const intervals = ['Daily', 'Weekly', 'Monthly', 'Yearly'];
+const intervals = ['Daily', 'Weekly', 'Monthly', 'Quarterly', 'Yearly'];
 
 const dateEdges = [
   '2023-01-01',
@@ -112,6 +117,7 @@ describe('makeQuery', () => {
     ['Monthly', '2025-02-14', '2025-07-09', '>= 20250200', '<= 20250799'],
     ['Monthly', '2024-12-31', '2025-12-31', '>= 20241200', '<= 20251299'],
     ['Monthly', '2024-02-29', '2024-02-29', '>= 20240200', '<= 20240299'],
+    ['Quarterly', '2025-02-14', '2025-07-09', '>= 20250200', '<= 20250799'],
     ['Yearly', '2023-07-01', '2025-06-30', '>= 20230000', '<= 20259999'],
     ['Daily', '2025-02-14', '2025-07-09', '>= 20250214', '<= 20250709'],
     ['Weekly', '2025-02-09', '2025-07-12', '>= 20250209', '<= 20250712'],
@@ -149,4 +155,20 @@ describe('makeQuery', () => {
       }
     },
   );
+
+  it('queries Quarterly reports by month so they can be rolled up', () => {
+    const query = makeQuery(
+      'assets',
+      '2026-01-01',
+      '2026-06-30',
+      'Quarterly',
+      '$and',
+      [],
+    ).serialize();
+
+    expect(query.groupExpressions).toContainEqual({ $month: '$date' });
+    expect(query.selectExpressions).toContainEqual({
+      date: { $month: '$date' },
+    });
+  });
 });

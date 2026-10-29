@@ -11,8 +11,10 @@ export function makeQuery(
   filters: unknown[],
   groupBy?: string,
 ) {
+  // Weekly and Quarterly have no AQL date transform, so they are queried at a
+  // finer grain (days and months) and rolled up by the spreadsheets.
   const intervalGroup =
-    interval === 'Monthly'
+    interval === 'Monthly' || interval === 'Quarterly'
       ? { $month: '$date' }
       : interval === 'Yearly'
         ? { $year: '$date' }
@@ -60,8 +62,8 @@ export function makeQuery(
 
 /**
  * Keeps the transactions dated from `startDate` to `endDate`, inclusive.
- * Monthly and yearly reports include every day of the start and end month
- * or year.
+ * Monthly, quarterly and yearly reports include every day of the start and
+ * end month or year.
  *
  * Those bounds are widened to whole months or years here and compared with
  * the plain `date` column. Comparing `$month` or `$year` of the date instead
@@ -75,7 +77,8 @@ function dateRangeFilters(
   endDate: string,
   interval: string,
 ): ObjectExpression[] {
-  if (interval === 'Monthly') {
+  // Quarterly reports are queried by month, like monthly ones
+  if (interval === 'Monthly' || interval === 'Quarterly') {
     return [
       { date: { $gte: monthUtils.getMonth(startDate) + '-00' } },
       { date: { $lte: monthUtils.getMonth(endDate) + '-99' } },
