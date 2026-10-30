@@ -249,6 +249,11 @@ export function isAfter(month1: DateLike, month2: DateLike): boolean {
 }
 
 export function isCurrentMonth(month: DateLike): boolean {
+  // Budget cells call this with month strings on every render, so skip the
+  // date parsing for them
+  if (typeof month === 'string' && isValidYearMonth(month)) {
+    return month === currentMonth();
+  }
   const isValid =
     typeof month === 'string'
       ? isValidYearMonth(month) || isValidYearMonthDay(month)
