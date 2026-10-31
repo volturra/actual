@@ -835,6 +835,12 @@ export function createCoordinator({
           } else if (
             msg.name === 'create-budget' &&
             msg.args &&
+            (msg.args as Record<string, unknown>).benchmarkMode
+          ) {
+            evictGroup('_benchmark-budget', port);
+          } else if (
+            msg.name === 'create-budget' &&
+            msg.args &&
             (msg.args as Record<string, unknown>).testMode
           ) {
             evictGroup('_test-budget', port);
