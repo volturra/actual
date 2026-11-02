@@ -10,6 +10,8 @@ import { theme } from '@actual-app/components/theme';
 import type { WithRequired } from '@actual-app/core/types/util';
 import { useDrag } from '@use-gesture/react';
 
+import { hapticThresholdCrossed } from '#util/haptics';
+
 type ActionableGridListItemProps<T> = {
   actions?: ReactNode | ((params: { close: () => void }) => ReactNode);
   actionsBackgroundColor?: string;
@@ -89,6 +91,8 @@ function ActionableGridListItemContent({
   onAction,
 }: ActionableGridListItemContentProps) {
   const dragStartedRef = useRef(false);
+  const isPastThresholdRef = useRef(false);
+  const dragStartXRef = useRef(0);
 
   const hasActions = !!actions;
 
@@ -104,9 +108,23 @@ function ActionableGridListItemContent({
 
   // Handle drag gestures
   const bind = useDrag(
-    ({ active, movement: [mx], velocity: [vx] }) => {
-      const startPos = isRevealed ? -actionsWidth : 0;
-      const currentX = startPos + mx;
+    ({ active, first, movement: [mx], velocity: [vx] }) => {
+      // Start from where the item actually is, so a swipe that interrupts a
+      // snap animation continues from the current position.
+      if (first) {
+        dragStartXRef.current = x.get();
+      }
+      const currentX = dragStartXRef.current + mx;
+
+      // Tick when the drag crosses the point where letting go flips between
+      // revealed and closed, like native swipe actions do.
+      const isPastThreshold = currentX < -actionsWidth / 2;
+      if (first) {
+        isPastThresholdRef.current = isPastThreshold;
+      } else if (active && isPastThreshold !== isPastThresholdRef.current) {
+        isPastThresholdRef.current = isPastThreshold;
+        hapticThresholdCrossed();
+      }
 
       if (active) {
         dragStartedRef.current = true;
@@ -134,7 +152,6 @@ function ActionableGridListItemContent({
     },
     {
       axis: 'x',
-      from: () => [isRevealed ? -actionsWidth : 0, 0],
       enabled: hasActions,
     },
   );
