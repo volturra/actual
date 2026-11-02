@@ -142,11 +142,14 @@ function ActionableGridListItemContent({
         currentX < -actionsWidth / 2 ||
         (vx < -0.5 && currentX < -actionsWidth / 5);
 
+      // Record the outcome now: when the row is already at the snap target
+      // (an overshooting swipe), the spring has nothing to do and never
+      // calls onRest.
+      onRevealedChange(shouldReveal);
       void api.start({
         to: { x: shouldReveal ? -actionsWidth : 0 },
         onRest: () => {
           dragStartedRef.current = false;
-          onRevealedChange(shouldReveal);
         },
       });
     },
@@ -208,12 +211,8 @@ function ActionableGridListItemContent({
           {typeof actions === 'function'
             ? actions({
                 close: () => {
-                  void api.start({
-                    to: { x: 0 },
-                    onRest: () => {
-                      onRevealedChange(false);
-                    },
-                  });
+                  onRevealedChange(false);
+                  void api.start({ to: { x: 0 } });
                 },
               })
             : actions}
