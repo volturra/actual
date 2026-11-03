@@ -15,6 +15,7 @@ import { ActionableGridListItem } from './ActionableGridListItem';
 
 type DragState = {
   active: boolean;
+  first: boolean;
   movement: [number, number];
   velocity: [number, number];
 };
@@ -76,11 +77,30 @@ function getSwipeTransform(name: string) {
   return getSwipeContainer(name).style.transform;
 }
 
+// Simulates a swipe as a press, a move to movementX, and a release there.
 async function swipe(name: string, movementX: number) {
   const dragId = getSwipeContainer(name).dataset.dragId ?? '';
+  const handler = dragHandlers.get(dragId);
   await act(async () => {
-    dragHandlers.get(dragId)?.({
+    handler?.({
+      active: true,
+      first: true,
+      movement: [0, 0],
+      velocity: [0, 0],
+    });
+  });
+  await act(async () => {
+    handler?.({
+      active: true,
+      first: false,
+      movement: [movementX, 0],
+      velocity: [0, 0],
+    });
+  });
+  await act(async () => {
+    handler?.({
       active: false,
+      first: false,
       movement: [movementX, 0],
       velocity: [0, 0],
     });
@@ -166,6 +186,28 @@ describe('ActionableGridListItem', () => {
       expect(getSwipeTransform('Item 0')).toBe('translate3d(0px,0,0)'),
     );
 
+    scrollTo(1300);
+    scrollTo(0);
+    expect(getSwipeTransform('Item 0')).toBe('translate3d(0px,0,0)');
+  });
+
+  it('remembers a row swiped past its open or closed position', async () => {
+    render(<TestList onAction={vi.fn()} />);
+
+    // Swiping further than the actions are wide leaves the row exactly at
+    // the snap target when it is let go.
+    await swipe('Item 0', -150);
+    await waitFor(() =>
+      expect(getSwipeTransform('Item 0')).toBe('translate3d(-100px,0,0)'),
+    );
+    scrollTo(1300);
+    scrollTo(0);
+    expect(getSwipeTransform('Item 0')).toBe('translate3d(-100px,0,0)');
+
+    await swipe('Item 0', 150);
+    await waitFor(() =>
+      expect(getSwipeTransform('Item 0')).toBe('translate3d(0px,0,0)'),
+    );
     scrollTo(1300);
     scrollTo(0);
     expect(getSwipeTransform('Item 0')).toBe('translate3d(0px,0,0)');
