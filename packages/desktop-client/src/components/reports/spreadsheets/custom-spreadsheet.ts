@@ -17,7 +17,6 @@ import type { SyncedPrefs } from '@actual-app/core/types/prefs';
 import * as d from 'date-fns';
 
 import {
-  categoryLists,
   getIntervalFormat,
   groupBySelections,
   ReportOptions,
@@ -36,6 +35,7 @@ import {
   sumItemAmountsByDate,
 } from './filterHiddenItems';
 import { recalculate } from './recalculate';
+import { reportCategoryLists } from './reportCategoryLists';
 import { sortData } from './sortData';
 import { groupQueryDataByTags } from './tagGroups';
 import {
@@ -93,7 +93,14 @@ export function createCustomSpreadsheet({
   firstDayOfWeekIdx,
   dateFormat,
 }: createCustomSpreadsheetProps) {
-  const [categoryList, categoryGroup] = categoryLists(categories);
+  const [categoryList, categoryGroup] = reportCategoryLists({
+    categories,
+    conditions,
+    conditionsOp,
+    showOffBudget,
+    showHiddenCategories,
+    showUncategorized,
+  });
   const [initialGroups, groupByLabel] = groupBySelections(
     groupBy,
     categoryList,
