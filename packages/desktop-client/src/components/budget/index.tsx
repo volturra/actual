@@ -63,16 +63,15 @@ export function Budget() {
           return;
         }
 
-        try {
-          await prewarmAllMonths(
-            type,
-            spreadsheet,
-            monthBounds,
-            clampMonth(startMonth, monthBounds),
-          );
-        } finally {
-          setInitialized(true);
-        }
+        // `.finally()` rather than try/finally: React Compiler skips a
+        // component that uses a `finally` clause, which would drop the
+        // memoisation that keeps the budget handlers stable.
+        await prewarmAllMonths(
+          type,
+          spreadsheet,
+          monthBounds,
+          clampMonth(startMonth, monthBounds),
+        ).finally(() => setInitialized(true));
       }
 
       void run();
