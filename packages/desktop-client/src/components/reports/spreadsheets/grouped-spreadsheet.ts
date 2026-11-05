@@ -1,10 +1,7 @@
 import * as monthUtils from '@actual-app/core/shared/months';
 import type { GroupedEntity } from '@actual-app/core/types/models';
 
-import {
-  categoryLists,
-  ReportOptions,
-} from '#components/reports/ReportOptions';
+import { ReportOptions } from '#components/reports/ReportOptions';
 import type {
   QueryDataEntity,
   UncategorizedEntity,
@@ -21,6 +18,7 @@ import {
   sumItemAmountsByDate,
 } from './filterHiddenItems';
 import { recalculate } from './recalculate';
+import { reportCategoryLists } from './reportCategoryLists';
 import { sortData } from './sortData';
 import {
   determineIntervalRange,
@@ -44,7 +42,14 @@ export function createGroupedSpreadsheet({
   sortByOp,
   firstDayOfWeekIdx,
 }: createCustomSpreadsheetProps) {
-  const [categoryList, categoryGroup] = categoryLists(categories);
+  const [categoryList, categoryGroup] = reportCategoryLists({
+    categories,
+    conditions,
+    conditionsOp,
+    showOffBudget,
+    showHiddenCategories,
+    showUncategorized,
+  });
 
   return async (
     spreadsheet: ReturnType<typeof useSpreadsheet>,
