@@ -231,12 +231,6 @@ export const CategoryMonth = memo(function CategoryMonth({
   // front.
   const [showHoverButtons, setShowHoverButtons] = useState(false);
 
-  const isGoalTemplatesEnabled = useFeatureFlag('goalTemplatesEnabled');
-  const goal = useTrackingSheetValue(trackingBudget.catGoal(category.id));
-  // Income rows without a goal keep their plain received amount
-  const showsIncomeGoal =
-    category.is_income && isGoalTemplatesEnabled && goal != null;
-
   return (
     <View
       style={{
@@ -459,37 +453,10 @@ export const CategoryMonth = memo(function CategoryMonth({
               </Button>
             </View>
           )}
-          {showsIncomeGoal ? (
-            // Shows the income goal on the amount received. The wrapper keeps
-            // the goal ring beside the amount, after any schedule indicator
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <BalanceWithCarryover
-                isIncome
-                carryover={trackingBudget.catCarryover(category.id)}
-                balance={trackingBudget.catSumAmount(category.id)}
-                goal={trackingBudget.catGoal(category.id)}
-                budgeted={trackingBudget.catBudgeted(category.id)}
-                longGoal={trackingBudget.catLongGoal(category.id)}
-              />
-            </View>
+          {category.is_income ? (
+            <IncomeReceivedAmount categoryId={category.id} />
           ) : (
-            <TrackingCellValue
-              binding={trackingBudget.catSumAmount(category.id)}
-              type="financial"
-            >
-              {props => (
-                <CellValueText
-                  {...props}
-                  className={css({
-                    cursor: 'pointer',
-                    ':hover': {
-                      textDecoration: 'underline',
-                    },
-                    ...makeAmountGrey(props.value),
-                  })}
-                />
-              )}
-            </TrackingCellValue>
+            <SpentAmount categoryId={category.id} />
           )}
         </View>
       </Field>
@@ -556,6 +523,55 @@ export const CategoryMonth = memo(function CategoryMonth({
     </View>
   );
 });
+
+// The goal lookups live here, not in `CategoryMonth`, so expense rows (most
+// of the budget) don't subscribe to a goal they never show.
+function IncomeReceivedAmount({ categoryId }: { categoryId: string }) {
+  const isGoalTemplatesEnabled = useFeatureFlag('goalTemplatesEnabled');
+  const goal = useTrackingSheetValue(trackingBudget.catGoal(categoryId));
+
+  // Income rows without a goal keep their plain received amount
+  if (!isGoalTemplatesEnabled || goal == null) {
+    return <SpentAmount categoryId={categoryId} />;
+  }
+
+  return (
+    // Shows the income goal on the amount received. The wrapper keeps the
+    // goal ring beside the amount, after any schedule indicator
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <BalanceWithCarryover
+        isIncome
+        carryover={trackingBudget.catCarryover(categoryId)}
+        balance={trackingBudget.catSumAmount(categoryId)}
+        goal={trackingBudget.catGoal(categoryId)}
+        budgeted={trackingBudget.catBudgeted(categoryId)}
+        longGoal={trackingBudget.catLongGoal(categoryId)}
+      />
+    </View>
+  );
+}
+
+function SpentAmount({ categoryId }: { categoryId: string }) {
+  return (
+    <TrackingCellValue
+      binding={trackingBudget.catSumAmount(categoryId)}
+      type="financial"
+    >
+      {props => (
+        <CellValueText
+          {...props}
+          className={css({
+            cursor: 'pointer',
+            ':hover': {
+              textDecoration: 'underline',
+            },
+            ...makeAmountGrey(props.value),
+          })}
+        />
+      )}
+    </TrackingCellValue>
+  );
+}
 
 export { BudgetSummary } from './budgetsummary/BudgetSummary';
 
