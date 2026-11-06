@@ -246,11 +246,13 @@ describe('ExpenseCategoryMonth', () => {
 
     const balance = screen.getByTestId(`${sheetName}!leftover-${category.id}`);
     expect(balance).toHaveTextContent('20.00');
-    expect(screen.queryByText(/Underfunded/)).not.toBeInTheDocument();
+    // The goal ring beside the balance is labelled "Underfunded, 60% of
+    // goal"; the menu's status line is only shown once the menu opens
+    expect(screen.queryByText(/Underfunded \(/)).not.toBeInTheDocument();
 
     const [, , balanceButton] = within(cellRoot()).getAllByRole('button');
     fireEvent.click(balanceButton);
-    expect(await screen.findByText(/Underfunded/)).toHaveTextContent(
+    expect(await screen.findByText(/Underfunded \(/)).toHaveTextContent(
       'Underfunded (-20.00)',
     );
   });
