@@ -10,6 +10,10 @@ import type { CategoryEntity } from '@actual-app/core/types/models';
 import { css, cx } from '@emotion/css';
 
 import { BalanceWithCarryover } from '#components/budget/BalanceWithCarryover';
+import {
+  getGoalRingLabel,
+  GoalProgressRing,
+} from '#components/budget/GoalProgressRing';
 import { PrivacyFilter } from '#components/PrivacyFilter';
 import { useFormat } from '#hooks/useFormat';
 import { useSyncedPref } from '#hooks/useSyncedPref';
@@ -18,6 +22,9 @@ import { envelopeBudget, trackingBudget } from '#spreadsheet/bindings';
 
 import { AmountAutoTextSize } from './AmountAutoTextSize';
 import { getColumnWidth, PILL_STYLE } from './BudgetTable';
+
+// Room for the goal progress ring, its gap and the pill padding
+const RING_RESERVE = 28;
 
 type BalanceCellProps = {
   binding: Binding<
@@ -76,18 +83,12 @@ export function BalanceCell({
       goal={goal}
       budgeted={budgeted}
       longGoal={longGoal}
+      isIncome={category.is_income}
       CarryoverIndicator={MobileCarryoverIndicator}
     >
-      {({ type, value, className: defaultClassName }) => (
-        <Button
-          variant="bare"
-          style={{
-            ...PILL_STYLE,
-            maxWidth: columnWidth,
-          }}
-          onPress={onPress}
-          aria-label={ariaLabel}
-        >
+      {({ type, value, className: defaultClassName }, ringProgress) => {
+        const hasRing = ringProgress != null;
+        const amount = (
           <PrivacyFilter>
             <AmountAutoTextSize
               minFontSizePx={6}
@@ -100,17 +101,57 @@ export function BalanceCell({
                   maxWidth: columnWidth,
                   textAlign: 'right',
                   fontSize: 12,
+                  // AutoTextSize rounds widths, so a fraction of a pixel can overflow
+                  ...(hasRing && { textOverflow: 'clip' }),
                 }),
               )}
             >
               {format(value, type)}
             </AmountAutoTextSize>
           </PrivacyFilter>
-        </Button>
-      )}
+        );
+        return (
+          <Button
+            variant="bare"
+            style={{
+              ...PILL_STYLE,
+              // AutoTextSize leaves alignItems on the button, so set it back
+              ...(hasRing && { gap: 4, alignItems: 'center' }),
+              maxWidth: columnWidth,
+            }}
+            onPress={onPress}
+            aria-label={
+              hasRing && ariaLabel
+                ? t('{{label}}, {{status}}', {
+                    label: ariaLabel,
+                    status: getGoalRingLabel(ringProgress, t),
+                  })
+                : ariaLabel
+            }
+          >
+            {hasRing ? (
+              <>
+                <GoalProgressRing progress={ringProgress} />
+                {/* AutoTextSize sizes against its parent, so keep the ring out of it */}
+                <span
+                  style={{
+                    minWidth: 0,
+                    maxWidth: `calc(${columnWidth} - ${RING_RESERVE}px)`,
+                  }}
+                >
+                  {amount}
+                </span>
+              </>
+            ) : (
+              amount
+            )}
+          </Button>
+        );
+      }}
     </BalanceWithCarryover>
   );
 }
+
 function MobileCarryoverIndicator({ style }: { style?: CSSProperties }) {
   return (
     <View
