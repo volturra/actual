@@ -2307,10 +2307,21 @@ function NotesCell({
   onClickTag,
   onExpose,
 }: NotesCellProps) {
-  const [inputValue, setInputValue] = useState(note);
+  // A single-line input drops line breaks from its value, so edit them as
+  // spaces, which is also how the cell displays them.
+  const editableNote = note.replace(/\r\n|\r|\n/g, ' ');
+  const [inputValue, setInputValue] = useState(editableNote);
   useEffect(() => {
-    setInputValue(note);
-  }, [note, setInputValue]);
+    setInputValue(editableNote);
+  }, [editableNote, setInputValue]);
+
+  // Only save when the text was edited, so that focusing the cell does not
+  // rewrite a note that has line breaks.
+  function onUpdateNote(value: string) {
+    if (value !== editableNote) {
+      onUpdate(value);
+    }
+  }
 
   const textRef = useRef<HTMLSpanElement | null>(null);
   const [isTruncated, setIsTruncated] = useState(false);
@@ -2329,9 +2340,9 @@ function NotesCell({
 
   function onKeyDown(e: KeyboardEvent) {
     if (e.key === 'Enter' || e.key === 'Tab') {
-      onUpdate(inputValue);
+      onUpdateNote(inputValue);
     } else if (e.key === 'Escape') {
-      setInputValue(note);
+      setInputValue(editableNote);
     }
   }
 
@@ -2353,9 +2364,8 @@ function NotesCell({
       focused={focused}
       exposed={focused}
       onExpose={onExpose}
-      onUpdate={onUpdate}
       onKeyDown={onKeyDown}
-      onBlur={() => onUpdate(inputValue)}
+      onBlur={() => onUpdateNote(inputValue)}
       unexposedContent={props => (
         <Tooltip
           content={
@@ -2383,7 +2393,7 @@ function NotesCell({
           inputStyle={inputStyle}
           onBlur={onBlur}
           onKeyDown={onKeyDown}
-          onUpdate={onUpdate}
+          onUpdate={onUpdateNote}
         />
       )}
     </CustomCell>
