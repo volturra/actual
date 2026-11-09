@@ -28,9 +28,24 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
     store.dispatch(addGenericErrorNotification());
   });
 
+  // A newer offer replaces the older one of the same kind. Each offer gets
+  // its own id: a notification removes itself by id when its timer ends, so
+  // a reused id would let the old timer close the new offer early
+  const shownOfferIds = new Map<string, string>();
+
+  // An undo, or a later edit that leaves the old payee unused, can make an
+  // offer that is still showing wrong, so take it down
+  function withdrawRelatedChangeOffers() {
+    for (const id of shownOfferIds.values()) {
+      store.dispatch(removeNotification({ id }));
+    }
+    shownOfferIds.clear();
+  }
+
   const unlistenOrphanedPayees = listen(
     'orphaned-payees',
     ({ orphanedIds, updatedPayeeIds }) => {
+      withdrawRelatedChangeOffers();
       // Right now, it prompts to merge into the first payee
       store.dispatch(
         pushModal({
@@ -46,10 +61,6 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
     },
   );
 
-  // A newer offer replaces the older one of the same kind. Each offer gets
-  // its own id: a notification removes itself by id when its timer ends, so
-  // a reused id would let the old timer close the new offer early
-  const shownOfferIds = new Map<string, string>();
   function showRelatedChangeOffer(
     kind: 'related-payees' | 'related-category',
     notification: Notification,
@@ -153,6 +164,7 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
   const unlistenSync = syncEvents.listenForSyncEvent(store, queryClient);
 
   const unlistenUndo = listen('undo-event', undoState => {
+    withdrawRelatedChangeOffers();
     const { tables, undoTag } = undoState;
     const promises: Promise<unknown>[] = [];
 

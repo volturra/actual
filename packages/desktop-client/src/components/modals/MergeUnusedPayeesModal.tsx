@@ -13,7 +13,7 @@ import type { TransObjectLiteral } from '@actual-app/core/types/util';
 import { Information } from '#components/alerts';
 import { Modal, ModalButtons } from '#components/common/Modal';
 import { usePayees } from '#hooks/usePayees';
-import { replaceModal } from '#modals/modalsSlice';
+import { popModal, replaceModal } from '#modals/modalsSlice';
 import type { Modal as ModalType } from '#modals/modalsSlice';
 import { useDispatch, useSelector } from '#redux';
 
@@ -57,6 +57,16 @@ export function MergeUnusedPayeesModal({
     allPayees.filter(p => payeeIds.includes(p.id)),
   );
 
+  // The payees can be gone by the time the modal opens, for example when an
+  // older offer to rename them is clicked after they were merged. There is
+  // nothing left to merge then
+  const hasNoPayees = payees.length === 0;
+  useEffect(() => {
+    if (hasNoPayees) {
+      dispatch(popModal());
+    }
+  }, [hasNoPayees, dispatch]);
+
   const onMerge = useCallback(
     async (targetPayee: PayeeEntity) => {
       await send('payees-merge', {
@@ -97,7 +107,7 @@ export function MergeUnusedPayeesModal({
   );
 
   const targetPayee = allPayees.find(p => p.id === targetPayeeId);
-  if (!targetPayee) {
+  if (!targetPayee || hasNoPayees) {
     return null;
   }
 
