@@ -94,6 +94,78 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
     },
   );
 
+  const unlistenRelatedCategory = listen(
+    'related-category',
+    ({
+      payee,
+      category,
+      transactionIds,
+      uncategorizedCount,
+      fromCategories,
+    }) => {
+      const others =
+        transactionIds.length === 1
+          ? t('1 other transaction')
+          : t('{{count}} other transactions', {
+              count: transactionIds.length,
+            });
+      const fromNames = fromCategories
+        .map(fromCategory => `"${fromCategory.name}"`)
+        .join(', ');
+
+      let message;
+      if (uncategorizedCount > 0 && fromCategories.length > 0) {
+        message = t(
+          'These are the other "{{payee}}" transactions that are uncategorized or in {{fromNames}}.',
+          { payee: payee.name, fromNames },
+        );
+      } else if (fromCategories.length > 0) {
+        message = t(
+          'These are the other "{{payee}}" transactions in {{fromNames}}.',
+          { payee: payee.name, fromNames },
+        );
+      } else {
+        message = t(
+          'These are the other "{{payee}}" transactions that are uncategorized.',
+          { payee: payee.name },
+        );
+      }
+
+      store.dispatch(
+        addNotification({
+          notification: {
+            id: `related-category-${payee.id}`,
+            type: 'message',
+            title: t('Also categorize {{others}} as "{{category}}"?', {
+              others,
+              category: category.name,
+            }),
+            message,
+            button: {
+              title: t('Review'),
+              action: () => {
+                store.dispatch(
+                  pushModal({
+                    modal: {
+                      name: 'categorize-related-transactions',
+                      options: {
+                        payee,
+                        category,
+                        transactionIds,
+                        uncategorizedCount,
+                        fromCategories,
+                      },
+                    },
+                  }),
+                );
+              },
+            },
+          },
+        }),
+      );
+    },
+  );
+
   const unlistenSchedulesOffline = listen('schedules-offline', () => {
     store.dispatch(
       pushModal({ modal: { name: 'schedule-posts-offline-notification' } }),
@@ -250,6 +322,7 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
     unlistenServerError();
     unlistenOrphanedPayees();
     unlistenRelatedPayees();
+    unlistenRelatedCategory();
     unlistenSchedulesOffline();
     unlistenSync();
     unlistenUndo();

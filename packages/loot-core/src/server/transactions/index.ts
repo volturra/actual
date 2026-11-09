@@ -110,22 +110,128 @@ async function findRelatedPayees(
   };
 }
 
+/**
+ * When the user changes the category of a payee's transactions (for example
+ * moving one "Netflix" transaction from "Entertainment" to "Subscriptions"),
+ * find the payee's other transactions that should likely follow: the
+ * uncategorized ones and the ones still in the category the edited
+ * transactions came from. The client offers to categorize them too.
+ */
+async function findRelatedCategoryChange(
+  updates: Partial<TransactionEntity>[],
+  updated: TransactionEntity[],
+  oldCategoryByTransaction: Map<
+    TransactionEntity['id'],
+    TransactionEntity['category']
+  >,
+): Promise<ServerEvents['related-category'] | null> {
+  // A payee change is answered by the related payees offer; asking about
+  // categories in the same edit would be one prompt too many
+  if (updates.some(update => update.payee)) {
+    return null;
+  }
+  const categoryUpdateIds = new Set(
+    updates.filter(update => update.category).map(update => update.id),
+  );
+  const edited = updated.filter(transaction =>
+    categoryUpdateIds.has(transaction.id),
+  );
+  if (edited.length === 0) {
+    return null;
+  }
+
+  // Only offer this when every edit is the same payee and category
+  const payeeIds = new Set(edited.map(transaction => transaction.payee));
+  const categoryIds = new Set(edited.map(transaction => transaction.category));
+  if (payeeIds.size !== 1 || categoryIds.size !== 1) {
+    return null;
+  }
+  const [payeeId] = payeeIds;
+  const [categoryId] = categoryIds;
+  // Off-budget transactions have their category cleared when saved
+  if (!payeeId || !categoryId) {
+    return null;
+  }
+
+  const fromCategoryIds = [
+    ...new Set(
+      edited
+        .map(transaction => oldCategoryByTransaction.get(transaction.id))
+        .filter(id => id && id !== categoryId),
+    ),
+  ];
+
+  const payee = await db.first<Pick<db.DbPayee, 'id' | 'name'>>(
+    `SELECT id, name FROM payees
+     WHERE id = ? AND tombstone = 0 AND transfer_acct IS NULL`,
+    [payeeId],
+  );
+  if (!payee) {
+    // Transfers have no category to share
+    return null;
+  }
+
+  const rows = await db.all<{ id: string; category: string | null }>(
+    `SELECT t.id, t.category FROM v_transactions_internal_alive t
+     JOIN accounts a ON a.id = t.account
+     WHERE t.payee = ? AND t.is_parent = 0
+       AND a.offbudget = 0 AND a.closed = 0 AND a.tombstone = 0
+       AND NOT ${whereIn(
+         edited.map(transaction => transaction.id),
+         't.id',
+       )}
+       AND (t.category IS NULL${
+         fromCategoryIds.length > 0
+           ? ` OR ${whereIn(fromCategoryIds, 't.category')}`
+           : ''
+       })`,
+    [payeeId],
+  );
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const categories = await db.all<Pick<db.DbCategory, 'id' | 'name'>>(
+    `SELECT id, name FROM categories WHERE ${whereIn(
+      [categoryId, ...fromCategoryIds],
+      'id',
+    )}`,
+  );
+  const categoryName = (id: string) =>
+    categories.find(category => category.id === id)?.name ?? '';
+
+  return {
+    payee: { id: payee.id, name: payee.name },
+    category: { id: categoryId, name: categoryName(categoryId) },
+    transactionIds: rows.map(row => row.id),
+    uncategorizedCount: rows.filter(row => row.category == null).length,
+    fromCategories: fromCategoryIds
+      .map(id => ({
+        id,
+        name: categoryName(id),
+        count: rows.filter(row => row.category === id).length,
+      }))
+      .filter(category => category.count > 0),
+  };
+}
+
 export async function batchUpdateTransactions({
   added,
   deleted,
   updated,
   learnCategories = false,
   detectOrphanPayees = true,
-  detectRelatedPayees = false,
+  detectRelatedChanges = false,
   runTransfers = true,
 }: Partial<Diff<TransactionEntity>> & {
   learnCategories?: boolean;
   detectOrphanPayees?: boolean;
   /**
-   * Offer to rename a payee everywhere when the user moves some of its
-   * transactions to another payee (see `findRelatedPayees`)
+   * Offer to repeat the user's edit on related transactions: renaming a
+   * payee everywhere (see `findRelatedPayees`) or categorizing the payee's
+   * other transactions (see `findRelatedCategoryChange`)
    */
-  detectRelatedPayees?: boolean;
+  detectRelatedChanges?: boolean;
   runTransfers?: boolean;
 }) {
   // Track the ids of each type of transaction change (see below for why)
@@ -140,6 +246,10 @@ export async function batchUpdateTransactions({
     TransactionEntity['id'],
     PayeeEntity['id']
   >();
+  const oldCategoryByTransaction = new Map<
+    TransactionEntity['id'],
+    TransactionEntity['category']
+  >();
 
   // Accounts are only needed to clear the category of off-budget
   // transactions, so skip the read for edits that don't set an account
@@ -153,15 +263,27 @@ export async function batchUpdateTransactions({
   // We need to get all the payees of updated transactions _before_
   // making changes
   if (updated) {
-    const descUpdatedIds = updated
-      .filter(update => update.payee)
-      .map(update => update.id);
+    const payeeUpdateIds = new Set(
+      updated.filter(update => update.payee).map(update => update.id),
+    );
+    // Only read the old categories when they are needed, in the same query
+    const categoryUpdateIds = detectRelatedChanges
+      ? updated.filter(update => update.category).map(update => update.id)
+      : [];
 
-    const transactions = await getTransactionsByIds(descUpdatedIds);
+    const transactions = await getTransactionsByIds([
+      ...new Set([...payeeUpdateIds, ...categoryUpdateIds]),
+    ]);
 
     for (let i = 0; i < transactions.length; i++) {
-      oldPayees.add(transactions[i].payee);
-      oldPayeeByTransaction.set(transactions[i].id, transactions[i].payee);
+      if (payeeUpdateIds.has(transactions[i].id)) {
+        oldPayees.add(transactions[i].payee);
+        oldPayeeByTransaction.set(transactions[i].id, transactions[i].payee);
+      }
+      oldCategoryByTransaction.set(
+        transactions[i].id,
+        transactions[i].category,
+      );
     }
   }
 
@@ -299,7 +421,7 @@ export async function batchUpdateTransactions({
           });
         }
 
-        if (detectRelatedPayees) {
+        if (detectRelatedChanges) {
           const related = await findRelatedPayees(
             allUpdated,
             oldPayeeByTransaction,
@@ -310,6 +432,17 @@ export async function batchUpdateTransactions({
           }
         }
       }
+    }
+  }
+
+  if (detectRelatedChanges && updated) {
+    const related = await findRelatedCategoryChange(
+      updated,
+      allUpdated,
+      oldCategoryByTransaction,
+    );
+    if (related) {
+      connection.send('related-category', related);
     }
   }
 

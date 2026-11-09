@@ -526,7 +526,7 @@ describe('batchUpdateTransactions', () => {
 
       await batchUpdateTransactions({
         updated: [{ id: 'a1', payee: 'amazon' }],
-        detectRelatedPayees: true,
+        detectRelatedChanges: true,
       });
 
       expect(relatedPayeesEvents()).toEqual([
@@ -545,7 +545,7 @@ describe('batchUpdateTransactions', () => {
           { id: 'a1', payee: 'amazon' },
           { id: 'b1', payee: 'amazon' },
         ],
-        detectRelatedPayees: true,
+        detectRelatedChanges: true,
       });
 
       const [event] = relatedPayeesEvents();
@@ -560,7 +560,7 @@ describe('batchUpdateTransactions', () => {
 
       await batchUpdateTransactions({
         updated: [{ id: 'lonely', payee: 'amazon' }],
-        detectRelatedPayees: true,
+        detectRelatedChanges: true,
       });
 
       expect(relatedPayeesEvents()).toEqual([]);
@@ -578,7 +578,7 @@ describe('batchUpdateTransactions', () => {
           { id: 'a1', payee: 'amazon' },
           { id: 'a2', payee: 'other' },
         ],
-        detectRelatedPayees: true,
+        detectRelatedChanges: true,
       });
 
       expect(relatedPayeesEvents()).toEqual([]);
@@ -589,7 +589,7 @@ describe('batchUpdateTransactions', () => {
 
       await batchUpdateTransactions({
         updated: [{ id: 'a1', payee: 'to-one' }],
-        detectRelatedPayees: true,
+        detectRelatedChanges: true,
         runTransfers: false,
       });
 
@@ -614,6 +614,157 @@ describe('batchUpdateTransactions', () => {
       });
 
       expect(relatedPayeesEvents()).toHaveLength(1);
+    });
+  });
+
+  describe('related category', () => {
+    afterEach(() => {
+      vi.mocked(connection.send).mockClear();
+    });
+
+    async function prepare() {
+      await db.insertAccount({ id: 'one', name: 'one' });
+      await db.insertAccount({ id: 'off', name: 'off', offbudget: 1 });
+      const group = await db.insertCategoryGroup({ name: 'group' });
+      await db.insertCategory({ id: 'fun', name: 'Fun', cat_group: group });
+      await db.insertCategory({ id: 'subs', name: 'Subs', cat_group: group });
+      await db.insertCategory({ id: 'food', name: 'Food', cat_group: group });
+      await db.insertPayee({ id: 'netflix', name: 'Netflix' });
+      await db.insertPayee({ id: 'shop', name: 'Shop' });
+      await db.insertPayee({ id: 'to-one', name: '', transfer_acct: 'one' });
+      for (const [id, account, payee, category] of [
+        ['n1', 'one', 'netflix', 'fun'],
+        ['n2', 'one', 'netflix', 'fun'],
+        ['n3', 'one', 'netflix', null],
+        ['n4', 'one', 'netflix', 'food'],
+        ['n5', 'one', 'netflix', 'subs'],
+        ['n-off', 'off', 'netflix', null],
+        ['s1', 'one', 'shop', null],
+        ['t1', 'one', 'to-one', null],
+        ['t2', 'one', 'to-one', null],
+      ]) {
+        await db.insertTransaction({
+          id,
+          account,
+          amount: -10,
+          date: '2024-01-01',
+          payee,
+          category,
+        });
+      }
+      vi.mocked(connection.send).mockClear();
+    }
+
+    function relatedCategoryEvents() {
+      return vi
+        .mocked(connection.send)
+        .mock.calls.filter(([name]) => name === 'related-category')
+        .map(([, args]) => args as ServerEvents['related-category']);
+    }
+
+    it('offers the uncategorized and same-category transactions of the payee', async () => {
+      await prepare();
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'n1', category: 'subs' }],
+        detectRelatedChanges: true,
+      });
+
+      const events = relatedCategoryEvents();
+      expect(events).toHaveLength(1);
+      expect({
+        ...events[0],
+        transactionIds: [...events[0].transactionIds].sort(),
+      }).toEqual({
+        payee: { id: 'netflix', name: 'Netflix' },
+        category: { id: 'subs', name: 'Subs' },
+        // Not n4 (another category), n5 (already there) or n-off (off budget)
+        transactionIds: ['n2', 'n3'],
+        uncategorizedCount: 1,
+        fromCategories: [{ id: 'fun', name: 'Fun', count: 1 }],
+      });
+    });
+
+    it('offers only the uncategorized ones when no other shares the old category', async () => {
+      await prepare();
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'n4', category: 'subs' }],
+        detectRelatedChanges: true,
+      });
+
+      expect(relatedCategoryEvents()).toEqual([
+        {
+          payee: { id: 'netflix', name: 'Netflix' },
+          category: { id: 'subs', name: 'Subs' },
+          transactionIds: ['n3'],
+          uncategorizedCount: 1,
+          fromCategories: [],
+        },
+      ]);
+    });
+
+    it('does not offer anything when nothing else matches', async () => {
+      await prepare();
+
+      await batchUpdateTransactions({
+        updated: [{ id: 's1', category: 'food' }],
+        detectRelatedChanges: true,
+      });
+
+      expect(relatedCategoryEvents()).toEqual([]);
+    });
+
+    it('does not offer anything when the payee changed in the same edit', async () => {
+      await prepare();
+
+      await batchUpdateTransactions({
+        updated: [{ id: 's1', payee: 'netflix', category: 'subs' }],
+        detectRelatedChanges: true,
+      });
+
+      expect(relatedCategoryEvents()).toEqual([]);
+    });
+
+    it('does not offer anything for edits to different categories', async () => {
+      await prepare();
+
+      await batchUpdateTransactions({
+        updated: [
+          { id: 'n1', category: 'subs' },
+          { id: 'n2', category: 'food' },
+        ],
+        detectRelatedChanges: true,
+      });
+
+      expect(relatedCategoryEvents()).toEqual([]);
+    });
+
+    it('does not offer anything for transfers', async () => {
+      await prepare();
+
+      await batchUpdateTransactions({
+        updated: [{ id: 't1', category: 'food' }],
+        detectRelatedChanges: true,
+        runTransfers: false,
+      });
+
+      expect(relatedCategoryEvents()).toEqual([]);
+    });
+
+    it('is offered through the batch update handler unless turned off', async () => {
+      await prepare();
+
+      await runHandler(handlers['transactions-batch-update'], {
+        updated: [{ id: 'n1', category: 'subs' }],
+        detectRelatedChanges: false,
+      });
+      expect(relatedCategoryEvents()).toEqual([]);
+
+      await runHandler(handlers['transactions-batch-update'], {
+        updated: [{ id: 'n2', category: 'subs' }],
+      });
+      expect(relatedCategoryEvents()).toHaveLength(1);
     });
   });
 });

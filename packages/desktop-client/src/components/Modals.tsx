@@ -20,6 +20,7 @@ import { AkahuInitialiseModal } from './modals/AkahuInitialiseModal';
 import { AllAccountsMenuModal } from './modals/AllAccountsMenuModal';
 import { BudgetAutomationsModal } from './modals/BudgetAutomationsModal';
 import { BudgetPageMenuModal } from './modals/BudgetPageMenuModal';
+import { CategorizeRelatedTransactionsModal } from './modals/CategorizeRelatedTransactionsModal';
 import { CategoryAutocompleteModal } from './modals/CategoryAutocompleteModal';
 import { CategoryGroupAutocompleteModal } from './modals/CategoryGroupAutocompleteModal';
 import { CategoryGroupMenuModal } from './modals/CategoryGroupMenuModal';
@@ -186,6 +187,11 @@ export function Modals() {
 
         case 'edit-rule':
           return <EditRuleModal key={key} {...modal.options} />;
+
+        case 'categorize-related-transactions':
+          return (
+            <CategorizeRelatedTransactionsModal key={key} {...modal.options} />
+          );
 
         case 'merge-unused-payees':
           return <MergeUnusedPayeesModal key={key} {...modal.options} />;

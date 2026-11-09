@@ -78,6 +78,20 @@ type RelatedPayeesEvent = {
   targetPayee: { id: string; name: string };
 };
 
+type RelatedCategoryEvent = {
+  /** The payee whose transactions the user categorized */
+  payee: { id: string; name: string };
+  /** The category the user picked */
+  category: { id: string; name: string };
+  /**
+   * The payee's other transactions that are uncategorized or still in one
+   * of the categories the edited transactions came from
+   */
+  transactionIds: string[];
+  uncategorizedCount: number;
+  fromCategories: Array<{ id: string; name: string; count: number }>;
+};
+
 export type ImportStep =
   | 'accounts'
   | 'categories'
@@ -122,6 +136,7 @@ export type ServerEvents = {
   'indexeddb-quota-error': IndexeddbQuotaErrorEvent;
   'orphaned-payees': OrphanedPayeesEvent;
   'prefs-updated': PrefsUpdatedEvent;
+  'related-category': RelatedCategoryEvent;
   'related-payees': RelatedPayeesEvent;
   'schedules-offline': SchedulesOfflineEvent;
   'server-error': ServerErrorEvent;
