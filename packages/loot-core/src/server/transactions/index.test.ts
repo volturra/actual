@@ -10,7 +10,10 @@ import type { ServerEvents } from '#types/server-events';
 
 import { getTransferAccounts } from './transfer';
 
-import { batchUpdateTransactions } from './index';
+import {
+  batchUpdateTransactions,
+  categorizeRelatedTransactions,
+} from './index';
 
 beforeEach(global.emptyDatabase());
 
@@ -944,6 +947,74 @@ describe('batchUpdateTransactions', () => {
         uncategorizedCount: 3,
         fromCategories: [{ id: 'fun', name: 'Fun', count: 2 }],
       });
+    });
+
+    it('applies the offer to exactly the transactions it counted', async () => {
+      await prepare();
+      await insert([
+        { id: 'n7', category: 'food' },
+        { id: 'parent', is_parent: true },
+        { id: 'child', is_child: true, parent_id: 'parent' },
+      ]);
+      await db.update('categories', { id: 'food', tombstone: 1 });
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'n1', category: 'subs' }],
+        detectRelatedChanges: true,
+      });
+      const [offer] = relatedCategoryEvents();
+      // Undone before accepting: the edited transaction stays as it was
+      await db.update('transactions', { id: 'n1', category: 'fun' });
+
+      const changed = await runHandler(
+        handlers['transactions-categorize-related'],
+        {
+          payeeId: offer.payee.id,
+          categoryId: offer.category.id,
+          fromCategoryIds: offer.fromCategories.map(category => category.id),
+          excludeIds: offer.editedIds,
+        },
+      );
+
+      const offered =
+        offer.uncategorizedCount +
+        offer.fromCategories.reduce((sum, category) => sum + category.count, 0);
+      expect(changed).toBe(offered);
+      const rows = await db.all<{ id: string; category: string | null }>(
+        `SELECT id, category FROM v_transactions_internal
+         WHERE payee = 'netflix' AND is_parent = 0 AND tombstone = 0
+         ORDER BY id`,
+      );
+      expect(
+        Object.fromEntries(rows.map(row => [row.id, row.category])),
+      ).toEqual({
+        child: 'subs',
+        n1: 'fun',
+        n2: 'subs',
+        n3: 'subs',
+        n4: 'subs',
+        // In the deleted category: shown and counted as uncategorized
+        n5: 'subs',
+        n7: 'subs',
+        // Already there
+        n6: 'subs',
+        // Not on budget: left alone
+        'n-off': null,
+        'n-closed': null,
+      });
+    });
+
+    it('applies nothing when the matching transactions changed since', async () => {
+      await prepare();
+
+      expect(
+        await categorizeRelatedTransactions({
+          payeeId: 'shop',
+          categoryId: 'subs',
+          fromCategoryIds: [],
+          excludeIds: ['s1'],
+        }),
+      ).toBe(0);
     });
 
     it('leaves out lines of a deleted split', async () => {

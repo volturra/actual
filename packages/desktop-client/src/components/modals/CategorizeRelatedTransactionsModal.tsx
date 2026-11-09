@@ -7,7 +7,6 @@ import { Text } from '@actual-app/components/text';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
 import { send } from '@actual-app/core/platform/client/connection';
-import { q } from '@actual-app/core/shared/query';
 import type { TransObjectLiteral } from '@actual-app/core/types/util';
 
 import { Information } from '#components/alerts';
@@ -22,7 +21,6 @@ import {
   addGenericErrorNotification,
   addNotification,
 } from '#notifications/notificationsSlice';
-import { aqlQuery } from '#queries/aqlQuery';
 import { useDispatch } from '#redux';
 
 const highlightStyle = { color: theme.pageTextPositive };
@@ -104,18 +102,21 @@ export function CategorizeRelatedTransactionsModal({
                 onPress={async () => {
                   setIsSaving(true);
                   try {
-                    // Look the transactions up now: the offer may be a while
+                    // The server selects the transactions again with the
+                    // query it counted them with: the offer may be a while
                     // old, and the user may have changed some since
-                    const ids = await getMatchingIds(
-                      payee.id,
-                      fromCategories.map(fromCategory => fromCategory.id),
-                      editedIds,
+                    const changedCount = await send(
+                      'transactions-categorize-related',
+                      {
+                        payeeId: payee.id,
+                        categoryId: category.id,
+                        fromCategoryIds: fromCategories.map(
+                          fromCategory => fromCategory.id,
+                        ),
+                        excludeIds: editedIds,
+                      },
                     );
-                    if (ids.length > 0) {
-                      await send('transactions-batch-update', {
-                        updated: ids.map(id => ({ id, category: category.id })),
-                      });
-                    } else {
+                    if (changedCount === 0) {
                       dispatch(
                         addNotification({
                           notification: {
@@ -149,37 +150,4 @@ export function CategorizeRelatedTransactionsModal({
       )}
     </Modal>
   );
-}
-
-/**
- * The payee's on-budget transactions that are uncategorized or in one of
- * `fromCategoryIds`, matching what the server offered
- */
-async function getMatchingIds(
-  payeeId: string,
-  fromCategoryIds: string[],
-  editedIds: string[],
-) {
-  const { data } = await aqlQuery(
-    q('transactions')
-      .filter({
-        payee: payeeId,
-        is_parent: false,
-        'account.offbudget': false,
-        'account.closed': false,
-        'account.tombstone': false,
-        $or: [{ category: null }, { category: { $oneof: fromCategoryIds } }],
-      })
-      // Like the server's count: no split parents, and no lines of a
-      // deleted split
-      .options({ splits: 'inline' })
-      .select('id'),
-  );
-  // Left out like on the server, so an edit the user undid is not redone
-  const edited = new Set(editedIds);
-  return Array.isArray(data)
-    ? data.flatMap(row =>
-        typeof row?.id === 'string' && !edited.has(row.id) ? [row.id] : [],
-      )
-    : [];
 }

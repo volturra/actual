@@ -139,6 +139,57 @@ async function findRelatedPayees(
 }
 
 /**
+ * Selects from the payee's (bound twice) alive, non-parent transactions in
+ * open on-budget accounts, leaving out `excludeIds`. Joins `c`, the
+ * transaction's category, which is null for a deleted category as in the
+ * register. Transfer payees match nothing: transfers between on-budget
+ * accounts have no category. Shared by the category offer and applying it,
+ * so what is counted is what gets changed
+ */
+function onBudgetTransactionsOfPayee(select: string, excludeIds: string[]) {
+  return `SELECT ${select}
+     FROM (${aliveTransactionsOfPayee('t.*')}) t
+     JOIN accounts a ON a.id = t.acct
+     JOIN payees p ON p.id = ?
+     LEFT JOIN category_mapping cm ON cm.id = t.category
+     LEFT JOIN categories c ON c.id = cm.transferId AND c.tombstone = 0
+     WHERE p.tombstone = 0 AND p.transfer_acct IS NULL
+       AND a.offbudget = 0 AND a.closed = 0 AND a.tombstone = 0
+       AND NOT ${whereIn(excludeIds, 't.id')}`;
+}
+
+/**
+ * Applies an accepted `related-category` offer: gives `categoryId` to the
+ * payee's on-budget transactions that are uncategorized or in one of
+ * `fromCategoryIds`, except `excludeIds` (the edited ones, so an edit the
+ * user undid is not redone). The transactions are selected now, as the
+ * offer may be a while old. Returns how many were changed
+ */
+export async function categorizeRelatedTransactions({
+  payeeId,
+  categoryId,
+  fromCategoryIds,
+  excludeIds,
+}: {
+  payeeId: PayeeEntity['id'];
+  categoryId: NonNullable<TransactionEntity['category']>;
+  fromCategoryIds: Array<NonNullable<TransactionEntity['category']>>;
+  excludeIds: Array<TransactionEntity['id']>;
+}): Promise<number> {
+  const rows = await db.all<{ id: string }>(
+    `${onBudgetTransactionsOfPayee('t.id', excludeIds)}
+       AND (c.id IS NULL OR ${whereIn(fromCategoryIds, 'c.id')})`,
+    [payeeId, payeeId],
+  );
+  if (rows.length > 0) {
+    await batchUpdateTransactions({
+      updated: rows.map(row => ({ id: row.id, category: categoryId })),
+    });
+  }
+  return rows.length;
+}
+
+/**
  * When the user changes the category of a payee's transactions (for example
  * moving one "Netflix" transaction from "Entertainment" to "Subscriptions"),
  * find the payee's other transactions that should likely follow, so the
@@ -192,8 +243,7 @@ async function findRelatedCategoryChange(
   }
 
   // One query: the payee's other on-budget transactions per category, with
-  // the names the client shows. Transfer payees are left out: transfers
-  // between on-budget accounts have no category
+  // the names the client shows
   const rows = await db.all<{
     category: string | null;
     count: number;
@@ -201,21 +251,12 @@ async function findRelatedCategoryChange(
     payee_name: string;
     target_name: string | null;
   }>(
-    `SELECT c.id AS category, COUNT(*) AS count,
+    `${onBudgetTransactionsOfPayee(
+      `c.id AS category, COUNT(*) AS count,
        c.name AS category_name, p.name AS payee_name,
-       (SELECT name FROM categories WHERE id = ?) AS target_name
-     FROM (${aliveTransactionsOfPayee('t.*')}) t
-     JOIN accounts a ON a.id = t.acct
-     JOIN payees p ON p.id = ?
-     LEFT JOIN category_mapping cm ON cm.id = t.category
-     -- A deleted category shows as uncategorized, as in the register
-     LEFT JOIN categories c ON c.id = cm.transferId AND c.tombstone = 0
-     WHERE p.tombstone = 0 AND p.transfer_acct IS NULL
-       AND a.offbudget = 0 AND a.closed = 0 AND a.tombstone = 0
-       AND NOT ${whereIn(
-         edited.map(transaction => transaction.id),
-         't.id',
-       )}
+       (SELECT name FROM categories WHERE id = ?) AS target_name`,
+      edited.map(transaction => transaction.id),
+    )}
      GROUP BY c.id`,
     [categoryId, payeeId, payeeId],
   );
