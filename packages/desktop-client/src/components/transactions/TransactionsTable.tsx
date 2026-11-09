@@ -1876,7 +1876,13 @@ const Transaction = memo(function Transaction({
                     // uncategorized transaction
                     fontStyle: 'italic',
                     fontWeight: 300,
-                    color: theme.errorText,
+                    // The red can be unreadable on a selected row's
+                    // background (e.g. midnight), so use the row's text
+                    // colour there.
+                    color:
+                      selected || highlighted
+                        ? theme.tableRowBackgroundHighlightText
+                        : theme.errorText,
                   }
                 : valueStyle
             }
@@ -2311,7 +2317,6 @@ function UncategorizedLabel() {
           height: 11,
           marginRight: 5,
           verticalAlign: 'middle',
-          color: theme.errorText,
         }}
       />
       <Trans>Categorize</Trans>
