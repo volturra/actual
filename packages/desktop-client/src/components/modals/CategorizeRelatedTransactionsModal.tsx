@@ -48,15 +48,7 @@ export function CategorizeRelatedTransactionsModal({
         <>
           <ModalHeader
             title={t('Categorize related transactions')}
-            rightContent={
-              <ModalCloseButton
-                onPress={() => {
-                  if (!isSaving) {
-                    state.close();
-                  }
-                }}
-              />
-            }
+            rightContent={<ModalCloseButton onPress={() => state.close()} />}
           />
           <View style={{ maxWidth: 500, lineHeight: 1.5 }}>
             <Paragraph style={{ marginBottom: 10 }}>
@@ -140,7 +132,7 @@ export function CategorizeRelatedTransactionsModal({
               >
                 <Trans>Categorize</Trans>
               </Button>
-              <Button isDisabled={isSaving} onPress={() => state.close()}>
+              <Button onPress={() => state.close()}>
                 <Trans>Do nothing</Trans>
               </Button>
             </ModalButtons>
@@ -163,6 +155,7 @@ async function getMatchingIds(payeeId: string, fromCategoryIds: string[]) {
         is_parent: false,
         'account.offbudget': false,
         'account.closed': false,
+        'account.tombstone': false,
         $or: [{ category: null }, { category: { $oneof: fromCategoryIds } }],
       })
       // Like the server's count: no split parents, and no lines of a

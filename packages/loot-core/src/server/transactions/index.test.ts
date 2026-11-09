@@ -568,6 +568,71 @@ describe('batchUpdateTransactions', () => {
       expect(relatedPayeesEvents()[0].payee.transactionCount).toBe(1);
     });
 
+    async function insertSplit(
+      id: string,
+      lines: number,
+      { tombstone = false }: { tombstone?: boolean } = {},
+    ) {
+      await db.insertTransaction({
+        id,
+        account: 'one',
+        amount: -10 * lines,
+        date: '2024-01-01',
+        payee: 'amzn',
+        is_parent: true,
+      });
+      for (let line = 0; line < lines; line++) {
+        await db.insertTransaction({
+          id: `${id}-${line}`,
+          account: 'one',
+          amount: -10,
+          date: '2024-01-01',
+          payee: 'amzn',
+          is_child: true,
+          parent_id: id,
+        });
+      }
+      if (tombstone) {
+        // Delete only the split itself, as a partial sync could leave it
+        await db.update('transactions', { id, tombstone: 1 });
+      }
+    }
+
+    it('counts a split once and leaves out lines of a deleted split', async () => {
+      await prepare();
+      await insertSplit('split', 3);
+      await insertSplit('deleted-split', 2, { tombstone: true });
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'a1', payee: 'amazon' }],
+        detectRelatedChanges: true,
+      });
+
+      // a2, a3 and the split
+      expect(relatedPayeesEvents()[0].payee.transactionCount).toBe(3);
+    });
+
+    it('offers to rename when the payee of a whole split changes', async () => {
+      await prepare();
+      await insertSplit('split', 2);
+
+      await batchUpdateTransactions({
+        updated: [
+          { id: 'split', payee: 'amazon' },
+          { id: 'split-0', payee: 'amazon' },
+          { id: 'split-1', payee: 'amazon' },
+        ],
+        detectRelatedChanges: true,
+      });
+
+      expect(relatedPayeesEvents()).toEqual([
+        {
+          payee: { id: 'amzn', name: 'AMZN MKTP US', transactionCount: 3 },
+          targetPayee: { id: 'amazon', name: 'Amazon' },
+        },
+      ]);
+    });
+
     it('does not offer anything when one line of a split changes payee', async () => {
       await prepare();
       await db.insertTransaction({
@@ -826,6 +891,23 @@ describe('batchUpdateTransactions', () => {
 
       const [event] = relatedCategoryEvents();
       expect(event.uncategorizedCount).toBe(2);
+    });
+
+    it('leaves out lines of a deleted split', async () => {
+      await prepare();
+      await insert([
+        { id: 'parent', is_parent: true },
+        { id: 'child', is_child: true, parent_id: 'parent' },
+      ]);
+      await db.update('transactions', { id: 'parent', tombstone: 1 });
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'n5', category: 'subs' }],
+        detectRelatedChanges: true,
+      });
+
+      // Only n4
+      expect(relatedCategoryEvents()[0].uncategorizedCount).toBe(1);
     });
 
     it('does not offer anything when editing a line of a split', async () => {

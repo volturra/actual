@@ -119,7 +119,10 @@ type ModalVariant =
         category: { id: string; name: string };
         /** How many of the payee's other transactions are uncategorized */
         uncategorizedCount: number;
-        /** Categories whose transactions of this payee move too, with counts */
+        /**
+         * The old categories whose transactions of this payee move too (see
+         * the `related-category` server event), with how many are in them
+         */
         fromCategories: Array<{ id: string; name: string; count: number }>;
       };
     }

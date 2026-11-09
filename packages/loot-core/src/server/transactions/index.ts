@@ -50,7 +50,8 @@ function aliveTransactionsOfPayee(select: string) {
   return `SELECT ${select} FROM transactions t
     LEFT JOIN transactions parent ON t.isChild = 1 AND parent.id = t.parent_id
     WHERE t.description IN (SELECT id FROM payee_mapping WHERE targetId = ?)
-      AND t.tombstone = 0 AND t.isParent = 0
+      AND t.date IS NOT NULL AND t.acct IS NOT NULL
+      AND IFNULL(t.tombstone, 0) = 0 AND t.isParent = 0
       AND (t.isChild = 0 OR parent.tombstone = 0)`;
 }
 
@@ -68,9 +69,15 @@ async function findRelatedPayees(
 ): Promise<ServerEvents['related-payees'] | null> {
   const fromIds = new Set<PayeeEntity['id']>();
   const targetIds = new Set<PayeeEntity['id']>();
+  const updatedIds = new Set(updated.map(transaction => transaction.id));
   for (const transaction of updated) {
-    // One line of a split says little about the payee's other transactions
     if (transaction.is_child) {
+      // Changing a split's payee also changes its lines: the split itself
+      // stands for them. A line changed on its own says little about the
+      // payee's other transactions
+      if (updatedIds.has(transaction.parent_id)) {
+        continue;
+      }
       return null;
     }
     const oldPayee = oldPayeeByTransaction.get(transaction.id);
@@ -96,8 +103,10 @@ async function findRelatedPayees(
     }
   >(
     `SELECT p.id, p.name, p.transfer_acct,
-       CASE WHEN p.id = ? THEN (${aliveTransactionsOfPayee('COUNT(*)')})
-       END AS count
+       CASE WHEN p.id = ? THEN (${aliveTransactionsOfPayee(
+         // A split counts once, however many lines it has
+         'COUNT(DISTINCT CASE WHEN t.isChild = 1 THEN t.parent_id ELSE t.id END)',
+       )}) END AS count
      FROM payees p
      WHERE p.id IN (?, ?) AND p.tombstone = 0`,
     [fromId, fromId, fromId, targetId],

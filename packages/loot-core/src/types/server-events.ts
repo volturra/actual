@@ -86,8 +86,9 @@ type RelatedCategoryEvent = {
   /** How many of the payee's other transactions are uncategorized */
   uncategorizedCount: number;
   /**
-   * The categories the edited transactions came from that hold most of the
-   * payee's other transactions, with how many are still in them
+   * The categories the edited transactions came from that still hold at
+   * least half of the payee's other categorized transactions (counting those
+   * already in the new category), with how many are in them
    */
   fromCategories: Array<{ id: string; name: string; count: number }>;
 };
