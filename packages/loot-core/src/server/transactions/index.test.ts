@@ -5,6 +5,7 @@ import * as db from '#server/db';
 import { handlers } from '#server/main';
 import { runHandler } from '#server/mutators';
 import { batchMessages, setSyncingMode } from '#server/sync';
+import type { TransactionEntity } from '#types/models';
 import type { ServerEvents } from '#types/server-events';
 
 import { getTransferAccounts } from './transfer';
@@ -650,12 +651,29 @@ describe('batchUpdateTransactions', () => {
 
   describe('related category', () => {
     afterEach(() => {
+      vi.restoreAllMocks();
       vi.mocked(connection.send).mockClear();
     });
+
+    async function insert(
+      transactions: Array<Partial<TransactionEntity> & { id: string }>,
+    ) {
+      for (const transaction of transactions) {
+        await db.insertTransaction({
+          account: 'one',
+          amount: -10,
+          date: '2024-01-01',
+          payee: 'netflix',
+          category: null,
+          ...transaction,
+        });
+      }
+    }
 
     async function prepare() {
       await db.insertAccount({ id: 'one', name: 'one' });
       await db.insertAccount({ id: 'off', name: 'off', offbudget: 1 });
+      await db.insertAccount({ id: 'closed', name: 'closed', closed: 1 });
       const group = await db.insertCategoryGroup({ name: 'group' });
       await db.insertCategory({ id: 'fun', name: 'Fun', cat_group: group });
       await db.insertCategory({ id: 'subs', name: 'Subs', cat_group: group });
@@ -663,26 +681,20 @@ describe('batchUpdateTransactions', () => {
       await db.insertPayee({ id: 'netflix', name: 'Netflix' });
       await db.insertPayee({ id: 'shop', name: 'Shop' });
       await db.insertPayee({ id: 'to-one', name: '', transfer_acct: 'one' });
-      for (const [id, account, payee, category] of [
-        ['n1', 'one', 'netflix', 'fun'],
-        ['n2', 'one', 'netflix', 'fun'],
-        ['n3', 'one', 'netflix', null],
-        ['n4', 'one', 'netflix', 'food'],
-        ['n5', 'one', 'netflix', 'subs'],
-        ['n-off', 'off', 'netflix', null],
-        ['s1', 'one', 'shop', null],
-        ['t1', 'one', 'to-one', null],
-        ['t2', 'one', 'to-one', null],
-      ]) {
-        await db.insertTransaction({
-          id,
-          account,
-          amount: -10,
-          date: '2024-01-01',
-          payee,
-          category,
-        });
-      }
+      await insert([
+        { id: 'n1', category: 'fun' },
+        { id: 'n2', category: 'fun' },
+        { id: 'n3', category: 'fun' },
+        { id: 'n4' },
+        { id: 'n5', category: 'food' },
+        { id: 'n6', category: 'subs' },
+        { id: 'n-off', account: 'off' },
+        { id: 'n-closed', account: 'closed' },
+        { id: 'n-deleted', tombstone: true },
+        { id: 's1', payee: 'shop' },
+        { id: 't1', payee: 'to-one' },
+        { id: 't2', payee: 'to-one' },
+      ]);
       vi.mocked(connection.send).mockClear();
     }
 
@@ -693,7 +705,7 @@ describe('batchUpdateTransactions', () => {
         .map(([, args]) => args as ServerEvents['related-category']);
     }
 
-    it('offers the uncategorized and same-category transactions of the payee', async () => {
+    it('offers the uncategorized ones and the old category when it is the main one', async () => {
       await prepare();
 
       await batchUpdateTransactions({
@@ -701,38 +713,72 @@ describe('batchUpdateTransactions', () => {
         detectRelatedChanges: true,
       });
 
-      const events = relatedCategoryEvents();
-      expect(events).toHaveLength(1);
-      expect({
-        ...events[0],
-        transactionIds: [...events[0].transactionIds].sort(),
-      }).toEqual({
-        payee: { id: 'netflix', name: 'Netflix' },
-        category: { id: 'subs', name: 'Subs' },
-        // Not n4 (another category), n5 (already there) or n-off (off budget)
-        transactionIds: ['n2', 'n3'],
-        uncategorizedCount: 1,
-        fromCategories: [{ id: 'fun', name: 'Fun', count: 1 }],
-      });
-    });
-
-    it('offers only the uncategorized ones when no other shares the old category', async () => {
-      await prepare();
-
-      await batchUpdateTransactions({
-        updated: [{ id: 'n4', category: 'subs' }],
-        detectRelatedChanges: true,
-      });
-
+      // Of the other on-budget transactions, n2 and n3 are in Fun (2 of 4
+      // categorized) and n4 is uncategorized. Off-budget, closed and
+      // deleted ones don't count
       expect(relatedCategoryEvents()).toEqual([
         {
           payee: { id: 'netflix', name: 'Netflix' },
           category: { id: 'subs', name: 'Subs' },
-          transactionIds: ['n3'],
+          uncategorizedCount: 1,
+          fromCategories: [{ id: 'fun', name: 'Fun', count: 2 }],
+        },
+      ]);
+    });
+
+    it('offers only the uncategorized ones for a mixed-use payee', async () => {
+      await prepare();
+      await insert([
+        { id: 'n7', category: 'food' },
+        { id: 'n8', category: 'food' },
+        { id: 'n9', category: 'food' },
+      ]);
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'n1', category: 'subs' }],
+        detectRelatedChanges: true,
+      });
+
+      // Fun holds 2 of the 7 other categorized transactions
+      expect(relatedCategoryEvents()).toEqual([
+        {
+          payee: { id: 'netflix', name: 'Netflix' },
+          category: { id: 'subs', name: 'Subs' },
           uncategorizedCount: 1,
           fromCategories: [],
         },
       ]);
+    });
+
+    it('counts split children but not split parents', async () => {
+      await prepare();
+      await insert([
+        { id: 'parent', is_parent: true },
+        { id: 'child', is_child: true, parent_id: 'parent' },
+      ]);
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'n5', category: 'subs' }],
+        detectRelatedChanges: true,
+      });
+
+      const [event] = relatedCategoryEvents();
+      expect(event.uncategorizedCount).toBe(2);
+    });
+
+    it('does not offer anything when editing a line of a split', async () => {
+      await prepare();
+      await insert([
+        { id: 'parent', is_parent: true },
+        { id: 'child', is_child: true, parent_id: 'parent' },
+      ]);
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'child', category: 'subs' }],
+        detectRelatedChanges: true,
+      });
+
+      expect(relatedCategoryEvents()).toEqual([]);
     });
 
     it('does not offer anything when nothing else matches', async () => {
@@ -798,36 +844,43 @@ describe('batchUpdateTransactions', () => {
       expect(relatedCategoryEvents()).toHaveLength(1);
     });
 
-    it('leaves out closed accounts, deleted transactions and split parents but includes their children', async () => {
+    it('costs two queries for a category edit and one for a payee edit', async () => {
       await prepare();
-      await db.insertAccount({ id: 'closed', name: 'closed', closed: 1 });
-      for (const transaction of [
-        { id: 'c1', account: 'closed', category: null },
-        { id: 'gone', account: 'one', category: null, tombstone: 1 },
-        { id: 'parent', account: 'one', category: null, is_parent: true },
-        {
-          id: 'child',
-          account: 'one',
-          category: null,
-          is_child: true,
-          parent_id: 'parent',
-        },
-      ]) {
-        await db.insertTransaction({
-          amount: -10,
-          date: '2024-01-01',
-          payee: 'netflix',
-          ...transaction,
+      await db.insertPayee({ id: 'amazon', name: 'Amazon' });
+
+      async function countQueries(
+        updated: Array<Partial<TransactionEntity>>,
+        detectRelatedChanges: boolean,
+      ) {
+        const spies = [
+          vi.spyOn(db, 'all'),
+          vi.spyOn(db, 'first'),
+          vi.spyOn(db, 'selectWithSchema'),
+        ];
+        await batchUpdateTransactions({
+          updated,
+          detectRelatedChanges,
+          detectOrphanPayees: false,
+          runTransfers: false,
         });
+        const count = spies.reduce(
+          (sum, spy) => sum + spy.mock.calls.length,
+          0,
+        );
+        spies.forEach(spy => spy.mockRestore());
+        return count;
       }
 
-      await batchUpdateTransactions({
-        updated: [{ id: 'n4', category: 'subs' }],
-        detectRelatedChanges: true,
-      });
-
-      const [event] = relatedCategoryEvents();
-      expect([...event.transactionIds].sort()).toEqual(['child', 'n3']);
+      // The old categories are read, then one query finds the candidates
+      expect(
+        (await countQueries([{ id: 'n1', category: 'subs' }], true)) -
+          (await countQueries([{ id: 'n2', category: 'subs' }], false)),
+      ).toBe(2);
+      // The old payees are already read; one query checks both payees
+      expect(
+        (await countQueries([{ id: 'n3', payee: 'amazon' }], true)) -
+          (await countQueries([{ id: 'n5', payee: 'amazon' }], false)),
+      ).toBe(1);
     });
   });
 });

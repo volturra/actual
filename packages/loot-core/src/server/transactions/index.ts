@@ -106,9 +106,18 @@ async function findRelatedPayees(
 /**
  * When the user changes the category of a payee's transactions (for example
  * moving one "Netflix" transaction from "Entertainment" to "Subscriptions"),
- * find the payee's other transactions that should likely follow: the
- * uncategorized ones and the ones still in the category the edited
- * transactions came from. The client offers to categorize them too.
+ * find the payee's other transactions that should likely follow, so the
+ * client can offer to categorize them too:
+ *
+ * - the uncategorized ones
+ * - the ones still in the category the edited transactions came from, but
+ *   only when that category holds at least half of the payee's categorized
+ *   transactions. For a mixed-use payee (a supermarket used for groceries
+ *   and household things) moving one transaction is a one-off fix, not a
+ *   reclassification of the payee
+ *
+ * Only counts are returned: the client looks the transactions up again when
+ * the user accepts, so the offer is never applied to stale data.
  */
 async function findRelatedCategoryChange(
   updates: Partial<TransactionEntity>[],
@@ -129,7 +138,8 @@ async function findRelatedCategoryChange(
   const edited = updated.filter(transaction =>
     categoryUpdateIds.has(transaction.id),
   );
-  if (edited.length === 0) {
+  // One line of a split says little about the payee's other transactions
+  if (edited.length === 0 || edited.some(transaction => transaction.is_child)) {
     return null;
   }
 
@@ -146,25 +156,23 @@ async function findRelatedCategoryChange(
     return null;
   }
 
-  const fromCategoryIds = [
-    ...new Set(
-      edited
-        .map(transaction => oldCategoryByTransaction.get(transaction.id))
-        .filter(id => id && id !== categoryId),
-    ),
-  ];
-
-  // One query for the candidates and the payee's name. Transfer payees are
-  // left out: transfers between on-budget accounts have no category
+  // One query: the payee's other on-budget transactions per category, with
+  // the names the client shows. Transfer payees are left out: transfers
+  // between on-budget accounts have no category
   const rows = await db.all<{
-    id: string;
     category: string | null;
+    count: number;
+    category_name: string | null;
     payee_name: string;
+    target_name: string | null;
   }>(
-    `SELECT t.id, t.category, p.name AS payee_name
+    `SELECT t.category, COUNT(*) AS count, c.name AS category_name,
+       p.name AS payee_name,
+       (SELECT name FROM categories WHERE id = ?) AS target_name
      FROM v_transactions_internal_alive t
      JOIN accounts a ON a.id = t.account
      JOIN payees p ON p.id = t.payee
+     LEFT JOIN categories c ON c.id = t.category
      WHERE t.payee = ? AND t.is_parent = 0
        AND p.tombstone = 0 AND p.transfer_acct IS NULL
        AND a.offbudget = 0 AND a.closed = 0 AND a.tombstone = 0
@@ -172,38 +180,42 @@ async function findRelatedCategoryChange(
          edited.map(transaction => transaction.id),
          't.id',
        )}
-       AND (t.category IS NULL${
-         fromCategoryIds.length > 0
-           ? ` OR ${whereIn(fromCategoryIds, 't.category')}`
-           : ''
-       })`,
-    [payeeId],
+     GROUP BY t.category`,
+    [categoryId, payeeId],
   );
   if (rows.length === 0) {
     return null;
   }
 
-  const categories = await db.all<Pick<db.DbCategory, 'id' | 'name'>>(
-    `SELECT id, name FROM categories WHERE ${whereIn(
-      [categoryId, ...fromCategoryIds],
-      'id',
-    )}`,
+  const oldCategoryIds = new Set(
+    edited.map(transaction => oldCategoryByTransaction.get(transaction.id)),
   );
-  const categoryName = (id: string) =>
-    categories.find(category => category.id === id)?.name ?? '';
+  const categorizedCount = rows
+    .filter(row => row.category != null)
+    .reduce((sum, row) => sum + row.count, 0);
+  const uncategorizedCount = rows.find(row => row.category == null)?.count ?? 0;
+  const fromCategories = rows
+    .filter(
+      row =>
+        row.category != null &&
+        row.category !== categoryId &&
+        oldCategoryIds.has(row.category) &&
+        row.count * 2 >= categorizedCount,
+    )
+    .map(row => ({
+      id: row.category,
+      name: row.category_name ?? '',
+      count: row.count,
+    }));
+  if (uncategorizedCount === 0 && fromCategories.length === 0) {
+    return null;
+  }
 
   return {
     payee: { id: payeeId, name: rows[0].payee_name },
-    category: { id: categoryId, name: categoryName(categoryId) },
-    transactionIds: rows.map(row => row.id),
-    uncategorizedCount: rows.filter(row => row.category == null).length,
-    fromCategories: fromCategoryIds
-      .map(id => ({
-        id,
-        name: categoryName(id),
-        count: rows.filter(row => row.category === id).length,
-      }))
-      .filter(category => category.count > 0),
+    category: { id: categoryId, name: rows[0].target_name ?? '' },
+    uncategorizedCount,
+    fromCategories,
   };
 }
 

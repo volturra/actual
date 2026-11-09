@@ -32,7 +32,6 @@ type CategorizeRelatedTransactionsModalProps = Extract<
 export function CategorizeRelatedTransactionsModal({
   payee,
   category,
-  transactionIds,
   uncategorizedCount,
   fromCategories,
 }: CategorizeRelatedTransactionsModalProps) {
@@ -46,7 +45,15 @@ export function CategorizeRelatedTransactionsModal({
         <>
           <ModalHeader
             title={t('Categorize related transactions')}
-            rightContent={<ModalCloseButton onPress={() => state.close()} />}
+            rightContent={
+              <ModalCloseButton
+                onPress={() => {
+                  if (!isSaving) {
+                    state.close();
+                  }
+                }}
+              />
+            }
           />
           <View style={{ maxWidth: 500, lineHeight: 1.5 }}>
             <Paragraph style={{ marginBottom: 10 }}>
@@ -98,10 +105,10 @@ export function CategorizeRelatedTransactionsModal({
                 onPress={async () => {
                   setIsSaving(true);
                   try {
-                    // The offer may be a while old: leave out transactions
-                    // the user has categorized differently since
-                    const ids = await getStillMatchingIds(
-                      transactionIds,
+                    // Look the transactions up now: the offer may be a while
+                    // old, and the user may have changed some since
+                    const ids = await getMatchingIds(
+                      payee.id,
                       fromCategories.map(fromCategory => fromCategory.id),
                     );
                     if (ids.length > 0) {
@@ -119,7 +126,7 @@ export function CategorizeRelatedTransactionsModal({
               >
                 <Trans>Categorize</Trans>
               </Button>
-              <Button onPress={() => state.close()}>
+              <Button isDisabled={isSaving} onPress={() => state.close()}>
                 <Trans>Do nothing</Trans>
               </Button>
             </ModalButtons>
@@ -130,18 +137,24 @@ export function CategorizeRelatedTransactionsModal({
   );
 }
 
-async function getStillMatchingIds(
-  transactionIds: string[],
-  fromCategoryIds: string[],
-) {
+/**
+ * The payee's on-budget transactions that are uncategorized or in one of
+ * `fromCategoryIds`, matching what the server offered
+ */
+async function getMatchingIds(payeeId: string, fromCategoryIds: string[]) {
   const { data } = await aqlQuery(
     q('transactions')
-      .filter({ id: { $oneof: transactionIds } })
+      .filter({
+        payee: payeeId,
+        is_parent: false,
+        'account.offbudget': false,
+        'account.closed': false,
+        $or: [{ category: null }, { category: { $oneof: fromCategoryIds } }],
+      })
       .options({ splits: 'all' })
-      .select(['id', 'category']),
+      .select('id'),
   );
-  const fromIds = new Set(fromCategoryIds);
-  return (data as Array<{ id: string; category: string | null }>)
-    .filter(row => row.category == null || fromIds.has(row.category))
-    .map(row => row.id);
+  return Array.isArray(data)
+    ? data.flatMap(row => (typeof row?.id === 'string' ? [row.id] : []))
+    : [];
 }

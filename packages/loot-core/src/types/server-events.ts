@@ -83,12 +83,12 @@ type RelatedCategoryEvent = {
   payee: { id: string; name: string };
   /** The category the user picked */
   category: { id: string; name: string };
-  /**
-   * The payee's other transactions that are uncategorized or still in one
-   * of the categories the edited transactions came from
-   */
-  transactionIds: string[];
+  /** How many of the payee's other transactions are uncategorized */
   uncategorizedCount: number;
+  /**
+   * The categories the edited transactions came from that hold most of the
+   * payee's other transactions, with how many are still in them
+   */
   fromCategories: Array<{ id: string; name: string; count: number }>;
 };
 

@@ -117,9 +117,9 @@ type ModalVariant =
       options: {
         payee: { id: string; name: string };
         category: { id: string; name: string };
-        /** Uncategorized or in one of `fromCategories` when offered */
-        transactionIds: string[];
+        /** How many of the payee's other transactions are uncategorized */
         uncategorizedCount: number;
+        /** Categories whose transactions of this payee move too, with counts */
         fromCategories: Array<{ id: string; name: string; count: number }>;
       };
     }

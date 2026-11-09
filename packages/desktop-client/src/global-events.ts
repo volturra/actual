@@ -3,6 +3,7 @@ import * as undo from '@actual-app/core/platform/client/undo';
 // @ts-strict-ignore
 import type { QueryClient } from '@tanstack/react-query';
 import { t } from 'i18next';
+import { v4 as uuidv4 } from 'uuid';
 
 import { accountQueries } from './accounts';
 import { setAppState } from './app/appSlice';
@@ -15,6 +16,7 @@ import {
   addNotification,
   removeNotification,
 } from './notifications/notificationsSlice';
+import type { Notification } from './notifications/notificationsSlice';
 import { payeeQueries } from './payees';
 import { loadPrefs } from './prefs/prefsSlice';
 import type { AppStore } from './redux/store';
@@ -44,21 +46,27 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
     },
   );
 
-  // A newer offer replaces an older one, whose transaction list may be stale
+  // A newer offer replaces the older one of the same kind. Each offer gets
+  // its own id: a notification removes itself by id when its timer ends, so
+  // a reused id would let the old timer close the new offer early
+  const shownOfferIds = new Map<string, string>();
   function showRelatedChangeOffer(
-    notification: Parameters<typeof addNotification>[0]['notification'] & {
-      id: string;
-    },
+    kind: 'related-payees' | 'related-category',
+    notification: Notification,
   ) {
-    store.dispatch(removeNotification({ id: notification.id }));
-    store.dispatch(addNotification({ notification }));
+    const previousId = shownOfferIds.get(kind);
+    if (previousId) {
+      store.dispatch(removeNotification({ id: previousId }));
+    }
+    const id = `${kind}-${uuidv4()}`;
+    shownOfferIds.set(kind, id);
+    store.dispatch(addNotification({ notification: { ...notification, id } }));
   }
 
   const unlistenRelatedPayees = listen(
     'related-payees',
     ({ payee, targetPayee }) => {
-      showRelatedChangeOffer({
-        id: 'related-payees',
+      showRelatedChangeOffer('related-payees', {
         type: 'message',
         title: t('Rename to "{{payee}}" everywhere?', {
           payee: targetPayee.name,
@@ -94,18 +102,21 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
   );
 
   const unlistenRelatedCategory = listen('related-category', options => {
-    const { payee, category, transactionIds } = options;
-    showRelatedChangeOffer({
-      id: 'related-category',
+    const { payee, category, uncategorizedCount, fromCategories } = options;
+    const count = fromCategories.reduce(
+      (sum, fromCategory) => sum + fromCategory.count,
+      uncategorizedCount,
+    );
+    showRelatedChangeOffer('related-category', {
       type: 'message',
       title:
-        transactionIds.length === 1
+        count === 1
           ? t('Also categorize 1 other "{{payee}}" transaction?', {
               payee: payee.name,
             })
           : t('Also categorize {{count}} other "{{payee}}" transactions?', {
               payee: payee.name,
-              count: transactionIds.length,
+              count,
             }),
       message: t('Give them the category "{{category}}" too.', {
         category: category.name,
