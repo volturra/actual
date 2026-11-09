@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import * as connection from '#platform/server/connection';
 import * as db from '#server/db';
 import { handlers } from '#server/main';
 import { runHandler } from '#server/mutators';
 import { batchMessages, setSyncingMode } from '#server/sync';
+import type { ServerEvents } from '#types/server-events';
 
 import { getTransferAccounts } from './transfer';
 
@@ -478,6 +480,140 @@ describe('batchUpdateTransactions', () => {
         await compare(payees);
       });
       expect((await compare(payees)).get('new-transfer')).toBe('new');
+    });
+  });
+
+  describe('related payees', () => {
+    afterEach(() => {
+      vi.mocked(connection.send).mockClear();
+    });
+
+    async function prepare() {
+      await db.insertAccount({ id: 'one', name: 'one' });
+      await db.insertPayee({ id: 'to-one', name: '', transfer_acct: 'one' });
+      await db.insertPayee({ id: 'amzn', name: 'AMZN MKTP US' });
+      await db.insertPayee({ id: 'amzn-2', name: 'AMZN Digital' });
+      await db.insertPayee({ id: 'amazon', name: 'Amazon' });
+      await db.insertPayee({ id: 'other', name: 'Other' });
+      for (const [id, payee] of [
+        ['a1', 'amzn'],
+        ['a2', 'amzn'],
+        ['a3', 'amzn'],
+        ['b1', 'amzn-2'],
+        ['b2', 'amzn-2'],
+        ['lonely', 'other'],
+      ]) {
+        await db.insertTransaction({
+          id,
+          account: 'one',
+          amount: -10,
+          date: '2024-01-01',
+          payee,
+        });
+      }
+      vi.mocked(connection.send).mockClear();
+    }
+
+    function relatedPayeesEvents() {
+      return vi
+        .mocked(connection.send)
+        .mock.calls.filter(([name]) => name === 'related-payees')
+        .map(([, args]) => args as ServerEvents['related-payees']);
+    }
+
+    it('offers to rename the rest of the old payee transactions', async () => {
+      await prepare();
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'a1', payee: 'amazon' }],
+        detectRelatedPayees: true,
+      });
+
+      expect(relatedPayeesEvents()).toEqual([
+        {
+          payees: [{ id: 'amzn', name: 'AMZN MKTP US', transactionCount: 2 }],
+          targetPayee: { id: 'amazon', name: 'Amazon' },
+        },
+      ]);
+    });
+
+    it('lists every old payee moved to the same payee', async () => {
+      await prepare();
+
+      await batchUpdateTransactions({
+        updated: [
+          { id: 'a1', payee: 'amazon' },
+          { id: 'b1', payee: 'amazon' },
+        ],
+        detectRelatedPayees: true,
+      });
+
+      const [event] = relatedPayeesEvents();
+      expect(event.payees.sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+        { id: 'amzn', name: 'AMZN MKTP US', transactionCount: 2 },
+        { id: 'amzn-2', name: 'AMZN Digital', transactionCount: 1 },
+      ]);
+    });
+
+    it('leaves payees without transactions to the orphaned payees prompt', async () => {
+      await prepare();
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'lonely', payee: 'amazon' }],
+        detectRelatedPayees: true,
+      });
+
+      expect(relatedPayeesEvents()).toEqual([]);
+      expect(connection.send).toHaveBeenCalledWith('orphaned-payees', {
+        orphanedIds: ['other'],
+        updatedPayeeIds: ['amazon'],
+      });
+    });
+
+    it('does not offer anything when the changes go to different payees', async () => {
+      await prepare();
+
+      await batchUpdateTransactions({
+        updated: [
+          { id: 'a1', payee: 'amazon' },
+          { id: 'a2', payee: 'other' },
+        ],
+        detectRelatedPayees: true,
+      });
+
+      expect(relatedPayeesEvents()).toEqual([]);
+    });
+
+    it('does not offer to merge into a transfer payee', async () => {
+      await prepare();
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'a1', payee: 'to-one' }],
+        detectRelatedPayees: true,
+        runTransfers: false,
+      });
+
+      expect(relatedPayeesEvents()).toEqual([]);
+    });
+
+    it('only looks for related payees when asked to', async () => {
+      await prepare();
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'a1', payee: 'amazon' }],
+      });
+
+      expect(relatedPayeesEvents()).toEqual([]);
+    });
+
+    it('is offered for edits made through the batch update handler', async () => {
+      await prepare();
+
+      await runHandler(handlers['transactions-batch-update'], {
+        updated: [{ id: 'a1', payee: 'amazon' }],
+      });
+
+      expect(relatedPayeesEvents()).toHaveLength(1);
     });
   });
 });

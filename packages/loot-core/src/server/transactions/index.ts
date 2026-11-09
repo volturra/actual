@@ -6,6 +6,7 @@ import { incrFetch, whereIn } from '#server/db/util';
 import { batchMessages } from '#server/sync';
 import type { Diff } from '#shared/util';
 import type { PayeeEntity, TransactionEntity } from '#types/models';
+import type { ServerEvents } from '#types/server-events';
 
 import * as rules from './transaction-rules';
 import * as transfer from './transfer';
@@ -37,16 +38,94 @@ async function getTransactionsByIds(
   );
 }
 
+/**
+ * When the user moves transactions from one payee to another (for example
+ * renaming "AMZN MKTP US*1A2B3C" to "Amazon" on one transaction), the old
+ * payee usually still has other transactions. Find those so the client can
+ * offer to merge the old payee into the new one, which renames it
+ * everywhere. Payees left without transactions are handled by the
+ * `orphaned-payees` prompt instead.
+ */
+async function findRelatedPayees(
+  updated: TransactionEntity[],
+  oldPayeeByTransaction: Map<TransactionEntity['id'], PayeeEntity['id']>,
+  orphanedIds: Set<PayeeEntity['id']>,
+): Promise<ServerEvents['related-payees'] | null> {
+  const fromIds = new Set<PayeeEntity['id']>();
+  const targetIds = new Set<PayeeEntity['id']>();
+  for (const transaction of updated) {
+    const oldPayee = oldPayeeByTransaction.get(transaction.id);
+    if (oldPayee && transaction.payee && oldPayee !== transaction.payee) {
+      fromIds.add(oldPayee);
+      targetIds.add(transaction.payee);
+    }
+  }
+
+  // Only offer this when every change went to the same payee; otherwise it
+  // is not clear what the old payees should be renamed to
+  if (targetIds.size !== 1) {
+    return null;
+  }
+  const [targetId] = targetIds;
+  const candidateIds = [...fromIds].filter(
+    id => id !== targetId && !orphanedIds.has(id),
+  );
+  if (candidateIds.length === 0) {
+    return null;
+  }
+
+  const payeeIds = [targetId, ...candidateIds];
+  const payees = await db.all<Pick<db.DbPayee, 'id' | 'name'>>(
+    `SELECT id, name FROM payees
+     WHERE ${whereIn(payeeIds, 'id')} AND tombstone = 0
+       AND transfer_acct IS NULL`,
+  );
+  const target = payees.find(payee => payee.id === targetId);
+  if (!target) {
+    // Transfers are never merged
+    return null;
+  }
+
+  const counts = await db.all<{ payee: string; count: number }>(
+    `SELECT payee, COUNT(*) AS count FROM v_transactions_internal_alive
+     WHERE ${whereIn(candidateIds, 'payee')} AND is_parent = 0
+     GROUP BY payee`,
+  );
+  const countByPayee = new Map(counts.map(row => [row.payee, row.count]));
+
+  const related = payees
+    .filter(payee => payee.id !== targetId && countByPayee.get(payee.id) > 0)
+    .map(payee => ({
+      id: payee.id,
+      name: payee.name,
+      transactionCount: countByPayee.get(payee.id),
+    }));
+  if (related.length === 0) {
+    return null;
+  }
+
+  return {
+    payees: related,
+    targetPayee: { id: target.id, name: target.name },
+  };
+}
+
 export async function batchUpdateTransactions({
   added,
   deleted,
   updated,
   learnCategories = false,
   detectOrphanPayees = true,
+  detectRelatedPayees = false,
   runTransfers = true,
 }: Partial<Diff<TransactionEntity>> & {
   learnCategories?: boolean;
   detectOrphanPayees?: boolean;
+  /**
+   * Offer to rename a payee everywhere when the user moves some of its
+   * transactions to another payee (see `findRelatedPayees`)
+   */
+  detectRelatedPayees?: boolean;
   runTransfers?: boolean;
 }) {
   // Track the ids of each type of transaction change (see below for why)
@@ -57,6 +136,10 @@ export async function batchUpdateTransactions({
     : [];
 
   const oldPayees = new Set<PayeeEntity['id']>();
+  const oldPayeeByTransaction = new Map<
+    TransactionEntity['id'],
+    PayeeEntity['id']
+  >();
 
   // Accounts are only needed to clear the category of off-budget
   // transactions, so skip the read for edits that don't set an account
@@ -78,6 +161,7 @@ export async function batchUpdateTransactions({
 
     for (let i = 0; i < transactions.length; i++) {
       oldPayees.add(transactions[i].payee);
+      oldPayeeByTransaction.set(transactions[i].id, transactions[i].payee);
     }
   }
 
@@ -213,6 +297,17 @@ export async function batchUpdateTransactions({
             orphanedIds,
             updatedPayeeIds: newPayeeIds,
           });
+        }
+
+        if (detectRelatedPayees) {
+          const related = await findRelatedPayees(
+            allUpdated,
+            oldPayeeByTransaction,
+            allOrphaned,
+          );
+          if (related) {
+            connection.send('related-payees', related);
+          }
         }
       }
     }

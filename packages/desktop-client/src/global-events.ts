@@ -43,6 +43,57 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
     },
   );
 
+  const unlistenRelatedPayees = listen(
+    'related-payees',
+    ({ payees, targetPayee }) => {
+      const transactionCount = payees.reduce(
+        (sum, payee) => sum + payee.transactionCount,
+        0,
+      );
+      const others =
+        transactionCount === 1
+          ? t('1 other transaction')
+          : t('{{count}} other transactions', { count: transactionCount });
+      const message =
+        payees.length === 1
+          ? t('"{{payee}}" is still used by {{others}}.', {
+              payee: payees[0].name,
+              others,
+            })
+          : t('These payees are still used by {{others}}.', { others });
+
+      store.dispatch(
+        addNotification({
+          notification: {
+            id: `related-payees-${targetPayee.id}`,
+            type: 'message',
+            title: t('Rename to "{{payee}}" everywhere?', {
+              payee: targetPayee.name,
+            }),
+            message,
+            button: {
+              title: t('Rename all'),
+              action: () => {
+                store.dispatch(
+                  pushModal({
+                    modal: {
+                      name: 'merge-unused-payees',
+                      options: {
+                        payeeIds: payees.map(payee => payee.id),
+                        targetPayeeId: targetPayee.id,
+                        isStillUsed: true,
+                      },
+                    },
+                  }),
+                );
+              },
+            },
+          },
+        }),
+      );
+    },
+  );
+
   const unlistenSchedulesOffline = listen('schedules-offline', () => {
     store.dispatch(
       pushModal({ modal: { name: 'schedule-posts-offline-notification' } }),
@@ -198,6 +249,7 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
   return () => {
     unlistenServerError();
     unlistenOrphanedPayees();
+    unlistenRelatedPayees();
     unlistenSchedulesOffline();
     unlistenSync();
     unlistenUndo();

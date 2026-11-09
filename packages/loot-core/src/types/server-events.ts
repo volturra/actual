@@ -71,6 +71,13 @@ type OrphanedPayeesEvent = {
   updatedPayeeIds: string[];
 };
 
+type RelatedPayeesEvent = {
+  /** Payees the user moved transactions away from that still have others */
+  payees: Array<{ id: string; name: string; transactionCount: number }>;
+  /** The payee those transactions were moved to */
+  targetPayee: { id: string; name: string };
+};
+
 export type ImportStep =
   | 'accounts'
   | 'categories'
@@ -115,6 +122,7 @@ export type ServerEvents = {
   'indexeddb-quota-error': IndexeddbQuotaErrorEvent;
   'orphaned-payees': OrphanedPayeesEvent;
   'prefs-updated': PrefsUpdatedEvent;
+  'related-payees': RelatedPayeesEvent;
   'schedules-offline': SchedulesOfflineEvent;
   'server-error': ServerErrorEvent;
   'show-budgets': ShowBudgetsEvent;

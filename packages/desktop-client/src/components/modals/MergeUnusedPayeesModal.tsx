@@ -27,6 +27,7 @@ type MergeUnusedPayeesModalProps = Extract<
 export function MergeUnusedPayeesModal({
   payeeIds,
   targetPayeeId,
+  isStillUsed = false,
 }: MergeUnusedPayeesModalProps) {
   const { t } = useTranslation();
   const { data: allPayees = [] } = usePayees();
@@ -106,7 +107,48 @@ export function MergeUnusedPayeesModal({
         <View style={{ padding: 20, maxWidth: 500 }}>
           <View>
             <Paragraph style={{ marginBottom: 10, fontWeight: 500 }}>
-              {payees.length === 1 ? (
+              {isStillUsed ? (
+                payees.length === 1 ? (
+                  <Trans>
+                    The payee{' '}
+                    <Text style={highlightStyle}>
+                      {{ previousPayee: payees[0].name } as TransObjectLiteral}
+                    </Text>{' '}
+                    is still used by other transactions. Would you like to merge
+                    it with{' '}
+                    <Text style={highlightStyle}>
+                      {{ payee: targetPayee.name } as TransObjectLiteral}
+                    </Text>{' '}
+                    so they are all renamed?
+                  </Trans>
+                ) : (
+                  <>
+                    <Trans>
+                      The following payees are still used by other transactions.
+                      Would you like to merge them with{' '}
+                      <Text style={highlightStyle}>
+                        {{ payee: targetPayee.name } as TransObjectLiteral}
+                      </Text>{' '}
+                      so they are all renamed?
+                    </Trans>
+                    <ul
+                      ref={flashRef}
+                      style={{
+                        margin: 0,
+                        marginTop: 10,
+                        maxHeight: 140,
+                        overflow: 'auto',
+                      }}
+                    >
+                      {payees.map(payee => (
+                        <li key={payee.id}>
+                          <Text style={highlightStyle}>{payee.name}</Text>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )
+              ) : payees.length === 1 ? (
                 <Trans>
                   The payee{' '}
                   <Text style={highlightStyle}>
@@ -153,6 +195,12 @@ export function MergeUnusedPayeesModal({
                 Merging will remove the payee and transfer any existing rules to
                 the new payee.
               </Trans>
+              {isStillUsed && (
+                <>
+                  {' '}
+                  <Trans>Its transactions will move to the new payee.</Trans>
+                </>
+              )}
               {!isEditingRule && (
                 <>
                   {' '}

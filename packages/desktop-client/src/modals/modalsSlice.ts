@@ -117,6 +117,11 @@ type ModalVariant =
       options: {
         payeeIds: string[];
         targetPayeeId: string;
+        /**
+         * The payees still have transactions: the user moved only some of
+         * them to the target payee, and merging renames the rest
+         */
+        isStillUsed?: boolean;
       };
     }
   | {

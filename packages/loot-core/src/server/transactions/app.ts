@@ -46,6 +46,7 @@ async function handleBatchUpdateTransactions({
     deleted,
     learnCategories,
     runTransfers,
+    detectRelatedPayees: true,
   });
 
   return result;
