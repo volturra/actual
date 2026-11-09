@@ -142,8 +142,8 @@ async function findRelatedPayees(
 
 /**
  * Selects from the payee's alive, non-parent transactions in open on-budget
- * accounts, leaving out `excludeIds`. Binds the payee id twice, then
- * `excludeIds`. Joins `c`, the
+ * accounts, leaving out `excludeIds`. Binds, in order: any placeholders in
+ * `select`, the payee id twice, then `excludeIds`. Joins `c`, the
  * transaction's category, which is null for a deleted category as in the
  * register. Transfer payees match nothing: transfers between on-budget
  * accounts have no category. Shared by the category offer and applying it,
