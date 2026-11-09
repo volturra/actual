@@ -12,10 +12,15 @@ on:
   push:
     branches:
       - master
+  # Build and boot-test changes to this workflow without publishing. The
+  # fork's other PR checks run on Depot runners, which never pick up here.
+  pull_request:
+    paths:
+      - .github/workflows/homelab-release.yml
   workflow_dispatch:
 
 concurrency:
-  group: homelab-release
+  group: homelab-release-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
   cancel-in-progress: false
 
 permissions:
@@ -109,6 +114,7 @@ jobs:
           exit 1
 
       - name: Publish the release
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
