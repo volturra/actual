@@ -30,7 +30,7 @@ export function MergeUnusedPayeesModal({
   isStillUsed = false,
 }: MergeUnusedPayeesModalProps) {
   const { t } = useTranslation();
-  const { data: allPayees = [] } = usePayees();
+  const { data: allPayees = [], isLoading: isLoadingPayees } = usePayees();
   const modalStack = useSelector(state => state.modals.modalStack);
   const isEditingRule = !!modalStack.find(m => m.name === 'edit-rule');
   const dispatch = useDispatch();
@@ -57,15 +57,19 @@ export function MergeUnusedPayeesModal({
     allPayees.filter(p => payeeIds.includes(p.id)),
   );
 
+  const targetPayee = allPayees.find(p => p.id === targetPayeeId);
+
   // The payees can be gone by the time the modal opens, for example when an
-  // older offer to rename them is clicked after they were merged. There is
-  // nothing left to merge then
-  const hasNoPayees = payees.length === 0;
+  // older offer to rename them is clicked after they were merged or deleted.
+  // There is nothing left to merge then, and a modal that draws nothing
+  // would still block the app until it closes
+  const isNothingToMerge =
+    payees.length === 0 || (!isLoadingPayees && !targetPayee);
   useEffect(() => {
-    if (hasNoPayees) {
+    if (isNothingToMerge) {
       dispatch(popModal());
     }
-  }, [hasNoPayees, dispatch]);
+  }, [isNothingToMerge, dispatch]);
 
   const onMerge = useCallback(
     async (targetPayee: PayeeEntity) => {
@@ -106,8 +110,7 @@ export function MergeUnusedPayeesModal({
     [onMerge, dispatch],
   );
 
-  const targetPayee = allPayees.find(p => p.id === targetPayeeId);
-  if (!targetPayee || hasNoPayees) {
+  if (!targetPayee || isNothingToMerge) {
     return null;
   }
 
