@@ -1698,6 +1698,7 @@ const Transaction = memo(function Transaction({
             scheduleNote={isPreview ? schedule?.name : null}
             focused={focusedField === 'notes'}
             valueStyle={valueStyle}
+            isReadOnly={isPreview}
             onClickTag={onNotesTagClick}
             onUpdate={value => {
               onUpdate('notes', value?.trim());
@@ -2293,6 +2294,7 @@ type NotesCellProps = {
   scheduleNote: string | null | undefined;
   focused: boolean;
   valueStyle: CSSProperties | null;
+  isReadOnly: boolean;
   onUpdate: (value: string) => void;
   onClickTag: (tag: string) => void;
   onExpose: (name: string) => void;
@@ -2303,6 +2305,7 @@ function NotesCell({
   scheduleNote,
   focused,
   valueStyle,
+  isReadOnly,
   onUpdate,
   onClickTag,
   onExpose,
@@ -2347,6 +2350,9 @@ function NotesCell({
   }
 
   const displayedNote = note || scheduleNote || '';
+  // Tags can only be removed from the transaction's own note (not the
+  // schedule name shown as a fallback), and only where the cell is editable.
+  const onNotesChange = !isReadOnly && note ? onUpdate : undefined;
 
   useLayoutEffect(() => {
     checkTruncated();
@@ -2359,7 +2365,11 @@ function NotesCell({
       value={displayedNote}
       valueStyle={valueStyle}
       formatter={value =>
-        NotesTagFormatter({ notes: value, onNotesTagClick: onClickTag })
+        NotesTagFormatter({
+          notes: value,
+          onNotesTagClick: onClickTag,
+          onNotesChange,
+        })
       }
       focused={focused}
       exposed={focused}
@@ -2374,6 +2384,7 @@ function NotesCell({
                 <NotesTagFormatter
                   notes={displayedNote}
                   onNotesTagClick={onClickTag}
+                  onNotesChange={onNotesChange}
                 />
               </Text>
             </View>
