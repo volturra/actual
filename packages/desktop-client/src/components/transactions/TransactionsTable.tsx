@@ -30,6 +30,7 @@ import {
   SvgArrowDown,
   SvgArrowUp,
   SvgCheveronDown,
+  SvgExclamationSolid,
 } from '@actual-app/components/icons/v1';
 import {
   SvgAlertTriangle,
@@ -1859,11 +1860,13 @@ const Transaction = memo(function Transaction({
             textAlign="flex"
             value={categoryId}
             formatter={value =>
-              value
-                ? (getCategoriesById(categoryGroups)[value]?.name ?? '')
-                : transaction.id
-                  ? t('Categorize')
-                  : ''
+              value ? (
+                (getCategoriesById(categoryGroups)[value]?.name ?? '')
+              ) : transaction.id ? (
+                <UncategorizedLabel />
+              ) : (
+                ''
+              )
             }
             exposed={focusedField === 'category'}
             onExpose={name => !isPreview && onEdit(id, name)}
@@ -1873,7 +1876,7 @@ const Transaction = memo(function Transaction({
                     // uncategorized transaction
                     fontStyle: 'italic',
                     fontWeight: 300,
-                    color: theme.formInputTextHighlight,
+                    color: theme.errorText,
                   }
                 : valueStyle
             }
@@ -2297,6 +2300,24 @@ type NotesCellProps = {
   onClickTag: (tag: string) => void;
   onExpose: (name: string) => void;
 };
+
+function UncategorizedLabel() {
+  return (
+    <>
+      <SvgExclamationSolid
+        aria-hidden
+        style={{
+          width: 11,
+          height: 11,
+          marginRight: 5,
+          verticalAlign: 'middle',
+          color: theme.errorText,
+        }}
+      />
+      <Trans>Categorize</Trans>
+    </>
+  );
+}
 
 function NotesCell({
   note,
