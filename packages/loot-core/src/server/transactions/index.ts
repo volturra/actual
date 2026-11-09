@@ -375,27 +375,33 @@ export async function batchUpdateTransactions({
     }
 
     // Read the old categories only when the edit allows a category offer:
-    // one category set on every edited transaction, and no payee change (so
-    // this never adds to the read above). Whether they are split lines is
-    // only known from the rows, so an edit of a split line still pays for
-    // this read. A direct primary key lookup, as a bulk edit can cover
-    // thousands of rows
+    // the updates that set a category all set the same one, and no payee
+    // changes (so this never adds to the read above). Whether they are split
+    // lines is only known from the rows, so an edit of a split line still
+    // pays for this read. A direct primary key lookup, as a bulk edit can
+    // cover thousands of rows. Like the offer itself, it must never stop the
+    // edit from being saved: without old categories the offer only covers
+    // uncategorized transactions
     const categoryUpdates = updated.filter(update => update.category);
     if (
       detectRelatedChanges &&
       payeeUpdateIds.size === 0 &&
       new Set(categoryUpdates.map(update => update.category)).size === 1
     ) {
-      const rows = await db.all<{ id: string; category: string | null }>(
-        `SELECT t.id, cm.transferId AS category FROM transactions t
-         LEFT JOIN category_mapping cm ON cm.id = t.category
-         WHERE ${whereIn(
-           categoryUpdates.map(update => update.id),
-           't.id',
-         )}`,
-      );
-      for (const row of rows) {
-        oldCategoryByTransaction.set(row.id, row.category);
+      try {
+        const rows = await db.all<{ id: string; category: string | null }>(
+          `SELECT t.id, cm.transferId AS category FROM transactions t
+           LEFT JOIN category_mapping cm ON cm.id = t.category
+           WHERE ${whereIn(
+             categoryUpdates.map(update => update.id),
+             't.id',
+           )}`,
+        );
+        for (const row of rows) {
+          oldCategoryByTransaction.set(row.id, row.category);
+        }
+      } catch (error) {
+        logger.warn('Could not read old categories to offer changes', error);
       }
     }
   }
