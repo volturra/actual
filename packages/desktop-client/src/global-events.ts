@@ -118,9 +118,14 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
               payee: payee.name,
               count,
             }),
-      message: t('Give them the category "{{category}}" too.', {
-        category: category.name,
-      }),
+      message:
+        count === 1
+          ? t('Give it the category "{{category}}" too.', {
+              category: category.name,
+            })
+          : t('Give them the category "{{category}}" too.', {
+              category: category.name,
+            }),
       button: {
         title: t('Review'),
         action: () => {

@@ -568,6 +568,34 @@ describe('batchUpdateTransactions', () => {
       expect(relatedPayeesEvents()[0].payee.transactionCount).toBe(1);
     });
 
+    it('does not offer anything when one line of a split changes payee', async () => {
+      await prepare();
+      await db.insertTransaction({
+        id: 'split',
+        account: 'one',
+        amount: -20,
+        date: '2024-01-01',
+        payee: 'amzn',
+        is_parent: true,
+      });
+      await db.insertTransaction({
+        id: 'line',
+        account: 'one',
+        amount: -20,
+        date: '2024-01-01',
+        payee: 'amzn',
+        is_child: true,
+        parent_id: 'split',
+      });
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'line', payee: 'amazon' }],
+        detectRelatedChanges: true,
+      });
+
+      expect(relatedPayeesEvents()).toEqual([]);
+    });
+
     it('does not offer to merge several payees at once', async () => {
       await prepare();
 
@@ -747,6 +775,40 @@ describe('batchUpdateTransactions', () => {
           uncategorizedCount: 1,
           fromCategories: [],
         },
+      ]);
+    });
+
+    it('counts transactions already in the new category toward the share', async () => {
+      await prepare();
+      await insert([
+        { id: 'n7', category: 'subs' },
+        { id: 'n8', category: 'subs' },
+      ]);
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'n1', category: 'subs' }],
+        detectRelatedChanges: true,
+      });
+
+      // Fun now holds 2 of 6 other categorized transactions; the 3 in Subs
+      // are not offered again but still count
+      expect(relatedCategoryEvents()[0].fromCategories).toEqual([]);
+    });
+
+    it('checks each old category of a bulk edit on its own', async () => {
+      await prepare();
+
+      await batchUpdateTransactions({
+        updated: [
+          { id: 'n1', category: 'subs' },
+          { id: 'n5', category: 'subs' },
+        ],
+        detectRelatedChanges: true,
+      });
+
+      // Fun keeps 2 of 3 other categorized transactions; Food has none left
+      expect(relatedCategoryEvents()[0].fromCategories).toEqual([
+        { id: 'fun', name: 'Fun', count: 2 },
       ]);
     });
 

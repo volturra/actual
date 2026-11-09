@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 
 import { Button } from '@actual-app/components/button';
@@ -18,7 +18,10 @@ import {
   ModalHeader,
 } from '#components/common/Modal';
 import type { Modal as ModalType } from '#modals/modalsSlice';
-import { addGenericErrorNotification } from '#notifications/notificationsSlice';
+import {
+  addGenericErrorNotification,
+  addNotification,
+} from '#notifications/notificationsSlice';
 import { aqlQuery } from '#queries/aqlQuery';
 import { useDispatch } from '#redux';
 
@@ -115,6 +118,17 @@ export function CategorizeRelatedTransactionsModal({
                       await send('transactions-batch-update', {
                         updated: ids.map(id => ({ id, category: category.id })),
                       });
+                    } else {
+                      dispatch(
+                        addNotification({
+                          notification: {
+                            type: 'message',
+                            message: t(
+                              'These transactions have changed since, so there is nothing left to categorize.',
+                            ),
+                          },
+                        }),
+                      );
                     }
                   } catch {
                     dispatch(addGenericErrorNotification());
@@ -151,7 +165,9 @@ async function getMatchingIds(payeeId: string, fromCategoryIds: string[]) {
         'account.closed': false,
         $or: [{ category: null }, { category: { $oneof: fromCategoryIds } }],
       })
-      .options({ splits: 'all' })
+      // Like the server's count: no split parents, and no lines of a
+      // deleted split
+      .options({ splits: 'inline' })
       .select('id'),
   );
   return Array.isArray(data)
