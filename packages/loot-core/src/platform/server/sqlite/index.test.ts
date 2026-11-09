@@ -40,7 +40,7 @@ type NumberRow = { id: string; number: number };
 
 // Two connections to one file, so one can hold a lock the other runs into.
 // In the browser this is another tab or worker on the same budget file.
-// Only the legacy sql.js engine opens files, so these are sql.js handles.
+// These are legacy sql.js handles, opened directly on the module.
 function openTwoConnections(name: string) {
   const SQL = _getModule();
   // @ts-expect-error 2nd argument missed in sql.js types

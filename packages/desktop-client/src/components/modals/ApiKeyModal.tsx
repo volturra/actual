@@ -21,32 +21,32 @@ export function ApiKeyModal({ fileId, apiKey, onChange }: ApiKeyModalProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
+  // No try/finally here: React Compiler skips components that use one.
+  // sendCatch reports failures in `error` instead of throwing.
   async function submit(close: () => void) {
     setBusy(true);
     setError('');
-    try {
-      if (apiKey) {
-        const result = await sendCatch('api-keys-revoke', { id: apiKey.id });
-        if (result.error) throw result.error;
-        close();
-      } else {
-        const result = await sendCatch('api-keys-create', {
-          fileIds: [fileId],
-          name: name.trim(),
-        });
-        if (result.error) throw result.error;
-        setSecret(result.data.key);
-      }
-      onChange();
-    } catch {
-      setError(
-        apiKey
-          ? t('Could not revoke the API key. Please try again.')
-          : t('Could not create the API key. Please try again.'),
-      );
-    } finally {
+    if (apiKey) {
+      const result = await sendCatch('api-keys-revoke', { id: apiKey.id });
       setBusy(false);
+      if (result.error) {
+        setError(t('Could not revoke the API key. Please try again.'));
+        return;
+      }
+      close();
+    } else {
+      const result = await sendCatch('api-keys-create', {
+        fileIds: [fileId],
+        name: name.trim(),
+      });
+      setBusy(false);
+      if (result.error) {
+        setError(t('Could not create the API key. Please try again.'));
+        return;
+      }
+      setSecret(result.data.key);
     }
+    onChange();
   }
 
   return (
