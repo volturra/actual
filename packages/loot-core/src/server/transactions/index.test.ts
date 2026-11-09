@@ -1036,7 +1036,7 @@ describe('batchUpdateTransactions', () => {
       ).toBe(1);
     });
 
-    it('applies nothing when the matching transactions changed since', async () => {
+    it('applies nothing when only the edited transactions match', async () => {
       await prepare();
 
       expect(
@@ -1077,6 +1077,51 @@ describe('batchUpdateTransactions', () => {
         updated: [
           { id: 'n1', category: 'subs' },
           { id: 'parent', category: 'subs' },
+        ],
+        detectRelatedChanges: true,
+      });
+
+      expect(relatedCategoryEvents()).toHaveLength(1);
+    });
+
+    it('offers only the uncategorized ones when the old categories cannot be read', async () => {
+      await prepare();
+      const all = db.all;
+      vi.spyOn(db, 'all').mockImplementation((sql: string, params) => {
+        if (sql.includes('cm.transferId AS category FROM transactions t')) {
+          return Promise.reject(new Error('read failed'));
+        }
+        return all(sql, params);
+      });
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'n1', category: 'subs' }],
+        detectRelatedChanges: true,
+      });
+      vi.restoreAllMocks();
+
+      const n1 = await db.first<{ category: string }>(
+        'SELECT category FROM transactions WHERE id = ?',
+        ['n1'],
+      );
+      expect(n1?.category).toBe('subs');
+      expect(relatedCategoryEvents()).toEqual([
+        expect.objectContaining({ uncategorizedCount: 1, fromCategories: [] }),
+      ]);
+    });
+
+    it('judges a bulk edit of a whole split, lines included, by its other transactions', async () => {
+      await prepare();
+      await insert([
+        { id: 'parent', is_parent: true },
+        { id: 'child', is_child: true, parent_id: 'parent' },
+      ]);
+
+      await batchUpdateTransactions({
+        updated: [
+          { id: 'n1', category: 'subs' },
+          { id: 'parent', category: 'subs' },
+          { id: 'child', category: 'subs' },
         ],
         detectRelatedChanges: true,
       });

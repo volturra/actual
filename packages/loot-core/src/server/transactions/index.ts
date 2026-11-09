@@ -41,13 +41,12 @@ async function getTransactionsByIds(
 
 /**
  * Selects from the alive rows of the `transactions` table (as `t`; split
- * parents only with `includeParents`) whose payee maps to the bound payee
- * id. Same rows as
- * `v_transactions_internal_alive` with `payee = ? AND is_parent = 0` (or
- * without `is_parent = 0` when `includeParents` is set), but it
- * reads the table directly: the view joins every transaction before
- * filtering, which is about three times slower on a large budget (4 ms
- * instead of 12 ms for 50,000 transactions), and this runs on edits
+ * parents only with `includeParents`) whose payee maps to the bound payee id.
+ * Same rows as `v_transactions_internal_alive` with `payee = ?` (and
+ * `is_parent = 0` unless `includeParents`), but it reads the table directly:
+ * the view joins every transaction before filtering, which is about three
+ * times slower on a large budget (4 ms instead of 12 ms for 50,000
+ * transactions), and this runs on edits.
  */
 function aliveTransactionsOfPayee(
   select: string,
@@ -147,7 +146,7 @@ async function findRelatedPayees(
  * transaction's category, which is null for a deleted category as in the
  * register. Transfer payees match nothing: transfers between on-budget
  * accounts have no category. Shared by the category offer and applying it,
- * so what is counted is what gets changed
+ * so what is counted is what gets changed.
  */
 function onBudgetTransactionsOfPayee(select: string, excludeIds: string[]) {
   return `SELECT ${select}
@@ -171,7 +170,7 @@ function placeholders(ids: string[]) {
  * payee's on-budget transactions that are uncategorized or in one of
  * `fromCategoryIds`, except `excludeIds` (the edited ones, so an edit the
  * user undid is not redone). The transactions are selected now, as the
- * offer may be a while old. Returns how many were changed
+ * offer may be a while old. Returns how many were changed.
  */
 export async function categorizeRelatedTransactions({
   payeeId,
@@ -214,10 +213,10 @@ export async function categorizeRelatedTransactions({
  *
  * - the uncategorized ones
  * - the ones still in the category the edited transactions came from, but
- *   only when that category holds at least half of the payee's categorized
- *   transactions. For a mixed-use payee (a supermarket used for groceries
- *   and household things) moving one transaction is a one-off fix, not a
- *   reclassification of the payee
+ *   only when that category holds at least half of the payee's other
+ *   categorized transactions. For a mixed-use payee (a supermarket used for
+ *   groceries and household things) moving one transaction is a one-off fix,
+ *   not a reclassification of the payee.
  *
  * Only counts are returned: when the user accepts, the server selects the
  * transactions again with the same query (see
@@ -237,14 +236,18 @@ async function findRelatedCategoryChange(
   if (updates.some(update => update.payee)) {
     return null;
   }
+  const updateIds = new Set(updates.map(update => update.id));
   const categoryUpdateIds = new Set(
     updates.filter(update => update.category).map(update => update.id),
   );
   // A split's own category is always empty (its lines carry them), so a
-  // bulk edit that includes a split is judged by its other transactions
+  // bulk edit that includes a whole split (as select all does) is judged by
+  // its other transactions
   const edited = updated.filter(
     transaction =>
-      categoryUpdateIds.has(transaction.id) && !transaction.is_parent,
+      categoryUpdateIds.has(transaction.id) &&
+      !transaction.is_parent &&
+      !(transaction.is_child && updateIds.has(transaction.parent_id)),
   );
   // One line of a split says little about the payee's other transactions
   if (edited.length === 0 || edited.some(transaction => transaction.is_child)) {
