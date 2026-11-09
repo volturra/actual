@@ -107,47 +107,19 @@ export function MergeUnusedPayeesModal({
         <View style={{ padding: 20, maxWidth: 500 }}>
           <View>
             <Paragraph style={{ marginBottom: 10, fontWeight: 500 }}>
-              {isStillUsed ? (
-                payees.length === 1 ? (
-                  <Trans>
-                    The payee{' '}
-                    <Text style={highlightStyle}>
-                      {{ previousPayee: payees[0].name } as TransObjectLiteral}
-                    </Text>{' '}
-                    is still used by other transactions. Would you like to merge
-                    it with{' '}
-                    <Text style={highlightStyle}>
-                      {{ payee: targetPayee.name } as TransObjectLiteral}
-                    </Text>{' '}
-                    so they are all renamed?
-                  </Trans>
-                ) : (
-                  <>
-                    <Trans>
-                      The following payees are still used by other transactions.
-                      Would you like to merge them with{' '}
-                      <Text style={highlightStyle}>
-                        {{ payee: targetPayee.name } as TransObjectLiteral}
-                      </Text>{' '}
-                      so they are all renamed?
-                    </Trans>
-                    <ul
-                      ref={flashRef}
-                      style={{
-                        margin: 0,
-                        marginTop: 10,
-                        maxHeight: 140,
-                        overflow: 'auto',
-                      }}
-                    >
-                      {payees.map(payee => (
-                        <li key={payee.id}>
-                          <Text style={highlightStyle}>{payee.name}</Text>
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )
+              {isStillUsed && payees.length === 1 ? (
+                <Trans>
+                  The payee{' '}
+                  <Text style={highlightStyle}>
+                    {{ previousPayee: payees[0].name } as TransObjectLiteral}
+                  </Text>{' '}
+                  is still used by other transactions. Would you like to merge
+                  it with{' '}
+                  <Text style={highlightStyle}>
+                    {{ payee: targetPayee.name } as TransObjectLiteral}
+                  </Text>{' '}
+                  so they are all renamed?
+                </Trans>
               ) : payees.length === 1 ? (
                 <Trans>
                   The payee{' '}
@@ -198,7 +170,9 @@ export function MergeUnusedPayeesModal({
               {isStillUsed && (
                 <>
                   {' '}
-                  <Trans>Its transactions will move to the new payee.</Trans>
+                  <Trans>
+                    Its other transactions will move to the new payee.
+                  </Trans>
                 </>
               )}
               {!isEditingRule && (

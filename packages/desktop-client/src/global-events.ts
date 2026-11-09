@@ -13,6 +13,7 @@ import type { Modal } from './modals/modalsSlice';
 import {
   addGenericErrorNotification,
   addNotification,
+  removeNotification,
 } from './notifications/notificationsSlice';
 import { payeeQueries } from './payees';
 import { loadPrefs } from './prefs/prefsSlice';
@@ -43,128 +44,84 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
     },
   );
 
+  // A newer offer replaces an older one, whose transaction list may be stale
+  function showRelatedChangeOffer(
+    notification: Parameters<typeof addNotification>[0]['notification'] & {
+      id: string;
+    },
+  ) {
+    store.dispatch(removeNotification({ id: notification.id }));
+    store.dispatch(addNotification({ notification }));
+  }
+
   const unlistenRelatedPayees = listen(
     'related-payees',
-    ({ payees, targetPayee }) => {
-      const transactionCount = payees.reduce(
-        (sum, payee) => sum + payee.transactionCount,
-        0,
-      );
-      const others =
-        transactionCount === 1
-          ? t('1 other transaction')
-          : t('{{count}} other transactions', { count: transactionCount });
-      const message =
-        payees.length === 1
-          ? t('"{{payee}}" is still used by {{others}}.', {
-              payee: payees[0].name,
-              others,
-            })
-          : t('These payees are still used by {{others}}.', { others });
-
-      store.dispatch(
-        addNotification({
-          notification: {
-            id: `related-payees-${targetPayee.id}`,
-            type: 'message',
-            title: t('Rename to "{{payee}}" everywhere?', {
-              payee: targetPayee.name,
-            }),
-            message,
-            button: {
-              title: t('Rename all'),
-              action: () => {
-                store.dispatch(
-                  pushModal({
-                    modal: {
-                      name: 'merge-unused-payees',
-                      options: {
-                        payeeIds: payees.map(payee => payee.id),
-                        targetPayeeId: targetPayee.id,
-                        isStillUsed: true,
-                      },
-                    },
-                  }),
-                );
-              },
-            },
-          },
+    ({ payee, targetPayee }) => {
+      showRelatedChangeOffer({
+        id: 'related-payees',
+        type: 'message',
+        title: t('Rename to "{{payee}}" everywhere?', {
+          payee: targetPayee.name,
         }),
-      );
+        message:
+          payee.transactionCount === 1
+            ? t('"{{payee}}" is still used by 1 other transaction.', {
+                payee: payee.name,
+              })
+            : t('"{{payee}}" is still used by {{count}} other transactions.', {
+                payee: payee.name,
+                count: payee.transactionCount,
+              }),
+        button: {
+          title: t('Rename all'),
+          action: () => {
+            store.dispatch(
+              pushModal({
+                modal: {
+                  name: 'merge-unused-payees',
+                  options: {
+                    payeeIds: [payee.id],
+                    targetPayeeId: targetPayee.id,
+                    isStillUsed: true,
+                  },
+                },
+              }),
+            );
+          },
+        },
+      });
     },
   );
 
-  const unlistenRelatedCategory = listen(
-    'related-category',
-    ({
-      payee,
-      category,
-      transactionIds,
-      uncategorizedCount,
-      fromCategories,
-    }) => {
-      const others =
+  const unlistenRelatedCategory = listen('related-category', options => {
+    const { payee, category, transactionIds } = options;
+    showRelatedChangeOffer({
+      id: 'related-category',
+      type: 'message',
+      title:
         transactionIds.length === 1
-          ? t('1 other transaction')
-          : t('{{count}} other transactions', {
+          ? t('Also categorize 1 other "{{payee}}" transaction?', {
+              payee: payee.name,
+            })
+          : t('Also categorize {{count}} other "{{payee}}" transactions?', {
+              payee: payee.name,
               count: transactionIds.length,
-            });
-      const fromNames = fromCategories
-        .map(fromCategory => `"${fromCategory.name}"`)
-        .join(', ');
-
-      let message;
-      if (uncategorizedCount > 0 && fromCategories.length > 0) {
-        message = t(
-          'These are the other "{{payee}}" transactions that are uncategorized or in {{fromNames}}.',
-          { payee: payee.name, fromNames },
-        );
-      } else if (fromCategories.length > 0) {
-        message = t(
-          'These are the other "{{payee}}" transactions in {{fromNames}}.',
-          { payee: payee.name, fromNames },
-        );
-      } else {
-        message = t(
-          'These are the other "{{payee}}" transactions that are uncategorized.',
-          { payee: payee.name },
-        );
-      }
-
-      store.dispatch(
-        addNotification({
-          notification: {
-            id: `related-category-${payee.id}`,
-            type: 'message',
-            title: t('Also categorize {{others}} as "{{category}}"?', {
-              others,
-              category: category.name,
             }),
-            message,
-            button: {
-              title: t('Review'),
-              action: () => {
-                store.dispatch(
-                  pushModal({
-                    modal: {
-                      name: 'categorize-related-transactions',
-                      options: {
-                        payee,
-                        category,
-                        transactionIds,
-                        uncategorizedCount,
-                        fromCategories,
-                      },
-                    },
-                  }),
-                );
-              },
-            },
-          },
-        }),
-      );
-    },
-  );
+      message: t('Give them the category "{{category}}" too.', {
+        category: category.name,
+      }),
+      button: {
+        title: t('Review'),
+        action: () => {
+          store.dispatch(
+            pushModal({
+              modal: { name: 'categorize-related-transactions', options },
+            }),
+          );
+        },
+      },
+    });
+  });
 
   const unlistenSchedulesOffline = listen('schedules-offline', () => {
     store.dispatch(

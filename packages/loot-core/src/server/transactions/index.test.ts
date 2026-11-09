@@ -531,13 +531,43 @@ describe('batchUpdateTransactions', () => {
 
       expect(relatedPayeesEvents()).toEqual([
         {
-          payees: [{ id: 'amzn', name: 'AMZN MKTP US', transactionCount: 2 }],
+          payee: { id: 'amzn', name: 'AMZN MKTP US', transactionCount: 2 },
           targetPayee: { id: 'amazon', name: 'Amazon' },
         },
       ]);
     });
 
-    it('lists every old payee moved to the same payee', async () => {
+    it('counts the transactions of payees merged into the old payee', async () => {
+      await prepare();
+      // `amzn-2` lives on as `amzn` through the payee mapping
+      await db.mergePayees('amzn', ['amzn-2']);
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'a1', payee: 'amazon' }],
+        detectRelatedChanges: true,
+      });
+
+      expect(relatedPayeesEvents()).toEqual([
+        {
+          payee: { id: 'amzn', name: 'AMZN MKTP US', transactionCount: 4 },
+          targetPayee: { id: 'amazon', name: 'Amazon' },
+        },
+      ]);
+    });
+
+    it('does not count deleted transactions', async () => {
+      await prepare();
+      await db.deleteTransaction({ id: 'a2' });
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'a1', payee: 'amazon' }],
+        detectRelatedChanges: true,
+      });
+
+      expect(relatedPayeesEvents()[0].payee.transactionCount).toBe(1);
+    });
+
+    it('does not offer to merge several payees at once', async () => {
       await prepare();
 
       await batchUpdateTransactions({
@@ -548,11 +578,7 @@ describe('batchUpdateTransactions', () => {
         detectRelatedChanges: true,
       });
 
-      const [event] = relatedPayeesEvents();
-      expect(event.payees.sort((a, b) => a.id.localeCompare(b.id))).toEqual([
-        { id: 'amzn', name: 'AMZN MKTP US', transactionCount: 2 },
-        { id: 'amzn-2', name: 'AMZN Digital', transactionCount: 1 },
-      ]);
+      expect(relatedPayeesEvents()).toEqual([]);
     });
 
     it('leaves payees without transactions to the orphaned payees prompt', async () => {
@@ -606,13 +632,18 @@ describe('batchUpdateTransactions', () => {
       expect(relatedPayeesEvents()).toEqual([]);
     });
 
-    it('is offered for edits made through the batch update handler', async () => {
+    it('is offered through the batch update handler only when asked', async () => {
       await prepare();
 
       await runHandler(handlers['transactions-batch-update'], {
         updated: [{ id: 'a1', payee: 'amazon' }],
       });
+      expect(relatedPayeesEvents()).toEqual([]);
 
+      await runHandler(handlers['transactions-batch-update'], {
+        updated: [{ id: 'a2', payee: 'amazon' }],
+        detectRelatedChanges: true,
+      });
       expect(relatedPayeesEvents()).toHaveLength(1);
     });
   });
@@ -752,19 +783,51 @@ describe('batchUpdateTransactions', () => {
       expect(relatedCategoryEvents()).toEqual([]);
     });
 
-    it('is offered through the batch update handler unless turned off', async () => {
+    it('is offered through the batch update handler only when asked', async () => {
       await prepare();
 
       await runHandler(handlers['transactions-batch-update'], {
         updated: [{ id: 'n1', category: 'subs' }],
-        detectRelatedChanges: false,
       });
       expect(relatedCategoryEvents()).toEqual([]);
 
       await runHandler(handlers['transactions-batch-update'], {
         updated: [{ id: 'n2', category: 'subs' }],
+        detectRelatedChanges: true,
       });
       expect(relatedCategoryEvents()).toHaveLength(1);
+    });
+
+    it('leaves out closed accounts, deleted transactions and split parents but includes their children', async () => {
+      await prepare();
+      await db.insertAccount({ id: 'closed', name: 'closed', closed: 1 });
+      for (const transaction of [
+        { id: 'c1', account: 'closed', category: null },
+        { id: 'gone', account: 'one', category: null, tombstone: 1 },
+        { id: 'parent', account: 'one', category: null, is_parent: true },
+        {
+          id: 'child',
+          account: 'one',
+          category: null,
+          is_child: true,
+          parent_id: 'parent',
+        },
+      ]) {
+        await db.insertTransaction({
+          amount: -10,
+          date: '2024-01-01',
+          payee: 'netflix',
+          ...transaction,
+        });
+      }
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'n4', category: 'subs' }],
+        detectRelatedChanges: true,
+      });
+
+      const [event] = relatedCategoryEvents();
+      expect([...event.transactionIds].sort()).toEqual(['child', 'n3']);
     });
   });
 });

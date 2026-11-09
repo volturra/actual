@@ -43,13 +43,12 @@ async function getTransactionsByIds(
  * renaming "AMZN MKTP US*1A2B3C" to "Amazon" on one transaction), the old
  * payee usually still has other transactions. Find those so the client can
  * offer to merge the old payee into the new one, which renames it
- * everywhere. Payees left without transactions are handled by the
+ * everywhere. A payee left without transactions is handled by the
  * `orphaned-payees` prompt instead.
  */
 async function findRelatedPayees(
   updated: TransactionEntity[],
   oldPayeeByTransaction: Map<TransactionEntity['id'], PayeeEntity['id']>,
-  orphanedIds: Set<PayeeEntity['id']>,
 ): Promise<ServerEvents['related-payees'] | null> {
   const fromIds = new Set<PayeeEntity['id']>();
   const targetIds = new Set<PayeeEntity['id']>();
@@ -61,51 +60,45 @@ async function findRelatedPayees(
     }
   }
 
-  // Only offer this when every change went to the same payee; otherwise it
-  // is not clear what the old payees should be renamed to
-  if (targetIds.size !== 1) {
+  // Only offer this for one payee renamed to another. A bulk edit that
+  // moves several payees to one is usually a fix for those rows, and merging
+  // all of them in one click would be too easy to get wrong
+  if (fromIds.size !== 1 || targetIds.size !== 1) {
     return null;
   }
+  const [fromId] = fromIds;
   const [targetId] = targetIds;
-  const candidateIds = [...fromIds].filter(
-    id => id !== targetId && !orphanedIds.has(id),
-  );
-  if (candidateIds.length === 0) {
-    return null;
-  }
 
-  const payeeIds = [targetId, ...candidateIds];
-  const payees = await db.all<Pick<db.DbPayee, 'id' | 'name'>>(
-    `SELECT id, name FROM payees
-     WHERE ${whereIn(payeeIds, 'id')} AND tombstone = 0
-       AND transfer_acct IS NULL`,
+  // One query: both payees, and the old payee's remaining transactions
+  const rows = await db.all<
+    Pick<db.DbPayee, 'id' | 'name' | 'transfer_acct'> & {
+      count: number | null;
+    }
+  >(
+    `SELECT p.id, p.name, p.transfer_acct,
+       CASE WHEN p.id = ? THEN (
+         SELECT COUNT(*) FROM v_transactions_internal_alive t
+         WHERE t.payee = p.id AND t.is_parent = 0
+       ) END AS count
+     FROM payees p
+     WHERE p.id IN (?, ?) AND p.tombstone = 0`,
+    [fromId, fromId, targetId],
   );
-  const target = payees.find(payee => payee.id === targetId);
-  if (!target) {
-    // Transfers are never merged
-    return null;
-  }
-
-  const counts = await db.all<{ payee: string; count: number }>(
-    `SELECT payee, COUNT(*) AS count FROM v_transactions_internal_alive
-     WHERE ${whereIn(candidateIds, 'payee')} AND is_parent = 0
-     GROUP BY payee`,
-  );
-  const countByPayee = new Map(counts.map(row => [row.payee, row.count]));
-
-  const related = payees
-    .filter(payee => payee.id !== targetId && countByPayee.get(payee.id) > 0)
-    .map(payee => ({
-      id: payee.id,
-      name: payee.name,
-      transactionCount: countByPayee.get(payee.id),
-    }));
-  if (related.length === 0) {
+  const from = rows.find(row => row.id === fromId);
+  const target = rows.find(row => row.id === targetId);
+  // Transfer payees are never merged
+  if (
+    !from ||
+    !target ||
+    from.transfer_acct != null ||
+    target.transfer_acct != null ||
+    !from.count
+  ) {
     return null;
   }
 
   return {
-    payees: related,
+    payee: { id: from.id, name: from.name, transactionCount: from.count },
     targetPayee: { id: target.id, name: target.name },
   };
 }
@@ -161,20 +154,19 @@ async function findRelatedCategoryChange(
     ),
   ];
 
-  const payee = await db.first<Pick<db.DbPayee, 'id' | 'name'>>(
-    `SELECT id, name FROM payees
-     WHERE id = ? AND tombstone = 0 AND transfer_acct IS NULL`,
-    [payeeId],
-  );
-  if (!payee) {
-    // Transfers have no category to share
-    return null;
-  }
-
-  const rows = await db.all<{ id: string; category: string | null }>(
-    `SELECT t.id, t.category FROM v_transactions_internal_alive t
+  // One query for the candidates and the payee's name. Transfer payees are
+  // left out: transfers between on-budget accounts have no category
+  const rows = await db.all<{
+    id: string;
+    category: string | null;
+    payee_name: string;
+  }>(
+    `SELECT t.id, t.category, p.name AS payee_name
+     FROM v_transactions_internal_alive t
      JOIN accounts a ON a.id = t.account
+     JOIN payees p ON p.id = t.payee
      WHERE t.payee = ? AND t.is_parent = 0
+       AND p.tombstone = 0 AND p.transfer_acct IS NULL
        AND a.offbudget = 0 AND a.closed = 0 AND a.tombstone = 0
        AND NOT ${whereIn(
          edited.map(transaction => transaction.id),
@@ -201,7 +193,7 @@ async function findRelatedCategoryChange(
     categories.find(category => category.id === id)?.name ?? '';
 
   return {
-    payee: { id: payee.id, name: payee.name },
+    payee: { id: payeeId, name: rows[0].payee_name },
     category: { id: categoryId, name: categoryName(categoryId) },
     transactionIds: rows.map(row => row.id),
     uncategorizedCount: rows.filter(row => row.category == null).length,
@@ -420,22 +412,19 @@ export async function batchUpdateTransactions({
             updatedPayeeIds: newPayeeIds,
           });
         }
-
-        if (detectRelatedChanges) {
-          const related = await findRelatedPayees(
-            allUpdated,
-            oldPayeeByTransaction,
-            allOrphaned,
-          );
-          if (related) {
-            connection.send('related-payees', related);
-          }
-        }
       }
     }
   }
 
   if (detectRelatedChanges && updated) {
+    const relatedPayees = await findRelatedPayees(
+      allUpdated,
+      oldPayeeByTransaction,
+    );
+    if (relatedPayees) {
+      connection.send('related-payees', relatedPayees);
+    }
+
     const related = await findRelatedCategoryChange(
       updated,
       allUpdated,

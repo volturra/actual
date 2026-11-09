@@ -7,6 +7,7 @@ import { Text } from '@actual-app/components/text';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
 import { send } from '@actual-app/core/platform/client/connection';
+import { q } from '@actual-app/core/shared/query';
 import type { TransObjectLiteral } from '@actual-app/core/types/util';
 
 import { Information } from '#components/alerts';
@@ -17,6 +18,9 @@ import {
   ModalHeader,
 } from '#components/common/Modal';
 import type { Modal as ModalType } from '#modals/modalsSlice';
+import { addGenericErrorNotification } from '#notifications/notificationsSlice';
+import { aqlQuery } from '#queries/aqlQuery';
+import { useDispatch } from '#redux';
 
 const highlightStyle = { color: theme.pageTextPositive };
 
@@ -33,6 +37,7 @@ export function CategorizeRelatedTransactionsModal({
   fromCategories,
 }: CategorizeRelatedTransactionsModalProps) {
   const { t } = useTranslation();
+  const dispatch = useDispatch();
   const [isSaving, setIsSaving] = useState(false);
 
   return (
@@ -93,14 +98,19 @@ export function CategorizeRelatedTransactionsModal({
                 onPress={async () => {
                   setIsSaving(true);
                   try {
-                    await send('transactions-batch-update', {
-                      updated: transactionIds.map(id => ({
-                        id,
-                        category: category.id,
-                      })),
-                      // This is the follow-up the user just accepted
-                      detectRelatedChanges: false,
-                    });
+                    // The offer may be a while old: leave out transactions
+                    // the user has categorized differently since
+                    const ids = await getStillMatchingIds(
+                      transactionIds,
+                      fromCategories.map(fromCategory => fromCategory.id),
+                    );
+                    if (ids.length > 0) {
+                      await send('transactions-batch-update', {
+                        updated: ids.map(id => ({ id, category: category.id })),
+                      });
+                    }
+                  } catch {
+                    dispatch(addGenericErrorNotification());
                   } finally {
                     // Closing the modal refreshes the transaction list
                     state.close();
@@ -118,4 +128,20 @@ export function CategorizeRelatedTransactionsModal({
       )}
     </Modal>
   );
+}
+
+async function getStillMatchingIds(
+  transactionIds: string[],
+  fromCategoryIds: string[],
+) {
+  const { data } = await aqlQuery(
+    q('transactions')
+      .filter({ id: { $oneof: transactionIds } })
+      .options({ splits: 'all' })
+      .select(['id', 'category']),
+  );
+  const fromIds = new Set(fromCategoryIds);
+  return (data as Array<{ id: string; category: string | null }>)
+    .filter(row => row.category == null || fromIds.has(row.category))
+    .map(row => row.id);
 }

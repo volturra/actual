@@ -72,8 +72,8 @@ type OrphanedPayeesEvent = {
 };
 
 type RelatedPayeesEvent = {
-  /** Payees the user moved transactions away from that still have others */
-  payees: Array<{ id: string; name: string; transactionCount: number }>;
+  /** The payee the user moved transactions away from, which has others */
+  payee: { id: string; name: string; transactionCount: number };
   /** The payee those transactions were moved to */
   targetPayee: { id: string; name: string };
 };

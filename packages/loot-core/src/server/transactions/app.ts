@@ -39,7 +39,7 @@ async function handleBatchUpdateTransactions({
   updated,
   learnCategories,
   runTransfers = true,
-  detectRelatedChanges = true,
+  detectRelatedChanges = false,
 }: Parameters<typeof batchUpdateTransactions>[0]) {
   const result = await batchUpdateTransactions({
     added,
