@@ -612,6 +612,40 @@ describe('batchUpdateTransactions', () => {
       expect(relatedPayeesEvents()[0].payee.transactionCount).toBe(3);
     });
 
+    it('counts a split whose own payee is the old payee', async () => {
+      await prepare();
+      await db.insertTransaction({
+        id: 'split',
+        account: 'one',
+        amount: -10,
+        date: '2024-01-01',
+        payee: 'other',
+        is_parent: true,
+      });
+      await db.insertTransaction({
+        id: 'split-0',
+        account: 'one',
+        amount: -10,
+        date: '2024-01-01',
+        payee: 'amzn-2',
+        is_child: true,
+        parent_id: 'split',
+      });
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'lonely', payee: 'amazon' }],
+        detectRelatedChanges: true,
+      });
+
+      // "Other" is not orphaned (the split uses it), so this offer covers it
+      expect(relatedPayeesEvents()).toEqual([
+        {
+          payee: { id: 'other', name: 'Other', transactionCount: 1 },
+          targetPayee: { id: 'amazon', name: 'Amazon' },
+        },
+      ]);
+    });
+
     it('offers to rename when the payee of a whole split changes', async () => {
       await prepare();
       await insertSplit('split', 2);
@@ -813,6 +847,7 @@ describe('batchUpdateTransactions', () => {
         {
           payee: { id: 'netflix', name: 'Netflix' },
           category: { id: 'subs', name: 'Subs' },
+          editedIds: ['n1'],
           uncategorizedCount: 1,
           fromCategories: [{ id: 'fun', name: 'Fun', count: 2 }],
         },
@@ -837,6 +872,7 @@ describe('batchUpdateTransactions', () => {
         {
           payee: { id: 'netflix', name: 'Netflix' },
           category: { id: 'subs', name: 'Subs' },
+          editedIds: ['n1'],
           uncategorizedCount: 1,
           fromCategories: [],
         },

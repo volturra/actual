@@ -41,17 +41,22 @@ async function getTransactionsByIds(
 /**
  * Selects from the alive, non-parent rows of the `transactions` table (as
  * `t`) whose payee maps to the bound payee id. Same rows as
- * `v_transactions_internal_alive` with `payee = ? AND is_parent = 0`, but it
+ * `v_transactions_internal_alive` with `payee = ? AND is_parent = 0` (or
+ * without `is_parent = 0` when `includeParents` is set), but it
  * reads the table directly: the view joins every transaction before
  * filtering, which is about three times slower on a large budget (4 ms
  * instead of 12 ms for 50,000 transactions), and this runs on edits
  */
-function aliveTransactionsOfPayee(select: string) {
+function aliveTransactionsOfPayee(
+  select: string,
+  { includeParents = false }: { includeParents?: boolean } = {},
+) {
   return `SELECT ${select} FROM transactions t
     LEFT JOIN transactions parent ON t.isChild = 1 AND parent.id = t.parent_id
     WHERE t.description IN (SELECT id FROM payee_mapping WHERE targetId = ?)
       AND t.date IS NOT NULL AND t.acct IS NOT NULL
-      AND IFNULL(t.tombstone, 0) = 0 AND t.isParent = 0
+      AND IFNULL(t.tombstone, 0) = 0
+      ${includeParents ? '' : 'AND t.isParent = 0'}
       AND (t.isChild = 0 OR parent.tombstone = 0)`;
 }
 
@@ -104,8 +109,11 @@ async function findRelatedPayees(
   >(
     `SELECT p.id, p.name, p.transfer_acct,
        CASE WHEN p.id = ? THEN (${aliveTransactionsOfPayee(
-         // A split counts once, however many lines it has
+         // A split counts once, however many of its rows use the payee
          'COUNT(DISTINCT CASE WHEN t.isChild = 1 THEN t.parent_id ELSE t.id END)',
+         // A split whose own payee is this one still uses it, like the
+         // orphaned payees check counts it
+         { includeParents: true },
        )}) END AS count
      FROM payees p
      WHERE p.id IN (?, ?) AND p.tombstone = 0`,
@@ -241,6 +249,7 @@ async function findRelatedCategoryChange(
   return {
     payee: { id: payeeId, name: rows[0].payee_name },
     category: { id: categoryId, name: rows[0].target_name ?? '' },
+    editedIds: edited.map(transaction => transaction.id),
     uncategorizedCount,
     fromCategories,
   };
@@ -297,30 +306,34 @@ export async function batchUpdateTransactions({
     const payeeUpdateIds = new Set(
       updated.filter(update => update.payee).map(update => update.id),
     );
-    // Read the old categories in the same query, and only when a category
-    // offer is possible: one category set on every edited transaction, and
-    // no payee change
-    const categoryUpdates = updated.filter(update => update.category);
-    const categoryUpdateIds =
-      detectRelatedChanges &&
-      !updated.some(update => update.payee) &&
-      new Set(categoryUpdates.map(update => update.category)).size === 1
-        ? categoryUpdates.map(update => update.id)
-        : [];
-
-    const transactions = await getTransactionsByIds([
-      ...new Set([...payeeUpdateIds, ...categoryUpdateIds]),
-    ]);
+    const transactions = await getTransactionsByIds([...payeeUpdateIds]);
 
     for (let i = 0; i < transactions.length; i++) {
-      if (payeeUpdateIds.has(transactions[i].id)) {
-        oldPayees.add(transactions[i].payee);
-        oldPayeeByTransaction.set(transactions[i].id, transactions[i].payee);
-      }
-      oldCategoryByTransaction.set(
-        transactions[i].id,
-        transactions[i].category,
+      oldPayees.add(transactions[i].payee);
+      oldPayeeByTransaction.set(transactions[i].id, transactions[i].payee);
+    }
+
+    // Read the old categories only when a category offer is possible: one
+    // category set on every edited transaction, and no payee change (so
+    // this never adds to the read above). A direct primary key lookup, as a
+    // bulk edit can cover thousands of rows
+    const categoryUpdates = updated.filter(update => update.category);
+    if (
+      detectRelatedChanges &&
+      payeeUpdateIds.size === 0 &&
+      new Set(categoryUpdates.map(update => update.category)).size === 1
+    ) {
+      const rows = await db.all<{ id: string; category: string | null }>(
+        `SELECT t.id, cm.transferId AS category FROM transactions t
+         LEFT JOIN category_mapping cm ON cm.id = t.category
+         WHERE ${whereIn(
+           categoryUpdates.map(update => update.id),
+           't.id',
+         )}`,
       );
+      for (const row of rows) {
+        oldCategoryByTransaction.set(row.id, row.category);
+      }
     }
   }
 

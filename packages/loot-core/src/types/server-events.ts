@@ -83,6 +83,8 @@ type RelatedCategoryEvent = {
   payee: { id: string; name: string };
   /** The category the user picked */
   category: { id: string; name: string };
+  /** The transactions the user edited, which the offer leaves out */
+  editedIds: string[];
   /** How many of the payee's other transactions are uncategorized */
   uncategorizedCount: number;
   /**
