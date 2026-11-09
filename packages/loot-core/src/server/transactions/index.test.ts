@@ -1114,7 +1114,7 @@ describe('batchUpdateTransactions', () => {
       await prepare();
       await insert([
         { id: 'parent', is_parent: true },
-        { id: 'child', is_child: true, parent_id: 'parent' },
+        { id: 'child', is_child: true, parent_id: 'parent', category: 'fun' },
       ]);
 
       await batchUpdateTransactions({
@@ -1126,7 +1126,16 @@ describe('batchUpdateTransactions', () => {
         detectRelatedChanges: true,
       });
 
-      expect(relatedCategoryEvents()).toHaveLength(1);
+      // The split's line is left out like n1: Fun keeps n2 and n3, 2 of the
+      // 4 other categorized transactions (with the line counted in Subs it
+      // would be 2 of 5, and Fun would not be offered)
+      expect(relatedCategoryEvents()).toEqual([
+        expect.objectContaining({
+          editedIds: ['n1', 'child'],
+          uncategorizedCount: 1,
+          fromCategories: [{ id: 'fun', name: 'Fun', count: 2 }],
+        }),
+      ]);
     });
 
     it('still saves the edit when looking for an offer fails', async () => {

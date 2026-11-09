@@ -262,7 +262,14 @@ async function findRelatedCategoryChange(
   }
   const [payeeId] = payeeIds;
   const [categoryId] = categoryIds;
-  const editedIds = edited.map(transaction => transaction.id);
+  // Every row the user categorized, the lines of a whole split included,
+  // is left out of the counts and of applying the offer
+  const editedIds = updated
+    .filter(
+      transaction =>
+        categoryUpdateIds.has(transaction.id) && !transaction.is_parent,
+    )
+    .map(transaction => transaction.id);
   // No payee, or a category that did not stick (for example one without a
   // category mapping)
   if (!payeeId || !categoryId) {
