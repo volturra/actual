@@ -963,6 +963,63 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
     expect(renderedItems().map(itemName)).toStrictEqual(['Bank of Montreal']);
   });
 
+  test('leaves out a nearby transfer payee for a closed account', async () => {
+    const closedAccount = { ...generateAccount('Old Checking'), closed: 1 };
+    vi.mocked(useNearbyPayees).mockReturnValue(
+      mockNearbyPayeesResult([
+        {
+          ...makeNearbyPayee('Old Checking', 0.3),
+          payee: {
+            id: 'closed-transfer-id',
+            name: 'Old Checking',
+            favorite: false,
+            transfer_acct: closedAccount.id,
+          },
+        },
+        makeNearbyPayee('Coffee Shop', 0.5),
+      ]),
+    );
+    await clickAutocomplete(
+      renderPayeeAutocomplete({
+        payees: [makePayee('Alice')],
+        accounts: [...accounts, closedAccount],
+      }),
+    );
+
+    expect(renderedItems().map(itemName)).toStrictEqual([
+      'Coffee Shop',
+      'Alice',
+    ]);
+  });
+
+  describe('the "more payees" hint', () => {
+    const hint = 'More payees are available, search to find them';
+    const manyPayees = (count: number) =>
+      Array.from({ length: count }, (_, i) =>
+        makePayee(`Payee ${String(i).padStart(3, '0')}`),
+      );
+
+    test('does not count nearby payees', async () => {
+      vi.mocked(useNearbyPayees).mockReturnValue(
+        mockNearbyPayeesResult([makeNearbyPayee('Coffee Shop', 0.3)]),
+      );
+      await clickAutocomplete(
+        renderPayeeAutocomplete({ payees: manyPayees(99) }),
+      );
+
+      expect(renderedItems()).toHaveLength(100);
+      expect(screen.queryByText(hint)).not.toBeInTheDocument();
+    });
+
+    test('shows when 100 payees are listed', async () => {
+      await clickAutocomplete(
+        renderPayeeAutocomplete({ payees: manyPayees(100) }),
+      );
+
+      expect(screen.getByText(hint)).toBeInTheDocument();
+    });
+  });
+
   test('ranks an exact payee match above a longer tied substring match', async () => {
     // Payees are already alpha-sorted, so 'AAA Google' is listed first;
     // a stable sort on a tied fzf score would otherwise leave it ahead of

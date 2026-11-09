@@ -108,8 +108,9 @@ function filterTransferPayees<T extends PayeeEntity>(payees: T[]): T[] {
 }
 
 // The items in the order PayeeList renders its sections. Downshift numbers
-// rows in render order, and Autocomplete reads its item array by that
-// number (for Enter, Tab and the arrow keys), so the two orders must match.
+// rows in render order, while Autocomplete picks the starting highlight from
+// its item array and reads that array by Downshift's number for Tab/blur and
+// arrow-key updates, so the two orders must match.
 function orderBySection(
   items: PayeeAutocompleteItem[],
 ): PayeeAutocompleteItem[] {
