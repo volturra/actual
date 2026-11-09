@@ -1,0 +1,122 @@
+name: Homelab release
+
+# Builds this fork's sync-server with its own web client bundled inside, and
+# publishes it as a GitHub release (actual-sync-server.tgz plus its .sha256).
+# Install it with `npm install -g ./actual-sync-server.tgz`; native modules
+# build against the installing host's Node, as with the npm package.
+#
+# Tags are v<sync-server version>-homelab.<run number>. The run number only
+# grows, so releases compare numerically, and an upstream merge (26.10 ->
+# 26.11) still sorts after every earlier build.
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: homelab-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    # Only the fork publishes these; upstream has its own release pipeline.
+    if: github.event.repository.fork
+    name: Build and publish the homelab release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up environment
+        uses: ./.github/actions/setup
+        with:
+          # Avoid restoring potentially poisoned caches in release jobs.
+          cache: 'false'
+
+      - name: Build Server & Web
+        run: yarn build:server
+
+      - name: Pack the web and server packages
+        run: |
+          yarn workspace @actual-app/web pack --filename @actual-app/web.tgz
+          yarn workspace @actual-app/sync-server pack --filename @actual-app/sync-server.tgz
+
+      # The published sync-server pulls @actual-app/web from npm, which would
+      # serve upstream's client instead of ours. Bundle our web build inside
+      # the server package instead. @actual-app/crdt is inlined by the server's
+      # vite build, so it is dropped as a runtime dependency.
+      - name: Assemble the server tarball with our web client bundled
+        run: |
+          set -eu
+          VERSION="$(node -p "require('./packages/sync-server/package.json').version")-homelab.${GITHUB_RUN_NUMBER}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+          stage="$RUNNER_TEMP/stage"
+          dist="$RUNNER_TEMP/dist"
+          rm -rf "$stage" "$dist"
+          mkdir -p "$stage/web" "$dist"
+          tar -xzf packages/sync-server/@actual-app/sync-server.tgz -C "$stage"
+          tar -xzf packages/desktop-client/@actual-app/web.tgz -C "$stage/web" --strip-components=1
+          mkdir -p "$stage/package/node_modules/@actual-app"
+          mv "$stage/web" "$stage/package/node_modules/@actual-app/web"
+
+          cd "$stage/package"
+          VERSION="$VERSION" node <<'JS'
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const web = JSON.parse(fs.readFileSync('node_modules/@actual-app/web/package.json', 'utf8'));
+          pkg.version = process.env.VERSION;
+          delete pkg.dependencies['@actual-app/crdt'];
+          pkg.dependencies['@actual-app/web'] = web.version;
+          pkg.bundleDependencies = ['@actual-app/web'];
+          delete pkg.devDependencies;
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          JS
+          npm pack --pack-destination "$dist"
+          mv "$dist"/*.tgz "$dist/actual-sync-server.tgz"
+          cd "$dist"
+          sha256sum actual-sync-server.tgz > actual-sync-server.tgz.sha256
+          cat actual-sync-server.tgz.sha256
+
+      # Install it the way the homelab does, outside the repo so no workspace
+      # config leaks in, and wait for /health.
+      - name: Test that the tarball installs and boots
+        timeout-minutes: 5
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -eu
+          prefix="$RUNNER_TEMP/prefix"
+          data="$RUNNER_TEMP/data"
+          mkdir -p "$data"
+          npm install -g --prefix "$prefix" "$RUNNER_TEMP/dist/actual-sync-server.tgz"
+          test -f "$prefix/lib/node_modules/@actual-app/sync-server/node_modules/@actual-app/web/build/index.html"
+          ACTUAL_DATA_DIR="$data" ACTUAL_PORT=5006 "$prefix/bin/actual-server" > server.log 2>&1 &
+          for _ in $(seq 60); do
+            if curl -fsS http://localhost:5006/health; then
+              curl -fsS -o /dev/null http://localhost:5006/
+              exit 0
+            fi
+            sleep 1
+          done
+          cat server.log
+          exit 1
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${VERSION}" \
+            "$RUNNER_TEMP/dist/actual-sync-server.tgz" \
+            "$RUNNER_TEMP/dist/actual-sync-server.tgz.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "v${VERSION}" \
+            --notes "Homelab build of ${GITHUB_SHA}." \
+            --latest
