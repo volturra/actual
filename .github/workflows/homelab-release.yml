@@ -55,8 +55,9 @@ jobs:
 
       # The published sync-server pulls @actual-app/web from npm, which would
       # serve upstream's client instead of ours. Bundle our web build inside
-      # the server package instead. @actual-app/crdt is inlined by the server's
-      # vite build, so it is dropped as a runtime dependency.
+      # the server package instead. Every other dependency, @actual-app/crdt
+      # included, stays as upstream publishes it: the server's build inlines
+      # crdt's code but still imports crdt's own dependencies (murmurhash, ...).
       - name: Assemble the server tarball with our web client bundled
         run: |
           set -eu
@@ -78,7 +79,6 @@ jobs:
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           const web = JSON.parse(fs.readFileSync('node_modules/@actual-app/web/package.json', 'utf8'));
           pkg.version = process.env.VERSION;
-          delete pkg.dependencies['@actual-app/crdt'];
           pkg.dependencies['@actual-app/web'] = web.version;
           pkg.bundleDependencies = ['@actual-app/web'];
           delete pkg.devDependencies;
