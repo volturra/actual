@@ -1023,6 +1023,19 @@ describe('batchUpdateTransactions', () => {
       expect(n4?.category).toBeNull();
     });
 
+    it('binds the ids it is given instead of splicing them into SQL', async () => {
+      await prepare();
+
+      expect(
+        await categorizeRelatedTransactions({
+          payeeId: 'netflix',
+          categoryId: 'subs',
+          fromCategoryIds: ["fun') OR ('1' = '1"],
+          excludeIds: ["n1') OR ('1' = '1"],
+        }),
+      ).toBe(1);
+    });
+
     it('applies nothing when the matching transactions changed since', async () => {
       await prepare();
 

@@ -16,6 +16,7 @@ import {
   ModalCloseButton,
   ModalHeader,
 } from '#components/common/Modal';
+import { useUndo } from '#hooks/useUndo';
 import type { Modal as ModalType } from '#modals/modalsSlice';
 import {
   addGenericErrorNotification,
@@ -39,6 +40,7 @@ export function CategorizeRelatedTransactionsModal({
 }: CategorizeRelatedTransactionsModalProps) {
   const { t } = useTranslation();
   const dispatch = useDispatch();
+  const { showUndoNotification } = useUndo();
   const [isSaving, setIsSaving] = useState(false);
   const offeredCount = fromCategories.reduce(
     (sum, fromCategory) => sum + fromCategory.count,
@@ -134,13 +136,33 @@ export function CategorizeRelatedTransactionsModal({
                         excludeIds: editedIds,
                       },
                     );
-                    if (changedCount === 0) {
+                    if (changedCount > 0) {
+                      // Phones have no keyboard shortcut to undo with; this
+                      // shows nothing on wider screens
+                      showUndoNotification({
+                        message:
+                          changedCount === 1
+                            ? t(
+                                'Categorized 1 transaction as "{{category}}".',
+                                {
+                                  category: category.name,
+                                },
+                              )
+                            : t(
+                                'Categorized {{count}} transactions as "{{category}}".',
+                                {
+                                  count: changedCount,
+                                  category: category.name,
+                                },
+                              ),
+                      });
+                    } else {
                       dispatch(
                         addNotification({
                           notification: {
                             type: 'message',
                             message: t(
-                              'Nothing left to categorize: these transactions have changed since the offer was made.',
+                              'Nothing was categorized: the transactions, the payee or the category have changed since the offer was made.',
                             ),
                           },
                         }),

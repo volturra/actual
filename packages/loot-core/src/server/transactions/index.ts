@@ -39,8 +39,9 @@ async function getTransactionsByIds(
 }
 
 /**
- * Selects from the alive, non-parent rows of the `transactions` table (as
- * `t`) whose payee maps to the bound payee id. Same rows as
+ * Selects from the alive rows of the `transactions` table (as `t`; split
+ * parents only with `includeParents`) whose payee maps to the bound payee
+ * id. Same rows as
  * `v_transactions_internal_alive` with `payee = ? AND is_parent = 0` (or
  * without `is_parent = 0` when `includeParents` is set), but it
  * reads the table directly: the view joins every transaction before
@@ -139,8 +140,9 @@ async function findRelatedPayees(
 }
 
 /**
- * Selects from the payee's (bound twice) alive, non-parent transactions in
- * open on-budget accounts, leaving out `excludeIds`. Joins `c`, the
+ * Selects from the payee's alive, non-parent transactions in open on-budget
+ * accounts, leaving out `excludeIds`. Binds the payee id twice, then
+ * `excludeIds`. Joins `c`, the
  * transaction's category, which is null for a deleted category as in the
  * register. Transfer payees match nothing: transfers between on-budget
  * accounts have no category. Shared by the category offer and applying it,
@@ -155,7 +157,12 @@ function onBudgetTransactionsOfPayee(select: string, excludeIds: string[]) {
      LEFT JOIN categories c ON c.id = cm.transferId AND c.tombstone = 0
      WHERE p.tombstone = 0 AND p.transfer_acct IS NULL
        AND a.offbudget = 0 AND a.closed = 0 AND a.tombstone = 0
-       AND NOT ${whereIn(excludeIds, 't.id')}`;
+       AND NOT t.id IN (${placeholders(excludeIds)})`;
+}
+
+/** `?` placeholders for binding a list of ids from a handler's arguments */
+function placeholders(ids: string[]) {
+  return ids.map(() => '?').join(', ');
 }
 
 /**
@@ -187,8 +194,8 @@ export async function categorizeRelatedTransactions({
 
   const rows = await db.all<{ id: string }>(
     `${onBudgetTransactionsOfPayee('t.id', excludeIds)}
-       AND (c.id IS NULL OR ${whereIn(fromCategoryIds, 'c.id')})`,
-    [payeeId, payeeId],
+       AND (c.id IS NULL OR c.id IN (${placeholders(fromCategoryIds)}))`,
+    [payeeId, payeeId, ...excludeIds, ...fromCategoryIds],
   );
   if (rows.length > 0) {
     await batchUpdateTransactions({
@@ -248,6 +255,7 @@ async function findRelatedCategoryChange(
   }
   const [payeeId] = payeeIds;
   const [categoryId] = categoryIds;
+  const editedIds = edited.map(transaction => transaction.id);
   // A transaction moved to an off-budget account has its category cleared
   if (!payeeId || !categoryId) {
     return null;
@@ -266,10 +274,10 @@ async function findRelatedCategoryChange(
       `c.id AS category, COUNT(*) AS count,
        c.name AS category_name, p.name AS payee_name,
        (SELECT name FROM categories WHERE id = ?) AS target_name`,
-      edited.map(transaction => transaction.id),
+      editedIds,
     )}
      GROUP BY c.id`,
-    [categoryId, payeeId, payeeId],
+    [categoryId, payeeId, payeeId, ...editedIds],
   );
   if (rows.length === 0) {
     return null;
@@ -297,7 +305,7 @@ async function findRelatedCategoryChange(
   return {
     payee: { id: payeeId, name: rows[0].payee_name },
     category: { id: categoryId, name: rows[0].target_name ?? '' },
-    editedIds: edited.map(transaction => transaction.id),
+    editedIds,
     uncategorizedCount,
     fromCategories,
   };
@@ -361,10 +369,12 @@ export async function batchUpdateTransactions({
       oldPayeeByTransaction.set(transactions[i].id, transactions[i].payee);
     }
 
-    // Read the old categories only when a category offer is possible: one
-    // category set on every edited transaction, and no payee change (so
-    // this never adds to the read above). A direct primary key lookup, as a
-    // bulk edit can cover thousands of rows
+    // Read the old categories only when the edit allows a category offer:
+    // one category set on every edited transaction, and no payee change (so
+    // this never adds to the read above). Whether they are split lines is
+    // only known from the rows, so an edit of a split line still pays for
+    // this read. A direct primary key lookup, as a bulk edit can cover
+    // thousands of rows
     const categoryUpdates = updated.filter(update => update.category);
     if (
       detectRelatedChanges &&
