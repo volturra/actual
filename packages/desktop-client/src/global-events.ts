@@ -102,9 +102,25 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
             // The offer can be stale by the time it is clicked, for example
             // when either payee was merged or deleted meanwhile. Then there
             // is nothing left to rename
-            const payees = await send('payees-get');
+            let payees;
+            try {
+              payees = await send('payees-get');
+            } catch {
+              store.dispatch(addGenericErrorNotification());
+              return;
+            }
             const ids = new Set(payees.map(p => p.id));
             if (!ids.has(payee.id) || !ids.has(targetPayee.id)) {
+              store.dispatch(
+                addNotification({
+                  notification: {
+                    type: 'message',
+                    message: t(
+                      'Nothing to rename: one of the payees was merged or deleted since the offer was made.',
+                    ),
+                  },
+                }),
+              );
               return;
             }
             store.dispatch(
