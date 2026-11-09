@@ -186,7 +186,7 @@ async function findRelatedCategoryChange(
   }
   const [payeeId] = payeeIds;
   const [categoryId] = categoryIds;
-  // Off-budget transactions have their category cleared when saved
+  // A transaction moved to an off-budget account has its category cleared
   if (!payeeId || !categoryId) {
     return null;
   }
@@ -201,21 +201,22 @@ async function findRelatedCategoryChange(
     payee_name: string;
     target_name: string | null;
   }>(
-    `SELECT cm.transferId AS category, COUNT(*) AS count,
+    `SELECT c.id AS category, COUNT(*) AS count,
        c.name AS category_name, p.name AS payee_name,
        (SELECT name FROM categories WHERE id = ?) AS target_name
      FROM (${aliveTransactionsOfPayee('t.*')}) t
      JOIN accounts a ON a.id = t.acct
      JOIN payees p ON p.id = ?
      LEFT JOIN category_mapping cm ON cm.id = t.category
-     LEFT JOIN categories c ON c.id = cm.transferId
+     -- A deleted category shows as uncategorized, as in the register
+     LEFT JOIN categories c ON c.id = cm.transferId AND c.tombstone = 0
      WHERE p.tombstone = 0 AND p.transfer_acct IS NULL
        AND a.offbudget = 0 AND a.closed = 0 AND a.tombstone = 0
        AND NOT ${whereIn(
          edited.map(transaction => transaction.id),
          't.id',
        )}
-     GROUP BY cm.transferId`,
+     GROUP BY c.id`,
     [categoryId, payeeId, payeeId],
   );
   if (rows.length === 0) {

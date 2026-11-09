@@ -68,20 +68,23 @@ export function CategorizeRelatedTransactionsModal({
             <ul style={{ margin: 0, marginBottom: 10 }}>
               {uncategorizedCount > 0 && (
                 <li>
-                  <Trans>
-                    Uncategorized:{' '}
-                    {{ count: uncategorizedCount } as TransObjectLiteral}
-                  </Trans>
+                  {uncategorizedCount === 1 ? (
+                    <Trans>1 uncategorized</Trans>
+                  ) : (
+                    <Trans>
+                      {{ count: uncategorizedCount } as TransObjectLiteral}{' '}
+                      uncategorized
+                    </Trans>
+                  )}
                 </li>
               )}
               {fromCategories.map(fromCategory => (
                 <li key={fromCategory.id}>
                   <Trans>
-                    In{' '}
+                    {{ count: fromCategory.count } as TransObjectLiteral} in{' '}
                     <Text style={highlightStyle}>
                       {{ category: fromCategory.name } as TransObjectLiteral}
                     </Text>
-                    : {{ count: fromCategory.count } as TransObjectLiteral}
                   </Trans>
                 </li>
               ))}

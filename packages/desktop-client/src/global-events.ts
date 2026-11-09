@@ -60,7 +60,12 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
     }
     const id = `${kind}-${uuidv4()}`;
     shownOfferIds.set(kind, id);
-    store.dispatch(addNotification({ notification: { ...notification, id } }));
+    store.dispatch(
+      addNotification({
+        // Long enough to read the question and decide
+        notification: { timeout: 15000, ...notification, id },
+      }),
+    );
   }
 
   const unlistenRelatedPayees = listen(

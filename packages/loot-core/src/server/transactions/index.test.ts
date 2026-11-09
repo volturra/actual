@@ -929,6 +929,23 @@ describe('batchUpdateTransactions', () => {
       expect(event.uncategorizedCount).toBe(2);
     });
 
+    it('counts transactions in a deleted category as uncategorized', async () => {
+      await prepare();
+      await insert([{ id: 'n7', category: 'food' }]);
+      await db.update('categories', { id: 'food', tombstone: 1 });
+
+      await batchUpdateTransactions({
+        updated: [{ id: 'n1', category: 'subs' }],
+        detectRelatedChanges: true,
+      });
+
+      // n4, n5 and n7; Fun now holds 2 of 3 other categorized ones
+      expect(relatedCategoryEvents()[0]).toMatchObject({
+        uncategorizedCount: 3,
+        fromCategories: [{ id: 'fun', name: 'Fun', count: 2 }],
+      });
+    });
+
     it('leaves out lines of a deleted split', async () => {
       await prepare();
       await insert([
@@ -1025,20 +1042,21 @@ describe('batchUpdateTransactions', () => {
     });
 
     it('costs two queries for a category edit and one for a payee edit', async () => {
-      await prepare();
-      await db.insertPayee({ id: 'amazon', name: 'Amazon' });
-
+      // The same edit on the same data, with and without detection
       async function countQueries(
-        updated: Array<Partial<TransactionEntity>>,
+        update: Partial<TransactionEntity>,
         detectRelatedChanges: boolean,
       ) {
+        await global.emptyDatabase()();
+        await prepare();
+        await db.insertPayee({ id: 'amazon', name: 'Amazon' });
         const spies = [
           vi.spyOn(db, 'all'),
           vi.spyOn(db, 'first'),
           vi.spyOn(db, 'selectWithSchema'),
         ];
         await batchUpdateTransactions({
-          updated,
+          updated: [update],
           detectRelatedChanges,
           detectOrphanPayees: false,
           runTransfers: false,
@@ -1051,15 +1069,17 @@ describe('batchUpdateTransactions', () => {
         return count;
       }
 
+      const categoryEdit = { id: 'n1', category: 'subs' };
+      const payeeEdit = { id: 'n1', payee: 'amazon' };
       // The old categories are read, then one query finds the candidates
       expect(
-        (await countQueries([{ id: 'n1', category: 'subs' }], true)) -
-          (await countQueries([{ id: 'n2', category: 'subs' }], false)),
+        (await countQueries(categoryEdit, true)) -
+          (await countQueries(categoryEdit, false)),
       ).toBe(2);
       // The old payees are already read; one query checks both payees
       expect(
-        (await countQueries([{ id: 'n3', payee: 'amazon' }], true)) -
-          (await countQueries([{ id: 'n5', payee: 'amazon' }], false)),
+        (await countQueries(payeeEdit, true)) -
+          (await countQueries(payeeEdit, false)),
       ).toBe(1);
     });
   });
