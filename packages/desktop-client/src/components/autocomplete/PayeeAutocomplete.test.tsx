@@ -964,7 +964,10 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
   });
 
   test('leaves out a nearby transfer payee for a closed account', async () => {
-    const closedAccount = { ...generateAccount('Old Checking'), closed: 1 };
+    const closedAccount: AccountEntity = {
+      ...generateAccount('Old Checking'),
+      closed: 1,
+    };
     vi.mocked(useNearbyPayees).mockReturnValue(
       mockNearbyPayeesResult([
         {
