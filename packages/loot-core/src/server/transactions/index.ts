@@ -87,6 +87,15 @@ async function findRelatedPayees(
       return null;
     }
     const oldPayee = oldPayeeByTransaction.get(transaction.id);
+    if (
+      transaction.payee &&
+      oldPayeeByTransaction.has(transaction.id) &&
+      !oldPayee
+    ) {
+      // Filling in rows that had no payee is a clean-up of those rows, like
+      // moving several payees to one below
+      return null;
+    }
     if (oldPayee && transaction.payee && oldPayee !== transaction.payee) {
       fromIds.add(oldPayee);
       targetIds.add(transaction.payee);
@@ -144,8 +153,8 @@ async function findRelatedPayees(
  * accounts, leaving out `excludeIds`. Binds, in order: any placeholders in
  * `select`, the payee id twice, then `excludeIds`. Joins `c`, the
  * transaction's category, which is null for a deleted category as in the
- * register. Transfer payees match nothing: transfers between on-budget
- * accounts have no category. Shared by the category offer and applying it,
+ * register. Transfer payees are left out on purpose: a transfer's category
+ * says more about that one transfer than about the payee. Shared by the category offer and applying it,
  * so what is counted is what gets changed.
  */
 function onBudgetTransactionsOfPayee(select: string, excludeIds: string[]) {

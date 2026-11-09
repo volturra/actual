@@ -712,6 +712,26 @@ describe('batchUpdateTransactions', () => {
       expect(relatedPayeesEvents()).toEqual([]);
     });
 
+    it('does not offer anything when the edit also fills in missing payees', async () => {
+      await prepare();
+      await db.insertTransaction({
+        id: 'no-payee',
+        account: 'one',
+        amount: -10,
+        date: '2024-01-01',
+      });
+
+      await batchUpdateTransactions({
+        updated: [
+          { id: 'a1', payee: 'amazon' },
+          { id: 'no-payee', payee: 'amazon' },
+        ],
+        detectRelatedChanges: true,
+      });
+
+      expect(relatedPayeesEvents()).toEqual([]);
+    });
+
     it('leaves payees without transactions to the orphaned payees prompt', async () => {
       await prepare();
 
