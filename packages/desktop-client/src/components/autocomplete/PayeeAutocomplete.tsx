@@ -107,6 +107,30 @@ function filterTransferPayees<T extends PayeeEntity>(payees: T[]): T[] {
   return payees.filter(payee => !!payee.transfer_acct);
 }
 
+// Once the user has typed, the match score should decide the order, so
+// favorites and common payees lose their own section and join the regular
+// payees. Transfers keep their section. The result is in the same order the
+// list renders, because Downshift numbers items in render order while
+// Autocomplete reads this array by that number (for Tab and arrow keys).
+function orderSearchResultsForDisplay(
+  results: PayeeAutocompleteItem[],
+): PayeeAutocompleteItem[] {
+  const payees: PayeeAutocompleteItem[] = [];
+  const transfers: PayeeAutocompleteItem[] = [];
+  for (const item of results) {
+    if (item.itemType === 'account') {
+      transfers.push(item);
+    } else {
+      payees.push(
+        item.itemType === 'common_payee'
+          ? { ...item, itemType: 'payee' }
+          : item,
+      );
+    }
+  }
+  return [...payees, ...transfers];
+}
+
 function makeNew(id, rawPayee) {
   if (id === 'new' && !rawPayee.startsWith('new:')) {
     return 'new:' + rawPayee;
@@ -524,6 +548,7 @@ export function PayeeAutocomplete({
       })
         .find(value)
         .map(result => result.item);
+      filtered = orderSearchResultsForDisplay(filtered);
     }
 
     // Re-prepend 'new' when the user has typed something

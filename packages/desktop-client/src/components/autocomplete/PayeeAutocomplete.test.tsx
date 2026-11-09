@@ -248,6 +248,7 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
 
   function renderPayeeAutocomplete(
     props?: Partial<PayeeAutocompleteProps>,
+    onSelect: (id: string, value: string) => void = vi.fn(),
   ): HTMLElement {
     const autocompleteProps = {
       ...defaultProps,
@@ -260,7 +261,7 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
           <div data-testid="autocomplete-test">
             <PayeeAutocomplete
               {...autocompleteProps}
-              onSelect={vi.fn()}
+              onSelect={onSelect}
               type="single"
               value={null}
               embedded={false}
@@ -681,6 +682,127 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
 
     expect(screen.getByLabelText('Payee')).toBeInTheDocument();
     expect(renderedItems()).toStrictEqual([]);
+  });
+
+  describe('when the user has typed a search', () => {
+    // A frequent payee that only matches 'Nation' as a scattered
+    // subsequence (n…a…t…i…o…n), the case that prompted this fix.
+    const scatteredMatch = makePayee(
+      'Requested Transfer to Andrey Taran (First New York Fcu Savings)',
+    );
+    const typedPayees = [
+      makePayee('National Aquarium'),
+      makePayee('National Grid'),
+      scatteredMatch,
+      makePayee('Third Generation Lawn and Landscape'),
+    ];
+
+    async function typeInto(autocomplete: HTMLElement, text: string) {
+      await clickAutocomplete(autocomplete);
+      await userEvent.type(autocomplete.querySelector('input')!, text);
+      await waitForAutocomplete();
+    }
+
+    test('ranks a weak common-payee match below stronger matches', async () => {
+      queryClient.setQueryData(payeeQueries.listCommon().queryKey, [
+        scatteredMatch,
+      ]);
+      await typeInto(
+        renderPayeeAutocomplete({ payees: typedPayees }),
+        'Nation',
+      );
+
+      expect(
+        extractPayeesAndHeaderNames(screen, ALL_PAYEE_ITEMS_SELECTOR),
+      ).toStrictEqual([
+        'Payees',
+        'National Grid',
+        'National Aquarium',
+        'Third Generation Lawn and Landscape',
+        'Requested Transfer to Andrey Taran (First New York Fcu Savings)',
+      ]);
+    });
+
+    test('ranks a weak favorite match below stronger matches', async () => {
+      await typeInto(
+        renderPayeeAutocomplete({
+          payees: typedPayees.map(p =>
+            p === scatteredMatch ? { ...p, favorite: true } : p,
+          ),
+        }),
+        'Nation',
+      );
+
+      expect(
+        extractPayeesAndHeaderNames(screen, ALL_PAYEE_ITEMS_SELECTOR),
+      ).toStrictEqual([
+        'Payees',
+        'National Grid',
+        'National Aquarium',
+        'Third Generation Lawn and Landscape',
+        'Requested Transfer to Andrey Taran (First New York Fcu Savings)',
+      ]);
+    });
+
+    test('Enter selects the best match, not a weak common-payee match', async () => {
+      queryClient.setQueryData(payeeQueries.listCommon().queryKey, [
+        scatteredMatch,
+      ]);
+      const onSelect = vi.fn();
+      await typeInto(
+        renderPayeeAutocomplete({ payees: typedPayees }, onSelect),
+        'Nation',
+      );
+      await userEvent.keyboard('{Enter}');
+
+      expect(onSelect).toHaveBeenCalledWith(
+        'national grid-id',
+        'National Grid',
+      );
+    });
+
+    test('the highlighted item is the value the field reports', async () => {
+      // Leaving the field (e.g. with Tab) commits the value from onUpdate,
+      // while Enter selects the highlighted row. Both must agree.
+      const onUpdate = vi.fn();
+      const onSelect = vi.fn();
+      const transfer: PayeeEntity = {
+        id: 'transfer-id',
+        name: 'National Bank',
+        favorite: false,
+        transfer_acct: accounts[0].id,
+      };
+      // The transfer outscores 'Nationwide Insurance' (shorter name), but is
+      // rendered after it in its own section.
+      await typeInto(
+        renderPayeeAutocomplete(
+          {
+            payees: [makePayee('Nationwide Insurance'), transfer],
+            onUpdate,
+          },
+          onSelect,
+        ),
+        'Nation',
+      );
+
+      expect(
+        extractPayeesAndHeaderNames(screen, ALL_PAYEE_ITEMS_SELECTOR),
+      ).toStrictEqual([
+        'Payees',
+        'Nationwide Insurance',
+        'Transfer To/From',
+        'National Bank',
+      ]);
+      expect(highlightedItemNames()).toStrictEqual(['Nationwide Insurance']);
+      expect(onUpdate.mock.lastCall?.[0]).toBe('nationwide insurance-id');
+
+      await userEvent.keyboard('{ArrowDown}');
+      expect(highlightedItemNames()).toStrictEqual(['National Bank']);
+      expect(onUpdate.mock.lastCall?.[0]).toBe('transfer-id');
+
+      await userEvent.keyboard('{Enter}');
+      expect(onSelect).toHaveBeenCalledWith('transfer-id', 'National Bank');
+    });
   });
 
   test('ranks an exact payee match above a longer tied substring match', async () => {
