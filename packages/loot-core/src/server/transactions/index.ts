@@ -176,6 +176,15 @@ export async function categorizeRelatedTransactions({
   fromCategoryIds: Array<NonNullable<TransactionEntity['category']>>;
   excludeIds: Array<TransactionEntity['id']>;
 }): Promise<number> {
+  // The category may have been deleted while the offer was open
+  const category = await db.first<{ id: string }>(
+    'SELECT id FROM categories WHERE id = ? AND tombstone = 0',
+    [categoryId],
+  );
+  if (!category) {
+    return 0;
+  }
+
   const rows = await db.all<{ id: string }>(
     `${onBudgetTransactionsOfPayee('t.id', excludeIds)}
        AND (c.id IS NULL OR ${whereIn(fromCategoryIds, 'c.id')})`,
@@ -202,8 +211,10 @@ export async function categorizeRelatedTransactions({
  *   and household things) moving one transaction is a one-off fix, not a
  *   reclassification of the payee
  *
- * Only counts are returned: the client looks the transactions up again when
- * the user accepts, so the offer is never applied to stale data.
+ * Only counts are returned: when the user accepts, the server selects the
+ * transactions again with the same query (see
+ * `categorizeRelatedTransactions`), so the offer is never applied to stale
+ * data.
  */
 async function findRelatedCategoryChange(
   updates: Partial<TransactionEntity>[],
@@ -271,19 +282,14 @@ async function findRelatedCategoryChange(
     .filter(row => row.category != null)
     .reduce((sum, row) => sum + row.count, 0);
   const uncategorizedCount = rows.find(row => row.category == null)?.count ?? 0;
-  const fromCategories = rows
-    .filter(
-      row =>
-        row.category != null &&
-        row.category !== categoryId &&
-        oldCategoryIds.has(row.category) &&
-        row.count * 2 >= categorizedCount,
-    )
-    .map(row => ({
-      id: row.category,
-      name: row.category_name ?? '',
-      count: row.count,
-    }));
+  const fromCategories = rows.flatMap(row =>
+    row.category != null &&
+    row.category !== categoryId &&
+    oldCategoryIds.has(row.category) &&
+    row.count * 2 >= categorizedCount
+      ? [{ id: row.category, name: row.category_name ?? '', count: row.count }]
+      : [],
+  );
   if (uncategorizedCount === 0 && fromCategories.length === 0) {
     return null;
   }

@@ -1004,6 +1004,25 @@ describe('batchUpdateTransactions', () => {
       });
     });
 
+    it('applies nothing when the category was deleted since', async () => {
+      await prepare();
+      await db.update('categories', { id: 'subs', tombstone: 1 });
+
+      expect(
+        await categorizeRelatedTransactions({
+          payeeId: 'netflix',
+          categoryId: 'subs',
+          fromCategoryIds: ['fun'],
+          excludeIds: [],
+        }),
+      ).toBe(0);
+      const n4 = await db.first<{ category: string | null }>(
+        'SELECT category FROM transactions WHERE id = ?',
+        ['n4'],
+      );
+      expect(n4?.category).toBeNull();
+    });
+
     it('applies nothing when the matching transactions changed since', async () => {
       await prepare();
 

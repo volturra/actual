@@ -40,6 +40,10 @@ export function CategorizeRelatedTransactionsModal({
   const { t } = useTranslation();
   const dispatch = useDispatch();
   const [isSaving, setIsSaving] = useState(false);
+  const offeredCount = fromCategories.reduce(
+    (sum, fromCategory) => sum + fromCategory.count,
+    uncategorizedCount,
+  );
 
   return (
     <Modal name="categorize-related-transactions">
@@ -51,17 +55,31 @@ export function CategorizeRelatedTransactionsModal({
           />
           <View style={{ maxWidth: 500, lineHeight: 1.5 }}>
             <Paragraph style={{ marginBottom: 10 }}>
-              <Trans>
-                Also categorize these other{' '}
-                <Text style={highlightStyle}>
-                  {{ payee: payee.name } as TransObjectLiteral}
-                </Text>{' '}
-                transactions as{' '}
-                <Text style={highlightStyle}>
-                  {{ category: category.name } as TransObjectLiteral}
-                </Text>
-                ?
-              </Trans>
+              {offeredCount === 1 ? (
+                <Trans>
+                  Also categorize this other{' '}
+                  <Text style={highlightStyle}>
+                    {{ payee: payee.name } as TransObjectLiteral}
+                  </Text>{' '}
+                  transaction as{' '}
+                  <Text style={highlightStyle}>
+                    {{ category: category.name } as TransObjectLiteral}
+                  </Text>
+                  ?
+                </Trans>
+              ) : (
+                <Trans>
+                  Also categorize these other{' '}
+                  <Text style={highlightStyle}>
+                    {{ payee: payee.name } as TransObjectLiteral}
+                  </Text>{' '}
+                  transactions as{' '}
+                  <Text style={highlightStyle}>
+                    {{ category: category.name } as TransObjectLiteral}
+                  </Text>
+                  ?
+                </Trans>
+              )}
             </Paragraph>
             <ul style={{ margin: 0, marginBottom: 10 }}>
               {uncategorizedCount > 0 && (
@@ -122,7 +140,7 @@ export function CategorizeRelatedTransactionsModal({
                           notification: {
                             type: 'message',
                             message: t(
-                              'These transactions have changed since, so there is nothing left to categorize.',
+                              'Nothing left to categorize: these transactions have changed since the offer was made.',
                             ),
                           },
                         }),
