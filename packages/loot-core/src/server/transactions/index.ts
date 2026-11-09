@@ -1,6 +1,7 @@
 // @ts-strict-ignore
 
 import * as connection from '#platform/server/connection';
+import { logger } from '#platform/server/log';
 import * as db from '#server/db';
 import { incrFetch, whereIn } from '#server/db/util';
 import { batchMessages } from '#server/sync';
@@ -239,8 +240,11 @@ async function findRelatedCategoryChange(
   const categoryUpdateIds = new Set(
     updates.filter(update => update.category).map(update => update.id),
   );
-  const edited = updated.filter(transaction =>
-    categoryUpdateIds.has(transaction.id),
+  // A split's own category is always empty (its lines carry them), so a
+  // bulk edit that includes a split is judged by its other transactions
+  const edited = updated.filter(
+    transaction =>
+      categoryUpdateIds.has(transaction.id) && !transaction.is_parent,
   );
   // One line of a split says little about the payee's other transactions
   if (edited.length === 0 || edited.some(transaction => transaction.is_child)) {
@@ -256,7 +260,8 @@ async function findRelatedCategoryChange(
   const [payeeId] = payeeIds;
   const [categoryId] = categoryIds;
   const editedIds = edited.map(transaction => transaction.id);
-  // A transaction moved to an off-budget account has its category cleared
+  // No payee, or a category that did not stick (for example one without a
+  // category mapping)
   if (!payeeId || !categoryId) {
     return null;
   }
@@ -533,21 +538,27 @@ export async function batchUpdateTransactions({
   }
 
   if (detectRelatedChanges && updated) {
-    const relatedPayees = await findRelatedPayees(
-      allUpdated,
-      oldPayeeByTransaction,
-    );
-    if (relatedPayees) {
-      connection.send('related-payees', relatedPayees);
-    }
+    // The edit is saved at this point: a failed offer (say, a bulk edit with
+    // more ids than SQLite can bind) must not fail it
+    try {
+      const relatedPayees = await findRelatedPayees(
+        allUpdated,
+        oldPayeeByTransaction,
+      );
+      if (relatedPayees) {
+        connection.send('related-payees', relatedPayees);
+      }
 
-    const related = await findRelatedCategoryChange(
-      updated,
-      allUpdated,
-      oldCategoryByTransaction,
-    );
-    if (related) {
-      connection.send('related-category', related);
+      const related = await findRelatedCategoryChange(
+        updated,
+        allUpdated,
+        oldCategoryByTransaction,
+      );
+      if (related) {
+        connection.send('related-category', related);
+      }
+    } catch (error) {
+      logger.warn('Could not look for related changes to offer', error);
     }
   }
 

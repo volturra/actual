@@ -1066,6 +1066,50 @@ describe('batchUpdateTransactions', () => {
       expect(relatedCategoryEvents()[0].uncategorizedCount).toBe(1);
     });
 
+    it('judges a bulk edit that includes a split by its other transactions', async () => {
+      await prepare();
+      await insert([
+        { id: 'parent', is_parent: true },
+        { id: 'child', is_child: true, parent_id: 'parent' },
+      ]);
+
+      await batchUpdateTransactions({
+        updated: [
+          { id: 'n1', category: 'subs' },
+          { id: 'parent', category: 'subs' },
+        ],
+        detectRelatedChanges: true,
+      });
+
+      expect(relatedCategoryEvents()).toHaveLength(1);
+    });
+
+    it('still saves the edit when looking for an offer fails', async () => {
+      await prepare();
+      vi.spyOn(db, 'all').mockImplementation(async (sql: string) => {
+        if (sql.includes('GROUP BY c.id')) {
+          throw new Error('too many SQL variables');
+        }
+        return [];
+      });
+
+      await expect(
+        batchUpdateTransactions({
+          updated: [{ id: 'n1', category: 'subs' }],
+          detectRelatedChanges: true,
+          runTransfers: false,
+        }),
+      ).resolves.toBeDefined();
+      vi.restoreAllMocks();
+
+      const n1 = await db.first<{ category: string }>(
+        'SELECT category FROM transactions WHERE id = ?',
+        ['n1'],
+      );
+      expect(n1?.category).toBe('subs');
+      expect(relatedCategoryEvents()).toEqual([]);
+    });
+
     it('does not offer anything when editing a line of a split', async () => {
       await prepare();
       await insert([
