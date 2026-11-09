@@ -249,6 +249,7 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
   function renderPayeeAutocomplete(
     props?: Partial<PayeeAutocompleteProps>,
     onSelect: (id: string, value: string) => void = vi.fn(),
+    value: string | null = null,
   ): HTMLElement {
     const autocompleteProps = {
       ...defaultProps,
@@ -263,7 +264,7 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
               {...autocompleteProps}
               onSelect={onSelect}
               type="single"
-              value={null}
+              value={value}
               embedded={false}
             />
           </div>
@@ -577,10 +578,9 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
     const allNames = renderedItems().map(itemName);
     expect(allNames).toStrictEqual(['create', 'Corner Shop', 'Cora', 'Coral']);
 
-    // Walk back to the first item, then step down through every item.
-    for (let i = 0; i < allNames.length; i++) {
-      await userEvent.keyboard('{ArrowUp}');
-    }
+    // The first match starts highlighted, one above it is the create item.
+    expect(highlightedItemNames()).toStrictEqual(['Corner Shop']);
+    await userEvent.keyboard('{ArrowUp}');
     expect(highlightedItemNames()).toStrictEqual(['create']);
 
     const visited: string[][] = [];
@@ -772,8 +772,8 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
         favorite: false,
         transfer_acct: accounts[0].id,
       };
-      // The transfer outscores 'Nationwide Insurance' (shorter name), but is
-      // rendered after it in its own section.
+      // fzf ranks the transfer ahead of 'Nationwide Insurance' (tied score,
+      // shorter name), but it is rendered after it in its own section.
       await typeInto(
         renderPayeeAutocomplete(
           {
@@ -802,6 +802,108 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
 
       await userEvent.keyboard('{Enter}');
       expect(onSelect).toHaveBeenCalledWith('transfer-id', 'National Bank');
+    });
+  });
+
+  describe('the reported value follows the highlighted row', () => {
+    test('when nearby payees are shown while typing', async () => {
+      const onUpdate = vi.fn();
+      const onSelect = vi.fn();
+      vi.mocked(useNearbyPayees).mockReturnValue(
+        mockNearbyPayeesResult([makeNearbyPayee('Nationwide Insurance', 0.3)]),
+      );
+      const autocomplete = renderPayeeAutocomplete(
+        {
+          payees: [
+            makePayee('National Grid'),
+            makePayee('Nationwide Insurance'),
+          ],
+          onUpdate,
+          renderCreatePayeeButton: renderCreatePayeeButtonWithMarker,
+        },
+        onSelect,
+      );
+      await clickAutocomplete(autocomplete);
+      await userEvent.type(autocomplete.querySelector('input')!, 'Nation');
+      await waitForAutocomplete();
+
+      expect(renderedItems().map(itemName)).toStrictEqual([
+        'create',
+        'Nationwide Insurance',
+        'National Grid',
+        'Nationwide Insurance',
+      ]);
+      expect(highlightedItemNames()).toStrictEqual(['Nationwide Insurance']);
+      expect(onUpdate.mock.lastCall?.[0]).toBe('nationwide insurance-id');
+
+      await userEvent.keyboard('{ArrowDown}');
+      expect(highlightedItemNames()).toStrictEqual(['National Grid']);
+      expect(onUpdate.mock.lastCall?.[0]).toBe('national grid-id');
+
+      await userEvent.keyboard('{Enter}');
+      expect(onSelect).toHaveBeenCalledWith(
+        'national grid-id',
+        'National Grid',
+      );
+    });
+
+    test('when a favorite is a transfer and nothing is typed', async () => {
+      const onUpdate = vi.fn();
+      const payees: PayeeEntity[] = [
+        makePayee('Alice'),
+        makePayee('Zed', { favorite: true }),
+        {
+          id: 'transfer-id',
+          name: 'Savings',
+          favorite: true,
+          transfer_acct: accounts[0].id,
+        },
+      ];
+      await clickAutocomplete(renderPayeeAutocomplete({ payees, onUpdate }));
+
+      const allNames = renderedItems().map(itemName);
+      expect(allNames).toStrictEqual(['Zed', 'Alice', 'Savings']);
+
+      const ids: Record<string, string> = {
+        Zed: 'zed-id',
+        Alice: 'alice-id',
+        Savings: 'transfer-id',
+      };
+      for (const name of allNames) {
+        await userEvent.keyboard('{ArrowDown}');
+        expect(highlightedItemNames()).toStrictEqual([name]);
+        expect(onUpdate.mock.lastCall?.[0]).toBe(ids[name]);
+      }
+    });
+
+    test('when the field already has a payee and nothing is typed', async () => {
+      const onUpdate = vi.fn();
+      const payees = [
+        makePayee('Alice'),
+        makePayee('Bob'),
+        makePayee('National Grid'),
+      ];
+      await clickAutocomplete(
+        renderPayeeAutocomplete(
+          { payees, onUpdate },
+          vi.fn(),
+          'national grid-id',
+        ),
+      );
+
+      const allNames = renderedItems().map(itemName);
+      expect(allNames).toStrictEqual(['Alice', 'Bob', 'National Grid']);
+
+      const ids: Record<string, string> = {
+        Alice: 'alice-id',
+        Bob: 'bob-id',
+        'National Grid': 'national grid-id',
+      };
+      for (const name of allNames) {
+        await userEvent.keyboard('{ArrowDown}');
+        expect(highlightedItemNames()).toStrictEqual([name]);
+        expect(onUpdate.mock.lastCall?.[0]).toBe(ids[name]);
+      }
     });
   });
 

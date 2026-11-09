@@ -468,10 +468,11 @@ function SingleAutocomplete<T extends AutocompleteItem>({
           (changes.type === Downshift.stateChangeTypes.keyDownArrowUp ||
             changes.type === Downshift.stateChangeTypes.keyDownArrowDown)
         ) {
+          // Index into the list that is rendered, as Downshift does.
           fireUpdate(
             onUpdate,
             strict,
-            filteredSuggestions || suggestions,
+            filtered,
             changes.highlightedIndex != null
               ? changes.highlightedIndex
               : highlightedIndex,
