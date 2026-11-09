@@ -1,4 +1,4 @@
-import { listen } from '@actual-app/core/platform/client/connection';
+import { listen, send } from '@actual-app/core/platform/client/connection';
 import * as undo from '@actual-app/core/platform/client/undo';
 // @ts-strict-ignore
 import type { QueryClient } from '@tanstack/react-query';
@@ -98,7 +98,15 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
               }),
         button: {
           title: t('Rename all'),
-          action: () => {
+          action: async () => {
+            // The offer can be stale by the time it is clicked, for example
+            // when either payee was merged or deleted meanwhile. Then there
+            // is nothing left to rename
+            const payees = await send('payees-get');
+            const ids = new Set(payees.map(p => p.id));
+            if (!ids.has(payee.id) || !ids.has(targetPayee.id)) {
+              return;
+            }
             store.dispatch(
               pushModal({
                 modal: {

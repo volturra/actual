@@ -13,7 +13,7 @@ import type { TransObjectLiteral } from '@actual-app/core/types/util';
 import { Information } from '#components/alerts';
 import { Modal, ModalButtons } from '#components/common/Modal';
 import { usePayees } from '#hooks/usePayees';
-import { popModal, replaceModal } from '#modals/modalsSlice';
+import { replaceModal } from '#modals/modalsSlice';
 import type { Modal as ModalType } from '#modals/modalsSlice';
 import { useDispatch, useSelector } from '#redux';
 
@@ -30,7 +30,7 @@ export function MergeUnusedPayeesModal({
   isStillUsed = false,
 }: MergeUnusedPayeesModalProps) {
   const { t } = useTranslation();
-  const { data: allPayees = [], isLoading: isLoadingPayees } = usePayees();
+  const { data: allPayees = [] } = usePayees();
   const modalStack = useSelector(state => state.modals.modalStack);
   const isEditingRule = !!modalStack.find(m => m.name === 'edit-rule');
   const dispatch = useDispatch();
@@ -57,20 +57,6 @@ export function MergeUnusedPayeesModal({
     allPayees.filter(p => payeeIds.includes(p.id)),
   );
 
-  const targetPayee = allPayees.find(p => p.id === targetPayeeId);
-
-  // The payees can be gone by the time the modal opens, for example when an
-  // older offer to rename them is clicked after they were merged or deleted.
-  // There is nothing left to merge then, and a modal that draws nothing
-  // would still block the app until it closes
-  const isNothingToMerge =
-    payees.length === 0 || (!isLoadingPayees && !targetPayee);
-  useEffect(() => {
-    if (isNothingToMerge) {
-      dispatch(popModal());
-    }
-  }, [isNothingToMerge, dispatch]);
-
   const onMerge = useCallback(
     async (targetPayee: PayeeEntity) => {
       await send('payees-merge', {
@@ -79,7 +65,8 @@ export function MergeUnusedPayeesModal({
       });
 
       let ruleId;
-      if (shouldCreateRule && !isEditingRule) {
+      // A rename rule with no names to match would be junk
+      if (shouldCreateRule && !isEditingRule && payees.length > 0) {
         const id = await send('rule-add-payee-rename', {
           fromNames: payees.map(payee => payee.name),
           to: targetPayee.id,
@@ -110,7 +97,8 @@ export function MergeUnusedPayeesModal({
     [onMerge, dispatch],
   );
 
-  if (!targetPayee || isNothingToMerge) {
+  const targetPayee = allPayees.find(p => p.id === targetPayeeId);
+  if (!targetPayee) {
     return null;
   }
 
