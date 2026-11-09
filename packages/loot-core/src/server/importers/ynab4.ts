@@ -116,18 +116,33 @@ async function importCategories(
   );
 }
 
-async function importPayees(
+export async function importPayees(
   data: YNAB4.YFull,
   entityIdMap: Map<string, string>,
   tick: ImportTick,
 ) {
+  // Every Actual account already has its own transfer payee. YNAB4 keeps
+  // separate "Transfer : <account>" payees for the same purpose, so map them
+  // onto Actual's instead of creating ordinary payees with that name.
+  const transferPayeeByAccount = new Map(
+    (await send('api/payees-get'))
+      .filter(payee => payee.transfer_acct)
+      .map(payee => [payee.transfer_acct, payee.id] as const),
+  );
+
   for (const payee of data.payees) {
     if (!payee.isTombstone) {
+      const transferPayeeId = transferPayeeByAccount.get(
+        entityIdMap.get(payee.targetAccountId),
+      );
+      if (transferPayeeId) {
+        entityIdMap.set(payee.entityId, transferPayeeId);
+        tick();
+        continue;
+      }
+
       const id = await send('api/payee-create', {
-        payee: {
-          name: payee.name,
-          transfer_acct: entityIdMap.get(payee.targetAccountId) || null,
-        },
+        payee: { name: payee.name },
       });
 
       // TODO: import payee rules
@@ -172,12 +187,57 @@ export async function importTransactions(
 
   // Go ahead and generate ids for all of the transactions so we can
   // reliably resolve transfers
+  const liveIds = new Set<string>();
   for (const transaction of data.transactions) {
     entityIdMap.set(transaction.entityId, uuidv4());
+    if (!transaction.isTombstone) {
+      liveIds.add(transaction.entityId);
+    }
 
     if (transaction.subTransactions) {
       for (const subTransaction of transaction.subTransactions) {
         entityIdMap.set(subTransaction.entityId, uuidv4());
+        if (!transaction.isTombstone && !subTransaction.isTombstone) {
+          liveIds.add(subTransaction.entityId);
+        }
+      }
+    }
+  }
+
+  // A transfer only links up when its other side was imported too
+  function getTransferId(t: YNAB4.SubTransaction) {
+    return liveIds.has(t.transferTransactionId)
+      ? entityIdMap.get(t.transferTransactionId)
+      : null;
+  }
+
+  // One-sided transfers (the other side was deleted in YNAB4) can't use
+  // Actual's transfer payee without inventing a counterpart and changing the
+  // other account's balance, so give them an ordinary payee with the YNAB
+  // name instead.
+  const transferPayeeIds = new Set(
+    payees.filter(p => p.transfer_acct).map(p => p.id),
+  );
+  const oneSidedPayeeIds = new Map<string, string>();
+  for (const transaction of data.transactions) {
+    if (transaction.isTombstone) {
+      continue;
+    }
+    const subTransactions = (transaction.subTransactions ?? []).filter(
+      st => !st.isTombstone,
+    );
+    for (const t of [transaction, ...subTransactions]) {
+      const mappedPayee = entityIdMap.get(t.payeeId);
+      if (
+        !getTransferId(t) &&
+        transferPayeeIds.has(mappedPayee) &&
+        !oneSidedPayeeIds.has(t.payeeId)
+      ) {
+        const name = data.payees.find(p => p.entityId === t.payeeId)?.name;
+        oneSidedPayeeIds.set(
+          t.payeeId,
+          await send('api/payee-create', { payee: { name } }),
+        );
       }
     }
   }
@@ -197,7 +257,7 @@ export async function importTransactions(
           const id = entityIdMap.get(transaction.entityId);
 
           function transferProperties(t: YNAB4.SubTransaction) {
-            const transferId = entityIdMap.get(t.transferTransactionId) || null;
+            const transferId = getTransferId(t);
 
             let payee = null;
             let imported_payee = null;
@@ -206,7 +266,8 @@ export async function importTransactions(
                 p => p.transfer_acct === entityIdMap.get(t.targetAccountId),
               ).id;
             } else {
-              payee = entityIdMap.get(t.payeeId);
+              payee =
+                oneSidedPayeeIds.get(t.payeeId) ?? entityIdMap.get(t.payeeId);
               imported_payee = data.payees.find(
                 p => p.entityId === t.payeeId,
               )?.name;
