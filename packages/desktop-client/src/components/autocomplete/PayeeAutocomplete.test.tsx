@@ -907,6 +907,62 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
     });
   });
 
+  test('hides the create item for an existing payee when a nearby payee matches first', async () => {
+    vi.mocked(useNearbyPayees).mockReturnValue(
+      mockNearbyPayeesResult([
+        makeNearbyPayee('Nationwide Insurance Agency', 0.3),
+      ]),
+    );
+    const autocomplete = renderPayeeAutocomplete({
+      payees: [
+        makePayee('Nationwide Insurance'),
+        makePayee('Nationwide Insurance Agency'),
+      ],
+      renderCreatePayeeButton: renderCreatePayeeButtonWithMarker,
+    });
+    await clickAutocomplete(autocomplete);
+    await userEvent.type(
+      autocomplete.querySelector('input')!,
+      'Nationwide Insurance',
+    );
+    await waitForAutocomplete();
+
+    expect(renderedItems().map(itemName)).toStrictEqual([
+      'Nationwide Insurance Agency',
+      'Nationwide Insurance',
+      'Nationwide Insurance Agency',
+    ]);
+  });
+
+  test('transfer mode leaves out nearby payees that are not transfers', async () => {
+    vi.mocked(useNearbyPayees).mockReturnValue(
+      mockNearbyPayeesResult([makeNearbyPayee('Coffee Shop', 0.3)]),
+    );
+    const transfer: PayeeEntity = {
+      id: 'transfer-id',
+      name: 'Bank of Montreal',
+      favorite: false,
+      transfer_acct: accounts[0].id,
+    };
+    const autocomplete = renderPayeeAutocomplete({
+      payees: [makePayee('Alice'), transfer],
+    });
+    await clickAutocomplete(autocomplete);
+    expect(renderedItems().map(itemName)).toStrictEqual([
+      'Coffee Shop',
+      'Alice',
+      'Bank of Montreal',
+    ]);
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Make transfer' }),
+    );
+    // Switching modes remounts the field, so open it again.
+    await clickAutocomplete(autocomplete);
+
+    expect(renderedItems().map(itemName)).toStrictEqual(['Bank of Montreal']);
+  });
+
   test('ranks an exact payee match above a longer tied substring match', async () => {
     // Payees are already alpha-sorted, so 'AAA Google' is listed first;
     // a stable sort on a tied fzf score would otherwise leave it ahead of

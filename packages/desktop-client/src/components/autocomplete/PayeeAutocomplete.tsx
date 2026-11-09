@@ -158,7 +158,6 @@ function stripNew(value) {
 
 type PayeeListProps = {
   items: (PayeeAutocompleteItem & PayeeItemType)[];
-  commonPayees: PayeeEntity[];
   getItemProps: (arg: {
     item: PayeeAutocompleteItem;
   }) => ComponentProps<typeof View>;
@@ -287,7 +286,8 @@ function PayeeList({
 
   // We limit the number of payees shown to 100.
   // So we show a hint that more are available via search.
-  const showSearchForMore = items.length >= 100;
+  const showSearchForMore =
+    suggestedPayees.length + payees.length + transferPayees.length >= 100;
 
   return (
     <View>
@@ -442,7 +442,20 @@ export function PayeeAutocomplete({
   const payeeSuggestions: PayeeAutocompleteItem[] = useMemo(() => {
     const suggestions = getPayeeSuggestions(commonPayees, payees);
 
-    let filteredSuggestions: PayeeAutocompleteItem[] = [...suggestions];
+    // A nearby payee also keeps its regular entry further down.
+    const nearbyItems: PayeeAutocompleteItem[] = (nearbyPayees ?? []).map(
+      result => ({
+        ...result.payee,
+        itemType: 'nearby_payee' as const,
+        nearbyLocationId: result.location.id,
+        distance: result.location.distance,
+      }),
+    );
+
+    let filteredSuggestions: PayeeAutocompleteItem[] = [
+      ...nearbyItems,
+      ...suggestions,
+    ];
 
     if (!showInactivePayees) {
       filteredSuggestions = filterActivePayees(filteredSuggestions, accounts);
@@ -452,17 +465,7 @@ export function PayeeAutocomplete({
       filteredSuggestions = filterTransferPayees(filteredSuggestions);
     }
 
-    // Nearby payees bypass the filters above, and a nearby payee also keeps
-    // its regular entry further down.
-    const nearbyItems: PayeeAutocompleteItem[] = (nearbyPayees ?? []).map(
-      result => ({
-        ...result.payee,
-        itemType: 'nearby_payee' as const,
-        nearbyLocationId: result.location.id,
-        distance: result.location.distance,
-      }),
-    );
-    const ordered = orderBySection([...nearbyItems, ...filteredSuggestions]);
+    const ordered = orderBySection(filteredSuggestions);
 
     if (!hasPayeeInput) {
       return ordered;
@@ -547,15 +550,16 @@ export function PayeeAutocomplete({
     const showNew = newItem && value && value !== '' && !focusTransferPayees;
     const results = showNew ? [newItem, ...filtered] : filtered;
 
-    if (results.length >= 2 && results[0].id === 'new') {
-      const firstFiltered = results[1];
-      if (
-        getNormalisedString(firstFiltered.name) ===
-          getNormalisedString(value) &&
-        !firstFiltered.transfer_acct
-      ) {
-        // Exact match found, remove the 'Create payee' option.
-        return results.slice(1);
+    // Drop the 'Create payee' option when a payee with that name exists.
+    if (showNew) {
+      const normalisedValue = getNormalisedString(value);
+      const hasExactMatch = filtered.some(
+        item =>
+          !item.transfer_acct &&
+          getNormalisedString(item.name) === normalisedValue,
+      );
+      if (hasExactMatch) {
+        return filtered;
       }
     }
     return results;
@@ -605,7 +609,6 @@ export function PayeeAutocomplete({
       renderItems={(items, getItemProps, highlightedIndex, inputValue) => (
         <PayeeList
           items={items}
-          commonPayees={commonPayees}
           getItemProps={getItemProps}
           highlightedIndex={highlightedIndex}
           inputValue={inputValue}
