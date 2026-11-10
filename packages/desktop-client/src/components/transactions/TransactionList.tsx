@@ -64,6 +64,8 @@ async function saveDiff(diff, learnCategories) {
   const remoteUpdates = await send('transactions-batch-update', {
     ...diff,
     learnCategories,
+    // Offer to repeat a payee or category change on related ones
+    detectRelatedChanges: true,
   });
 
   if (remoteUpdates && remoteUpdates.updated.length > 0) {

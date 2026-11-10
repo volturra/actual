@@ -19,6 +19,7 @@ import type {
 } from '@actual-app/core/types/models';
 import type { CleanupTemplate } from '@actual-app/core/types/models/cleanup-templates';
 import type { Template } from '@actual-app/core/types/models/templates';
+import type { ServerEvents } from '@actual-app/core/types/server-events';
 import { createSlice } from '@reduxjs/toolkit';
 import type { PayloadAction } from '@reduxjs/toolkit';
 
@@ -113,10 +114,19 @@ type ModalVariant =
       };
     }
   | {
+      name: 'categorize-related-transactions';
+      options: ServerEvents['related-category'];
+    }
+  | {
       name: 'merge-unused-payees';
       options: {
         payeeIds: string[];
         targetPayeeId: string;
+        /**
+         * The (single) payee still has transactions: the user moved only
+         * some of them to the target payee, and merging renames the rest
+         */
+        isStillUsed?: boolean;
       };
     }
   | {

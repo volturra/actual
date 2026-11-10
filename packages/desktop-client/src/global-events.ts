@@ -1,8 +1,9 @@
-import { listen } from '@actual-app/core/platform/client/connection';
+import { listen, send } from '@actual-app/core/platform/client/connection';
 import * as undo from '@actual-app/core/platform/client/undo';
 // @ts-strict-ignore
 import type { QueryClient } from '@tanstack/react-query';
 import { t } from 'i18next';
+import { v4 as uuidv4 } from 'uuid';
 
 import { accountQueries } from './accounts';
 import { setAppState } from './app/appSlice';
@@ -13,7 +14,9 @@ import type { Modal } from './modals/modalsSlice';
 import {
   addGenericErrorNotification,
   addNotification,
+  removeNotification,
 } from './notifications/notificationsSlice';
+import type { Notification } from './notifications/notificationsSlice';
 import { payeeQueries } from './payees';
 import { loadPrefs } from './prefs/prefsSlice';
 import type { AppStore } from './redux/store';
@@ -25,9 +28,24 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
     store.dispatch(addGenericErrorNotification());
   });
 
+  // A newer offer replaces the older one of the same kind. Each offer gets
+  // its own id: a notification removes itself by id when its timer ends, so
+  // a reused id would let the old timer close the new offer early
+  const shownOfferIds = new Map<string, string>();
+
+  // An undo, or a later edit that leaves the old payee unused, can make an
+  // offer that is still showing wrong, so take it down
+  function withdrawRelatedChangeOffers() {
+    for (const id of shownOfferIds.values()) {
+      store.dispatch(removeNotification({ id }));
+    }
+    shownOfferIds.clear();
+  }
+
   const unlistenOrphanedPayees = listen(
     'orphaned-payees',
     ({ orphanedIds, updatedPayeeIds }) => {
+      withdrawRelatedChangeOffers();
       // Right now, it prompts to merge into the first payee
       store.dispatch(
         pushModal({
@@ -43,6 +61,124 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
     },
   );
 
+  function showRelatedChangeOffer(
+    kind: 'related-payees' | 'related-category',
+    notification: Notification,
+  ) {
+    const previousId = shownOfferIds.get(kind);
+    if (previousId) {
+      store.dispatch(removeNotification({ id: previousId }));
+    }
+    const id = `${kind}-${uuidv4()}`;
+    shownOfferIds.set(kind, id);
+    store.dispatch(
+      addNotification({
+        // Long enough to read the question and decide
+        notification: { timeout: 15000, ...notification, id },
+      }),
+    );
+  }
+
+  const unlistenRelatedPayees = listen(
+    'related-payees',
+    ({ payee, targetPayee }) => {
+      showRelatedChangeOffer('related-payees', {
+        type: 'message',
+        title: t('Rename to "{{payee}}" everywhere?', {
+          payee: targetPayee.name,
+        }),
+        message:
+          payee.transactionCount === 1
+            ? t('"{{payee}}" is still used by 1 other transaction.', {
+                payee: payee.name,
+              })
+            : t('"{{payee}}" is still used by {{count}} other transactions.', {
+                payee: payee.name,
+                count: payee.transactionCount,
+              }),
+        button: {
+          title: t('Rename all'),
+          action: async () => {
+            // The offer can be stale by the time it is clicked, for example
+            // when either payee was merged or deleted meanwhile. Then there
+            // is nothing left to rename
+            let payees;
+            try {
+              payees = await send('payees-get');
+            } catch {
+              store.dispatch(addGenericErrorNotification());
+              return;
+            }
+            const ids = new Set(payees.map(p => p.id));
+            if (!ids.has(payee.id) || !ids.has(targetPayee.id)) {
+              store.dispatch(
+                addNotification({
+                  notification: {
+                    type: 'message',
+                    message: t(
+                      'Nothing to rename: one of the payees was merged or deleted since the offer was made.',
+                    ),
+                  },
+                }),
+              );
+              return;
+            }
+            store.dispatch(
+              pushModal({
+                modal: {
+                  name: 'merge-unused-payees',
+                  options: {
+                    payeeIds: [payee.id],
+                    targetPayeeId: targetPayee.id,
+                    isStillUsed: true,
+                  },
+                },
+              }),
+            );
+          },
+        },
+      });
+    },
+  );
+
+  const unlistenRelatedCategory = listen('related-category', options => {
+    const { payee, category, uncategorizedCount, fromCategories } = options;
+    const count = fromCategories.reduce(
+      (sum, fromCategory) => sum + fromCategory.count,
+      uncategorizedCount,
+    );
+    showRelatedChangeOffer('related-category', {
+      type: 'message',
+      title:
+        count === 1
+          ? t('Also categorize 1 other "{{payee}}" transaction?', {
+              payee: payee.name,
+            })
+          : t('Also categorize {{count}} other "{{payee}}" transactions?', {
+              payee: payee.name,
+              count,
+            }),
+      message:
+        count === 1
+          ? t('Give it the category "{{category}}" too.', {
+              category: category.name,
+            })
+          : t('Give them the category "{{category}}" too.', {
+              category: category.name,
+            }),
+      button: {
+        title: t('Review'),
+        action: () => {
+          store.dispatch(
+            pushModal({
+              modal: { name: 'categorize-related-transactions', options },
+            }),
+          );
+        },
+      },
+    });
+  });
+
   const unlistenSchedulesOffline = listen('schedules-offline', () => {
     store.dispatch(
       pushModal({ modal: { name: 'schedule-posts-offline-notification' } }),
@@ -52,6 +188,7 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
   const unlistenSync = syncEvents.listenForSyncEvent(store, queryClient);
 
   const unlistenUndo = listen('undo-event', undoState => {
+    withdrawRelatedChangeOffers();
     const { tables, undoTag } = undoState;
     const promises: Promise<unknown>[] = [];
 
@@ -198,6 +335,8 @@ export function handleGlobalEvents(store: AppStore, queryClient: QueryClient) {
   return () => {
     unlistenServerError();
     unlistenOrphanedPayees();
+    unlistenRelatedPayees();
+    unlistenRelatedCategory();
     unlistenSchedulesOffline();
     unlistenSync();
     unlistenUndo();

@@ -1916,6 +1916,8 @@ function TransactionEditUnconnected({
           deleted: changes.deleted,
           updated: changes.updated,
           learnCategories: isLearnCategoriesEnabled,
+          // Offer to repeat a payee or category change on related ones
+          detectRelatedChanges: true,
         });
 
         // if (onTransactionsChange) {

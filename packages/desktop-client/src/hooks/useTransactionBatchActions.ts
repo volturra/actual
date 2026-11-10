@@ -191,7 +191,11 @@ export function useTransactionBatchActions() {
           : diff.added;
       });
 
-      await send('transactions-batch-update', changes);
+      await send('transactions-batch-update', {
+        ...changes,
+        // Offer to repeat a payee or category change on related ones
+        detectRelatedChanges: true,
+      });
 
       onSuccess?.(ids, name, value, mode);
     };
