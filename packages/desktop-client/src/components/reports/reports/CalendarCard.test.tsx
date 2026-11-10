@@ -10,6 +10,7 @@ import { CalendarCard } from './CalendarCard';
 
 vi.mock('@actual-app/core/platform/client/connection', () => ({
   send: vi.fn(async () => null),
+  listen: vi.fn(() => () => {}),
 }));
 
 vi.mock('#components/reports/ReportCard', () => ({
