@@ -17,10 +17,11 @@ import { parseFile } from './import/parse-file';
 import type { ParseFileOptions } from './import/parse-file';
 import { mergeTransactions } from './merge';
 
-import { batchUpdateTransactions } from '.';
+import { batchUpdateTransactions, categorizeRelatedTransactions } from '.';
 
 export type TransactionHandlers = {
   'transactions-batch-update': typeof handleBatchUpdateTransactions;
+  'transactions-categorize-related': typeof categorizeRelatedTransactions;
   'transaction-add': typeof addTransaction;
   'transaction-update': typeof updateTransaction;
   'transaction-delete': typeof deleteTransaction;
@@ -39,6 +40,7 @@ async function handleBatchUpdateTransactions({
   updated,
   learnCategories,
   runTransfers = true,
+  detectRelatedChanges = false,
 }: Parameters<typeof batchUpdateTransactions>[0]) {
   const result = await batchUpdateTransactions({
     added,
@@ -46,6 +48,7 @@ async function handleBatchUpdateTransactions({
     deleted,
     learnCategories,
     runTransfers,
+    detectRelatedChanges,
   });
 
   return result;
@@ -155,6 +158,10 @@ export const app = createApp<TransactionHandlers>();
 app.method(
   'transactions-batch-update',
   mutator(undoable(handleBatchUpdateTransactions)),
+);
+app.method(
+  'transactions-categorize-related',
+  mutator(undoable(categorizeRelatedTransactions)),
 );
 app.method('transactions-merge', mutator(undoable(mergeTransactions)));
 

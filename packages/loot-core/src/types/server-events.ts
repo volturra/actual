@@ -74,6 +74,30 @@ type OrphanedPayeesEvent = {
   updatedPayeeIds: string[];
 };
 
+type RelatedPayeesEvent = {
+  /** The payee the user moved transactions away from, which has others */
+  payee: { id: string; name: string; transactionCount: number };
+  /** The payee those transactions were moved to */
+  targetPayee: { id: string; name: string };
+};
+
+type RelatedCategoryEvent = {
+  /** The payee whose transactions the user categorized */
+  payee: { id: string; name: string };
+  /** The category the user picked */
+  category: { id: string; name: string };
+  /** The transactions the user edited, which the offer leaves out */
+  editedIds: string[];
+  /** How many of the payee's other transactions are uncategorized */
+  uncategorizedCount: number;
+  /**
+   * The categories the edited transactions came from that still hold at
+   * least half of the payee's other categorized transactions (counting those
+   * already in the new category), with how many are in them
+   */
+  fromCategories: Array<{ id: string; name: string; count: number }>;
+};
+
 export type ImportStep =
   | 'accounts'
   | 'categories'
@@ -123,6 +147,8 @@ export type ServerEvents = {
   'indexeddb-quota-error': IndexeddbQuotaErrorEvent;
   'orphaned-payees': OrphanedPayeesEvent;
   'prefs-updated': PrefsUpdatedEvent;
+  'related-category': RelatedCategoryEvent;
+  'related-payees': RelatedPayeesEvent;
   'schedules-offline': SchedulesOfflineEvent;
   'server-error': ServerErrorEvent;
   'show-budgets': ShowBudgetsEvent;

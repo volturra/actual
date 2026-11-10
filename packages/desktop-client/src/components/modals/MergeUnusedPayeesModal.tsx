@@ -27,6 +27,7 @@ type MergeUnusedPayeesModalProps = Extract<
 export function MergeUnusedPayeesModal({
   payeeIds,
   targetPayeeId,
+  isStillUsed = false,
 }: MergeUnusedPayeesModalProps) {
   const { t } = useTranslation();
   const { data: allPayees = [] } = usePayees();
@@ -64,7 +65,8 @@ export function MergeUnusedPayeesModal({
       });
 
       let ruleId;
-      if (shouldCreateRule && !isEditingRule) {
+      // A rename rule with no names to match would be junk
+      if (shouldCreateRule && !isEditingRule && payees.length > 0) {
         const id = await send('rule-add-payee-rename', {
           fromNames: payees.map(payee => payee.name),
           to: targetPayee.id,
@@ -106,7 +108,20 @@ export function MergeUnusedPayeesModal({
         <View style={{ padding: 20, maxWidth: 500 }}>
           <View>
             <Paragraph style={{ marginBottom: 10, fontWeight: 500 }}>
-              {payees.length === 1 ? (
+              {isStillUsed && payees.length === 1 ? (
+                <Trans>
+                  The payee{' '}
+                  <Text style={highlightStyle}>
+                    {{ previousPayee: payees[0].name } as TransObjectLiteral}
+                  </Text>{' '}
+                  is still used by other transactions. Would you like to merge
+                  it with{' '}
+                  <Text style={highlightStyle}>
+                    {{ payee: targetPayee.name } as TransObjectLiteral}
+                  </Text>{' '}
+                  so they are all renamed?
+                </Trans>
+              ) : payees.length === 1 ? (
                 <Trans>
                   The payee{' '}
                   <Text style={highlightStyle}>
@@ -153,6 +168,14 @@ export function MergeUnusedPayeesModal({
                 Merging will remove the payee and transfer any existing rules to
                 the new payee.
               </Trans>
+              {isStillUsed && (
+                <>
+                  {' '}
+                  <Trans>
+                    Its other transactions will move to the new payee.
+                  </Trans>
+                </>
+              )}
               {!isEditingRule && (
                 <>
                   {' '}
