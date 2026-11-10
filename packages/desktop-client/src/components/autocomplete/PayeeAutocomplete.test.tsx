@@ -248,6 +248,8 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
 
   function renderPayeeAutocomplete(
     props?: Partial<PayeeAutocompleteProps>,
+    onSelect: (id: string, value: string) => void = vi.fn(),
+    value: string | null = null,
   ): HTMLElement {
     const autocompleteProps = {
       ...defaultProps,
@@ -260,9 +262,9 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
           <div data-testid="autocomplete-test">
             <PayeeAutocomplete
               {...autocompleteProps}
-              onSelect={vi.fn()}
+              onSelect={onSelect}
               type="single"
-              value={null}
+              value={value}
               embedded={false}
             />
           </div>
@@ -576,10 +578,9 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
     const allNames = renderedItems().map(itemName);
     expect(allNames).toStrictEqual(['create', 'Corner Shop', 'Cora', 'Coral']);
 
-    // Walk back to the first item, then step down through every item.
-    for (let i = 0; i < allNames.length; i++) {
-      await userEvent.keyboard('{ArrowUp}');
-    }
+    // The first match starts highlighted, one above it is the create item.
+    expect(highlightedItemNames()).toStrictEqual(['Corner Shop']);
+    await userEvent.keyboard('{ArrowUp}');
     expect(highlightedItemNames()).toStrictEqual(['create']);
 
     const visited: string[][] = [];
@@ -681,6 +682,345 @@ describe('PayeeAutocomplete.getPayeeSuggestions', () => {
 
     expect(screen.getByLabelText('Payee')).toBeInTheDocument();
     expect(renderedItems()).toStrictEqual([]);
+  });
+
+  describe('when the user has typed a search', () => {
+    // A frequent payee that only matches 'Nation' as a scattered
+    // subsequence (n…a…t…i…o…n), the case that prompted this fix.
+    const scatteredMatch = makePayee(
+      'Requested Transfer to Andrey Taran (First New York Fcu Savings)',
+    );
+    const typedPayees = [
+      makePayee('National Aquarium'),
+      makePayee('National Grid'),
+      scatteredMatch,
+      makePayee('Third Generation Lawn and Landscape'),
+    ];
+
+    async function typeInto(autocomplete: HTMLElement, text: string) {
+      await clickAutocomplete(autocomplete);
+      await userEvent.type(autocomplete.querySelector('input')!, text);
+      await waitForAutocomplete();
+    }
+
+    test('ranks a weak common-payee match below stronger matches', async () => {
+      queryClient.setQueryData(payeeQueries.listCommon().queryKey, [
+        scatteredMatch,
+      ]);
+      await typeInto(
+        renderPayeeAutocomplete({ payees: typedPayees }),
+        'Nation',
+      );
+
+      expect(
+        extractPayeesAndHeaderNames(screen, ALL_PAYEE_ITEMS_SELECTOR),
+      ).toStrictEqual([
+        'Payees',
+        'National Grid',
+        'National Aquarium',
+        'Third Generation Lawn and Landscape',
+        'Requested Transfer to Andrey Taran (First New York Fcu Savings)',
+      ]);
+    });
+
+    test('ranks a weak favorite match below stronger matches', async () => {
+      await typeInto(
+        renderPayeeAutocomplete({
+          payees: typedPayees.map(p =>
+            p === scatteredMatch ? { ...p, favorite: true } : p,
+          ),
+        }),
+        'Nation',
+      );
+
+      expect(
+        extractPayeesAndHeaderNames(screen, ALL_PAYEE_ITEMS_SELECTOR),
+      ).toStrictEqual([
+        'Payees',
+        'National Grid',
+        'National Aquarium',
+        'Third Generation Lawn and Landscape',
+        'Requested Transfer to Andrey Taran (First New York Fcu Savings)',
+      ]);
+    });
+
+    test('Enter selects the best match, not a weak common-payee match', async () => {
+      queryClient.setQueryData(payeeQueries.listCommon().queryKey, [
+        scatteredMatch,
+      ]);
+      const onSelect = vi.fn();
+      await typeInto(
+        renderPayeeAutocomplete({ payees: typedPayees }, onSelect),
+        'Nation',
+      );
+      await userEvent.keyboard('{Enter}');
+
+      expect(onSelect).toHaveBeenCalledWith(
+        'national grid-id',
+        'National Grid',
+      );
+    });
+
+    test('the highlighted item is the value the field reports', async () => {
+      // Leaving the field (e.g. with Tab) commits the value from onUpdate,
+      // while Enter selects the highlighted row. Both must agree.
+      const onUpdate = vi.fn();
+      const onSelect = vi.fn();
+      const transfer: PayeeEntity = {
+        id: 'transfer-id',
+        name: 'National Bank',
+        favorite: false,
+        transfer_acct: accounts[0].id,
+      };
+      // fzf ranks the transfer ahead of 'Nationwide Insurance' (tied score,
+      // shorter name), but it is rendered after it in its own section.
+      await typeInto(
+        renderPayeeAutocomplete(
+          {
+            payees: [makePayee('Nationwide Insurance'), transfer],
+            onUpdate,
+          },
+          onSelect,
+        ),
+        'Nation',
+      );
+
+      expect(
+        extractPayeesAndHeaderNames(screen, ALL_PAYEE_ITEMS_SELECTOR),
+      ).toStrictEqual([
+        'Payees',
+        'Nationwide Insurance',
+        'Transfer To/From',
+        'National Bank',
+      ]);
+      expect(highlightedItemNames()).toStrictEqual(['Nationwide Insurance']);
+      expect(onUpdate.mock.lastCall?.[0]).toBe('nationwide insurance-id');
+
+      await userEvent.keyboard('{ArrowDown}');
+      expect(highlightedItemNames()).toStrictEqual(['National Bank']);
+      expect(onUpdate.mock.lastCall?.[0]).toBe('transfer-id');
+
+      await userEvent.keyboard('{Enter}');
+      expect(onSelect).toHaveBeenCalledWith('transfer-id', 'National Bank');
+    });
+  });
+
+  describe('the reported value follows the highlighted row', () => {
+    test('when nearby payees are shown while typing', async () => {
+      const onUpdate = vi.fn();
+      const onSelect = vi.fn();
+      vi.mocked(useNearbyPayees).mockReturnValue(
+        mockNearbyPayeesResult([makeNearbyPayee('Nationwide Insurance', 0.3)]),
+      );
+      const autocomplete = renderPayeeAutocomplete(
+        {
+          payees: [
+            makePayee('National Grid'),
+            makePayee('Nationwide Insurance'),
+          ],
+          onUpdate,
+          renderCreatePayeeButton: renderCreatePayeeButtonWithMarker,
+        },
+        onSelect,
+      );
+      await clickAutocomplete(autocomplete);
+      await userEvent.type(autocomplete.querySelector('input')!, 'Nation');
+      await waitForAutocomplete();
+
+      expect(renderedItems().map(itemName)).toStrictEqual([
+        'create',
+        'Nationwide Insurance',
+        'National Grid',
+        'Nationwide Insurance',
+      ]);
+      expect(highlightedItemNames()).toStrictEqual(['Nationwide Insurance']);
+      expect(onUpdate.mock.lastCall?.[0]).toBe('nationwide insurance-id');
+
+      await userEvent.keyboard('{ArrowDown}');
+      expect(highlightedItemNames()).toStrictEqual(['National Grid']);
+      expect(onUpdate.mock.lastCall?.[0]).toBe('national grid-id');
+
+      await userEvent.keyboard('{Enter}');
+      expect(onSelect).toHaveBeenCalledWith(
+        'national grid-id',
+        'National Grid',
+      );
+    });
+
+    test('when a favorite is a transfer and nothing is typed', async () => {
+      const onUpdate = vi.fn();
+      const payees: PayeeEntity[] = [
+        makePayee('Alice'),
+        makePayee('Zed', { favorite: true }),
+        {
+          id: 'transfer-id',
+          name: 'Savings',
+          favorite: true,
+          transfer_acct: accounts[0].id,
+        },
+      ];
+      await clickAutocomplete(renderPayeeAutocomplete({ payees, onUpdate }));
+
+      const allNames = renderedItems().map(itemName);
+      expect(allNames).toStrictEqual(['Zed', 'Alice', 'Savings']);
+
+      const ids: Record<string, string> = {
+        Zed: 'zed-id',
+        Alice: 'alice-id',
+        Savings: 'transfer-id',
+      };
+      for (const name of allNames) {
+        await userEvent.keyboard('{ArrowDown}');
+        expect(highlightedItemNames()).toStrictEqual([name]);
+        expect(onUpdate.mock.lastCall?.[0]).toBe(ids[name]);
+      }
+    });
+
+    test('when the field already has a payee and nothing is typed', async () => {
+      const onUpdate = vi.fn();
+      const payees = [
+        makePayee('Alice'),
+        makePayee('Bob'),
+        makePayee('National Grid'),
+      ];
+      await clickAutocomplete(
+        renderPayeeAutocomplete(
+          { payees, onUpdate },
+          vi.fn(),
+          'national grid-id',
+        ),
+      );
+
+      const allNames = renderedItems().map(itemName);
+      expect(allNames).toStrictEqual(['Alice', 'Bob', 'National Grid']);
+
+      const ids: Record<string, string> = {
+        Alice: 'alice-id',
+        Bob: 'bob-id',
+        'National Grid': 'national grid-id',
+      };
+      for (const name of allNames) {
+        await userEvent.keyboard('{ArrowDown}');
+        expect(highlightedItemNames()).toStrictEqual([name]);
+        expect(onUpdate.mock.lastCall?.[0]).toBe(ids[name]);
+      }
+    });
+  });
+
+  test('hides the create item for an existing payee when a nearby payee matches first', async () => {
+    vi.mocked(useNearbyPayees).mockReturnValue(
+      mockNearbyPayeesResult([
+        makeNearbyPayee('Nationwide Insurance Agency', 0.3),
+      ]),
+    );
+    const autocomplete = renderPayeeAutocomplete({
+      payees: [
+        makePayee('Nationwide Insurance'),
+        makePayee('Nationwide Insurance Agency'),
+      ],
+      renderCreatePayeeButton: renderCreatePayeeButtonWithMarker,
+    });
+    await clickAutocomplete(autocomplete);
+    await userEvent.type(
+      autocomplete.querySelector('input')!,
+      'Nationwide Insurance',
+    );
+    await waitForAutocomplete();
+
+    expect(renderedItems().map(itemName)).toStrictEqual([
+      'Nationwide Insurance Agency',
+      'Nationwide Insurance',
+      'Nationwide Insurance Agency',
+    ]);
+  });
+
+  test('transfer mode leaves out nearby payees that are not transfers', async () => {
+    vi.mocked(useNearbyPayees).mockReturnValue(
+      mockNearbyPayeesResult([makeNearbyPayee('Coffee Shop', 0.3)]),
+    );
+    const transfer: PayeeEntity = {
+      id: 'transfer-id',
+      name: 'Bank of Montreal',
+      favorite: false,
+      transfer_acct: accounts[0].id,
+    };
+    const autocomplete = renderPayeeAutocomplete({
+      payees: [makePayee('Alice'), transfer],
+    });
+    await clickAutocomplete(autocomplete);
+    expect(renderedItems().map(itemName)).toStrictEqual([
+      'Coffee Shop',
+      'Alice',
+      'Bank of Montreal',
+    ]);
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Make transfer' }),
+    );
+    // Switching modes remounts the field, so open it again.
+    await clickAutocomplete(autocomplete);
+
+    expect(renderedItems().map(itemName)).toStrictEqual(['Bank of Montreal']);
+  });
+
+  test('leaves out a nearby transfer payee for a closed account', async () => {
+    const closedAccount: AccountEntity = {
+      ...generateAccount('Old Checking'),
+      closed: 1,
+    };
+    vi.mocked(useNearbyPayees).mockReturnValue(
+      mockNearbyPayeesResult([
+        {
+          ...makeNearbyPayee('Old Checking', 0.3),
+          payee: {
+            id: 'closed-transfer-id',
+            name: 'Old Checking',
+            favorite: false,
+            transfer_acct: closedAccount.id,
+          },
+        },
+        makeNearbyPayee('Coffee Shop', 0.5),
+      ]),
+    );
+    await clickAutocomplete(
+      renderPayeeAutocomplete({
+        payees: [makePayee('Alice')],
+        accounts: [...accounts, closedAccount],
+      }),
+    );
+
+    expect(renderedItems().map(itemName)).toStrictEqual([
+      'Coffee Shop',
+      'Alice',
+    ]);
+  });
+
+  describe('the "more payees" hint', () => {
+    const hint = 'More payees are available, search to find them';
+    const manyPayees = (count: number) =>
+      Array.from({ length: count }, (_, i) =>
+        makePayee(`Payee ${String(i).padStart(3, '0')}`),
+      );
+
+    test('does not count nearby payees', async () => {
+      vi.mocked(useNearbyPayees).mockReturnValue(
+        mockNearbyPayeesResult([makeNearbyPayee('Coffee Shop', 0.3)]),
+      );
+      await clickAutocomplete(
+        renderPayeeAutocomplete({ payees: manyPayees(99) }),
+      );
+
+      expect(renderedItems()).toHaveLength(100);
+      expect(screen.queryByText(hint)).not.toBeInTheDocument();
+    });
+
+    test('shows when 100 payees are listed', async () => {
+      await clickAutocomplete(
+        renderPayeeAutocomplete({ payees: manyPayees(100) }),
+      );
+
+      expect(screen.getByText(hint)).toBeInTheDocument();
+    });
   });
 
   test('ranks an exact payee match above a longer tied substring match', async () => {
