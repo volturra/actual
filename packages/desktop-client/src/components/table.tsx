@@ -848,6 +848,7 @@ type SelectedItemsButtonProps<Name extends string> = {
   name: ((count: number) => string) | string;
   items: MenuItem<Name>[];
   onSelect: (name: Name, items: string[]) => void;
+  footer?: ReactNode;
 };
 
 export function SelectedItemsButton<Name extends string>({
@@ -855,6 +856,7 @@ export function SelectedItemsButton<Name extends string>({
   name,
   items,
   onSelect,
+  footer,
 }: SelectedItemsButtonProps<Name>) {
   const selectedItems = useSelectedItems();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -901,6 +903,7 @@ export function SelectedItemsButton<Name extends string>({
             setMenuOpen(false);
           }}
           items={items}
+          footer={footer}
         />
       </Popover>
     </View>

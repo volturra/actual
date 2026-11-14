@@ -1,4 +1,5 @@
 import { send } from '@actual-app/core/platform/client/connection';
+import type { ApiKey } from '@actual-app/core/server/auth/api-keys';
 import type { IntegerAmount } from '@actual-app/core/shared/util';
 import type { File } from '@actual-app/core/types/file';
 import type {
@@ -42,6 +43,10 @@ export type ConfirmTransactionEditReason =
   | 'deleteReconciled';
 
 type ModalVariant =
+  | {
+      name: 'api-key';
+      options: { fileId: string; apiKey?: ApiKey; onChange: () => void };
+    }
   | {
       name: 'import-transactions';
       options: {
@@ -451,6 +456,14 @@ type ModalVariant =
           groupId: CategoryGroupEntity['id'],
           direction: 'asc' | 'desc',
         ) => void;
+      };
+    }
+  | {
+      name: 'tag-color';
+      options: {
+        tagName: string;
+        color: string | null;
+        onSelect: (color: string | null) => void;
       };
     }
   | {
