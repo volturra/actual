@@ -612,9 +612,10 @@ impl BudgetView {
             }
         });
         let gid = g.id.clone();
-        let a = app.clone();
+        let wa = app.weak();
         add.connect_clicked(move |_| {
             let gid = gid.clone();
+            let Some(a) = wa.upgrade() else { return };
             dialogs::prompt_text(&a, "New category", "Name", "", "Create", move |app, name| {
                 let gid = gid.clone();
                 app.engine.run("Create category", move |s| {
@@ -700,10 +701,14 @@ impl BudgetView {
         {
             let w = Rc::downgrade(self);
             let cat = cat.clone();
+            let done = done.clone();
             entry.connect_changed(move |e| {
                 let Some(v) = w.upgrade() else { return };
                 if e.state_flags().contains(gtk::StateFlags::FOCUS_WITHIN) && e.text() != fmt.format(current) {
                     *v.dirty.borrow_mut() = Some((cat.clone(), m));
+                    // New typing after a commit that kept focus here (last
+                    // row, invalid input) needs committing again.
+                    done.set(false);
                 }
             });
         }

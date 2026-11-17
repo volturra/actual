@@ -443,8 +443,14 @@ impl Register {
                 }
                 // Moving to another row saves what was typed (like leaving a
                 // row in the web register).
-                if r.editor_dirty() {
-                    r.save_quiet();
+                if r.editor_dirty() && !r.save_quiet() {
+                    // Keep the unsaved edit on screen (and selected).
+                    let cur = r.editor.state.borrow().id.clone();
+                    let pos = cur.and_then(|id| r.rows.borrow().iter().position(|x| x.id == id));
+                    r.loading.set(true);
+                    sel.set_selected(pos.map(|p| p as u32).unwrap_or(gtk::INVALID_LIST_POSITION));
+                    r.loading.set(false);
+                    return;
                 }
                 r.edit(Some(target));
             }
@@ -525,6 +531,9 @@ impl Register {
     pub fn show_account(self: &Rc<Self>, id: Option<String>) {
         if !self.keep_filter.replace(false) {
             *self.filter.borrow_mut() = None;
+        }
+        if self.editor_dirty() {
+            self.save_quiet();
         }
         let changed = *self.account.borrow() != id;
         *self.account.borrow_mut() = id;
@@ -735,11 +744,12 @@ impl Register {
         let writable = app.writable;
         let mk = |label: &str, f: Box<dyn Fn()>| (label.to_string(), f);
         if writable {
-            let (ap, id, name) = (app.clone(), a.id.clone(), a.name.clone());
+            let (ap, id, name) = (app.weak(), a.id.clone(), a.name.clone());
             items.push(mk(
                 "Rename account…",
                 Box::new(move || {
                     let id = id.clone();
+                    let Some(ap) = ap.upgrade() else { return };
                     dialogs::prompt_text(&ap, "Rename account", "Name", &name, "Rename", move |app, new| {
                         let cs = ops::update_account(&id, Some(&new), None);
                         app.engine.run("Rename account", move |s| s.budget.apply(cs));
@@ -747,20 +757,33 @@ impl Register {
                 }),
             ));
         }
-        let (ap, id, name) = (app.clone(), a.id.clone(), a.name.clone());
-        items.push(mk("Account notes…", Box::new(move || dialogs::edit_note(&ap, &id, &format!("Notes for {name}")))));
+        let (ap, id, name) = (app.weak(), a.id.clone(), a.name.clone());
+        items.push(mk(
+            "Account notes…",
+            Box::new(move || {
+                if let Some(ap) = ap.upgrade() {
+                    dialogs::edit_note(&ap, &id, &format!("Notes for {name}"))
+                }
+            }),
+        ));
         if writable {
-            let (ap, id) = (app.clone(), a.id.clone());
+            let (wap, id) = (app.weak(), a.id.clone());
             if a.closed {
                 items.push(mk(
                     "Reopen account",
                     Box::new(move || {
                         let cs = ops::reopen_account(&id);
-                        ap.engine.run("Reopen account", move |s| s.budget.apply(cs));
+                        if let Some(ap) = wap.upgrade() {
+                            ap.engine.run("Reopen account", move |s| s.budget.apply(cs));
+                        }
                     }),
                 ));
             } else {
-                items.push(mk("Close account…", Box::new(move || dialogs::close_account(&ap, &id))));
+                items.push(mk("Close account…", Box::new(move || {
+                    if let Some(ap) = wap.upgrade() {
+                        dialogs::close_account(&ap, &id)
+                    }
+                })));
             }
         }
         for (label, f) in items {
@@ -1081,20 +1104,30 @@ impl Register {
     /// Whether the editor holds changes the user hasn't saved.
     fn editor_dirty(&self) -> bool {
         let app_writable = self.app.upgrade().is_some_and(|a| a.writable);
-        app_writable && self.snapshot() != self.editor.state.borrow().loaded
+        let e = &self.editor;
+        // An untouched new transaction (no payee, no amount) is not worth
+        // saving even if its date or account changed.
+        let empty_new = e.state.borrow().id.is_none()
+            && e.payee.text().trim().is_empty()
+            && e.outflow.text().trim().is_empty()
+            && e.inflow.text().trim().is_empty();
+        app_writable && !empty_new && self.snapshot() != e.state.borrow().loaded
     }
 
     /// Saves without moving focus or resetting the editor for the next entry.
-    fn save_quiet(self: &Rc<Self>) {
+    fn save_quiet(self: &Rc<Self>) -> bool {
         self.quiet_save.set(true);
-        self.save();
+        let ok = self.save();
         self.quiet_save.set(false);
+        ok
     }
 
-    fn save(self: &Rc<Self>) {
-        let Some(app) = self.app.upgrade() else { return };
+    /// Queues the editor's transaction for saving. Returns false (after a
+    /// toast) when the input can't be saved.
+    fn save(self: &Rc<Self>) -> bool {
+        let Some(app) = self.app.upgrade() else { return false };
         if !app.writable {
-            return;
+            return false;
         }
         let e = &self.editor;
         let fmt = app.fmt.get();
@@ -1102,11 +1135,11 @@ impl Register {
         let Some(date) = parse_date(&e.date.text(), &pref) else {
             app.toast("Enter a valid date.");
             e.date.grab_focus();
-            return;
+            return false;
         };
         if actual_budget::month::date_to_db(&date).is_none() {
             app.toast("Dates before 1995 aren't supported.");
-            return;
+            return false;
         }
         let parse = |entry: &gtk::Entry| -> Option<i64> {
             let t = entry.text();
@@ -1114,12 +1147,12 @@ impl Register {
         };
         let (Some(out), Some(inn)) = (parse(&e.outflow), parse(&e.inflow)) else {
             app.toast("That isn't a valid amount.");
-            return;
+            return false;
         };
         let amount = inn - out;
         let Some(account) = self.selected_account() else {
             app.toast("Add an account first.");
-            return;
+            return false;
         };
         // A typed name that isn't an existing payee creates one.
         let payee_text = e.payee.text().trim().to_string();
@@ -1131,7 +1164,7 @@ impl Register {
                 _ => {
                     app.toast("Pick a category from the list.");
                     e.category.widget().grab_focus();
-                    return;
+                    return false;
                 }
             }
         } else {
@@ -1215,8 +1248,23 @@ impl Register {
                     if new_lines != old_lines {
                         // Written after the parent's own edit in the same
                         // batch; the split error uses the parent's new amount.
+                        // A new parent payee reaches lines that followed the
+                        // old one (as update_transaction does for unchanged lines).
+                        let mut new_lines = new_lines.clone();
+                        if let Some(p) = &u.payee {
+                            for l in new_lines.iter_mut() {
+                                if l.payee.is_none() || l.payee == orig.payee {
+                                    l.payee = p.clone();
+                                }
+                            }
+                        }
                         let (scs, removed) = ops::set_splits_with_amount(conn, &id, &new_lines, u.amount)?;
                         cs.extend(scs);
+                        if matches!(u.payee, Some(None)) {
+                            for l in new_lines.iter().filter(|l| l.payee.is_none()) {
+                                cs.set("transactions", l.id.as_deref().unwrap_or_default(), vec![("description", actual_sync::value::Value::Null)]);
+                            }
+                        }
                         // New lines copy the parent's stored date and account;
                         // give them the edited ones.
                         for l in new_lines.iter().filter(|l| !old_lines.iter().any(|o| o.id == l.id)) {
@@ -1239,16 +1287,21 @@ impl Register {
                 }
             }
         });
-        if self.quiet_save.get() {
-            return;
+        if self.editor.state.borrow().id.is_some() || self.quiet_save.get() {
+            // What's in the editor is now what's saved; the next Changed
+            // event reloads it from the database (or after an undo).
+            let snap = self.snapshot();
+            self.editor.state.borrow_mut().loaded = snap;
+            return true;
         }
-        if self.editor.state.borrow().id.is_none() {
-            // Ready for the next one, keeping the date (YNAB4 habit).
-            let date = self.editor.date.text();
-            self.new_transaction_quiet();
-            self.editor.date.set_text(&date);
-            self.editor.payee.widget().grab_focus();
-        }
+        // Ready for the next one, keeping the date (YNAB4 habit).
+        let date = self.editor.date.text();
+        self.new_transaction_quiet();
+        self.editor.date.set_text(&date);
+        let snap = self.snapshot();
+        self.editor.state.borrow_mut().loaded = snap;
+        self.editor.payee.widget().grab_focus();
+        true
     }
 
     fn delete_editing(self: &Rc<Self>) {
@@ -1599,6 +1652,10 @@ impl Editor {
         bottom.append(&delete);
         bottom.append(&save);
         root.append(&bottom);
+        // Ctrl+Z in the editor undoes the last saved change, not typing.
+        for e in [&date, payee.widget(), category.widget(), &notes, &outflow, &inflow] {
+            e.set_enable_undo(false);
+        }
 
         Editor {
             root,

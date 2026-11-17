@@ -167,6 +167,9 @@ fn redownload(app: &adw::Application, dir: BudgetDir, key: Option<Key>, client: 
     let Some(cloud) = dir.read_meta().ok().and_then(|m| m.cloud_file_id().map(str::to_string)) else {
         return show_setup(app, None);
     };
+    // Closing the last window would end the app before the download
+    // finishes; hold it open until then.
+    let guard = app.hold();
     if let Some(cur) = CURRENT.with(|c| c.borrow_mut().take()) {
         cur.window.close();
     }
@@ -177,6 +180,7 @@ fn redownload(app: &adw::Application, dir: BudgetDir, key: Option<Key>, client: 
     ui::background(
         move || actual_sync::files::download(&c2, &root, &cloud, k2.as_ref(), local_id.as_deref()),
         move |res| {
+            let _guard = guard;
             let err = match res {
                 Ok(dir) => match open_budget(&a, OpenRequest { dir, key, client: Some(client) }) {
                     Ok(()) => return,

@@ -318,12 +318,37 @@ pub fn close_account(app: &Rc<App>, id: &str) {
     if !others.is_empty() {
         dd.set_selected(1);
     }
-    let extra = labelled("Transfer the balance to", &dd);
+    // Moving money from the budget to an off-budget account is spending, so
+    // it needs a category (the web's close-account modal asks the same).
+    let groups = model::category_groups(&app.db).unwrap_or_default();
+    let cats: Vec<(String, String)> = groups
+        .iter()
+        .filter(|g| !g.is_income)
+        .flat_map(|g| g.categories.iter().filter(|c| !c.hidden).map(move |c| (c.id.clone(), format!("{}: {}", g.name, c.name))))
+        .collect();
+    let cat_labels: Vec<String> = cats.iter().map(|(_, l)| l.clone()).collect();
+    let cat_dd = choice_dropdown(&cat_labels);
+    let cat_box = labelled("Category for the transfer", &cat_dd);
+    let extra = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    extra.append(&labelled("Transfer the balance to", &dd));
+    extra.append(&cat_box);
+    let needs_cat = {
+        let others = others.clone();
+        let source_off = acct.offbudget;
+        move |idx: u32| idx > 0 && !source_off && others.get(idx as usize - 1).is_some_and(|a| a.offbudget)
+    };
+    cat_box.set_visible(needs_cat(dd.selected()));
+    {
+        let cat_box = cat_box.clone();
+        let needs_cat = needs_cat.clone();
+        dd.connect_selected_notify(move |d| cat_box.set_visible(needs_cat(d.selected())));
+    }
     let body = format!("This account has a balance of {}.", app.fmt.get().format(acct.balance));
     let balance = acct.balance;
     ask(app, &format!("Close “{}”?", acct.name), &body, Some(extra.upcast_ref()), "Close account", true, None, move |app| {
         let idx = dd.selected() as usize;
         let target = if idx == 0 { None } else { others.get(idx - 1).map(|a| a.id.clone()) };
+        let category = needs_cat(idx as u32).then(|| cats.get(cat_dd.selected() as usize).map(|(c, _)| c.clone())).flatten();
         let id = id.clone();
         app.engine.run("Close account", move |s| {
             if let Some(target) = &target {
@@ -335,8 +360,8 @@ pub fn close_account(app: &Rc<App>, id: &str) {
                     date: actual_budget::month::today(),
                     amount: -balance,
                     payee: Some(payee),
-                    category: None,
                     notes: Some("Closing account".into()),
+                    category,
                     cleared: true,
                     starting_balance_flag: false,
                     splits: Vec::new(),

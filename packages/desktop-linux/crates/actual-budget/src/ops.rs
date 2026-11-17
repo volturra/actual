@@ -889,6 +889,7 @@ impl TransactionUpdate {
 pub fn update_transaction(conn: &Connection, id: &str, u: &TransactionUpdate) -> Result<ChangeSet, BudgetError> {
     let current = crate::model::transaction(conn, id)?.ok_or_else(|| BudgetError::Invalid("Transaction not found.".into()))?;
     let mut fields: Vec<(&str, Value)> = Vec::new();
+    let mut to_offbudget = false;
     if let Some(a) = &u.account {
         fields.push(("acct", a.clone().into()));
         let offbudget: bool = conn
@@ -900,6 +901,7 @@ pub fn update_transaction(conn: &Connection, id: &str, u: &TransactionUpdate) ->
         if offbudget || current.is_parent {
             fields.push(("category", Value::Null));
         }
+        to_offbudget = offbudget;
     }
     if let Some(d) = &u.date {
         let d = date_to_db(d).ok_or_else(|| BudgetError::Invalid(format!("Invalid date: {d}")))?;
@@ -936,12 +938,20 @@ pub fn update_transaction(conn: &Connection, id: &str, u: &TransactionUpdate) ->
             .collect();
         if !shared.is_empty() {
             for child in &current.subtransactions {
-                cs.set("transactions", &child.id, shared.clone());
+                let mut f = shared.clone();
+                // Off-budget transactions (split lines too) have no category.
+                if to_offbudget {
+                    f.push(("category", Value::Null));
+                }
+                cs.set("transactions", &child.id, f);
             }
         }
-        if let Some(Some(p)) = &u.payee {
+        // Lines that followed the parent's payee (or had none) take the new
+        // one, or none when it's cleared (`updateTransaction` in
+        // shared/transactions.ts with `makeChild`).
+        if let Some(p) = &u.payee {
             for child in &current.subtransactions {
-                if child.payee == current.payee {
+                if child.payee == current.payee || child.payee.is_none() {
                     cs.set("transactions", &child.id, vec![("description", p.clone().into())]);
                 }
             }
