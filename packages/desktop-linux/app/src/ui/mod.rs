@@ -44,6 +44,11 @@ pub struct App {
     pub on_switch_budget: RefCell<Option<Box<dyn Fn()>>>,
     sidebar_rows: RefCell<Vec<View>>,
     populating: Cell<bool>,
+    last_sync_text: RefCell<String>,
+    /// Re-downloads the open budget (after a reset on the server).
+    pub on_redownload: RefCell<Option<Box<dyn Fn()>>>,
+    /// The budget's `dateFormat` preference.
+    pub date_format: RefCell<String>,
 }
 
 pub type AppRc = Rc<App>;
@@ -174,6 +179,9 @@ impl App {
             on_switch_budget: RefCell::new(None),
             sidebar_rows: RefCell::new(Vec::new()),
             populating: Cell::new(false),
+            last_sync_text: RefCell::new(String::new()),
+            on_redownload: RefCell::new(None),
+            date_format: RefCell::new("MM/dd/yyyy".into()),
         });
         app.load_format();
 
@@ -230,10 +238,11 @@ impl App {
             let Some(app) = weak.upgrade() else { return glib::Propagation::Proceed };
             let ctrl = mods.contains(gtk::gdk::ModifierType::CONTROL_MASK);
             let shift = mods.contains(gtk::gdk::ModifierType::SHIFT_MASK);
-            // Don't steal undo from a text field being edited.
+            // Leave undo to text fields that keep their own history (notes,
+            // names); budget cells and the register editor turn theirs off.
             let in_text = gtk::prelude::GtkWindowExt::focus(&app.window)
-                .map(|w| w.is::<gtk::Text>())
-                .unwrap_or(false);
+                .and_then(|w| w.downcast::<gtk::Text>().ok())
+                .is_some_and(|t| t.enables_undo());
             match key {
                 gtk::gdk::Key::z | gtk::gdk::Key::Z if ctrl && !in_text => {
                     if shift {
@@ -254,6 +263,8 @@ impl App {
                 _ => glib::Propagation::Proceed,
             }
         });
+        // Capture: see the keys before the focused text field does.
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         app.window.add_controller(keys);
 
         let weak = Rc::downgrade(&app);
@@ -266,7 +277,7 @@ impl App {
 
         let engine = app.engine.clone();
         app.window.connect_close_request(move |_| {
-            engine.shutdown();
+            engine.shutdown_wait(std::time::Duration::from_secs(5));
             glib::Propagation::Proceed
         });
 
@@ -285,6 +296,7 @@ impl App {
             format: actual_budget::format::NumberFormat::from_pref(pref("numberFormat").as_deref()),
             hide_fraction: pref("hideFraction").as_deref() == Some("true"),
         });
+        *self.date_format.borrow_mut() = pref("dateFormat").unwrap_or_else(|| "MM/dd/yyyy".into());
     }
 
     pub fn toast(&self, msg: &str) {
@@ -373,11 +385,21 @@ impl App {
                 };
                 self.sync_label.set_text(&text);
                 self.sync_label.set_tooltip_text(if tip.is_empty() { None } else { Some(&tip) });
-                if matches!(status, SyncStatus::Error(_) | SyncStatus::NeedsRedownload | SyncStatus::NeedsLogin) {
-                    self.toast(&if tip.is_empty() { text } else { tip });
+                // Retries repeat the same status; only announce changes.
+                let key = format!("{text}\n{tip}");
+                let changed = *self.last_sync_text.borrow() != key;
+                if matches!(status, SyncStatus::Syncing) {
+                    return;
                 }
-                if matches!(status, SyncStatus::NeedsLogin) {
-                    dialogs::relogin(self);
+                *self.last_sync_text.borrow_mut() = key;
+                if !changed {
+                    return;
+                }
+                match status {
+                    SyncStatus::Error(_) => self.toast(&tip),
+                    SyncStatus::NeedsLogin => dialogs::relogin(self),
+                    SyncStatus::NeedsRedownload => dialogs::redownload(self),
+                    _ => {}
                 }
             }
         }

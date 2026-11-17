@@ -383,3 +383,75 @@ fn upload_from_rust_then_web_downloads() {
     assert_accounts_match(&budget, &dump);
     assert_budget_matches(&budget, &dump, &months_around());
 }
+
+#[test]
+#[ignore]
+fn undo_redo_deletes_and_splits_match_web() {
+    let server = start_server();
+    let created = web(&server, "create", json!({ "name": "Undo" }));
+    let sync_id = created["syncId"].as_str().unwrap().to_string();
+    let seeded = web(&server, "seed", json!({ "syncId": sync_id, "month": month_str() }));
+    let (rent, power) = (seeded["rent"].as_str().unwrap(), seeded["power"].as_str().unwrap());
+    let (checking, savings) = (seeded["checking"].as_str().unwrap(), seeded["savings"].as_str().unwrap());
+    let root = tempfile::tempdir().unwrap();
+    let (mut a, c) = download(&server, &sync_id, root.path(), None);
+    let month = Month::current();
+    let find_tx = |dump: &Json, id: &str| dump["transactions"].as_array().unwrap().iter().any(|t| t["id"] == id);
+
+    // Redo brings back a row that undo deleted.
+    let tx = NewTransaction { account: checking.into(), date: today(), amount: -4200, ..Default::default() };
+    let (ids, cs) = ops::insert_transaction(&tx).unwrap();
+    a.edit_transactions(cs, ids.clone(), Vec::new()).unwrap();
+    a.undo().unwrap();
+    assert!(model::transaction(a.conn(), &ids[0]).unwrap().is_none());
+    a.redo().unwrap();
+    assert!(model::transaction(a.conn(), &ids[0]).unwrap().is_some());
+
+    // Undoing a first-time budget sets it back to 0 without blanking the row.
+    a.apply(ops::set_budget(a.conn(), month.next(), power, 5000).unwrap()).unwrap();
+    a.undo().unwrap();
+    assert_eq!(a.envelope().unwrap().category(month.next(), power).budgeted, 0);
+
+    // Removing a split line that's a transfer removes its counterpart.
+    let to_savings = ops::transfer_payee(a.conn(), savings).unwrap().unwrap();
+    let split = NewTransaction {
+        account: checking.into(),
+        date: today(),
+        amount: -3000,
+        splits: vec![
+            SplitLine { id: Some(ops::new_id()), amount: -1000, category: Some(rent.into()), ..Default::default() },
+            SplitLine { id: Some(ops::new_id()), amount: -2000, payee: Some(to_savings), ..Default::default() },
+        ],
+        ..Default::default()
+    };
+    let (sids, cs) = ops::insert_transaction(&split).unwrap();
+    a.edit_transactions(cs, sids.clone(), Vec::new()).unwrap();
+    let line = model::transaction(a.conn(), &sids[2]).unwrap().unwrap();
+    assert!(line.transfer_id.is_some(), "transfer line has a counterpart");
+    let keep = vec![SplitLine { id: Some(sids[1].clone()), amount: -3000, category: Some(rent.into()), ..Default::default() }];
+    let (cs, removed) = ops::set_splits(a.conn(), &sids[0], &keep).unwrap();
+    assert_eq!(removed, vec![sids[2].clone()]);
+    a.edit_transactions(cs, vec![sids[1].clone()], removed).unwrap();
+    assert!(model::transaction(a.conn(), line.transfer_id.as_deref().unwrap()).unwrap().is_none());
+
+    // Deleting a group into a category keeps every category's budget.
+    let (gid, cs) = ops::create_category_group(a.conn(), "Extra", false).unwrap();
+    a.apply(cs).unwrap();
+    let (x, cs) = ops::create_category(a.conn(), "X", &gid).unwrap();
+    a.apply(cs).unwrap();
+    let (y, cs) = ops::create_category(a.conn(), "Y", &gid).unwrap();
+    a.apply(cs).unwrap();
+    a.apply(ops::set_budget(a.conn(), month, &x, 10000).unwrap()).unwrap();
+    a.apply(ops::set_budget(a.conn(), month, &y, 5000).unwrap()).unwrap();
+    let before = a.envelope().unwrap().category(month, power).budgeted;
+    let env = a.envelope().unwrap();
+    a.apply(ops::delete_category_group(a.conn(), &env, &gid, Some(power)).unwrap()).unwrap();
+    assert_eq!(a.envelope().unwrap().category(month, power).budgeted, before + 15000);
+
+    a.sync(&c).unwrap();
+    let dump = web(&server, "dump", json!({ "syncId": sync_id, "months": months_around() }));
+    assert!(find_tx(&dump, &ids[0]), "redone transaction reached the web");
+    assert!(!find_tx(&dump, line.transfer_id.as_deref().unwrap()), "counterpart removed on the web");
+    assert_accounts_match(&a, &dump);
+    assert_budget_matches(&a, &dump, &months_around());
+}

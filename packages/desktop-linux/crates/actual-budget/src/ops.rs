@@ -328,17 +328,49 @@ pub fn set_zero(conn: &Connection, month: Month) -> Result<ChangeSet, BudgetErro
     Ok(cs)
 }
 
-/// Average of the last `n` months' spending, as `setNMonthAvg` budgets it.
+/// `setNMonthAvg` (3/6/12): each visible expense category's average
+/// spending, budgeted for `month`.
 pub fn set_n_month_avg(conn: &Connection, budget: &EnvelopeBudget, month: Month, n: i32) -> Result<ChangeSet, BudgetError> {
     let mut cs = ChangeSet::new();
-    for g in budget.groups.iter().filter(|g| !g.is_income) {
-        for c in &g.categories {
-            let total: i64 = (1..=n).map(|i| budget.category(month.plus(-i), &c.id).spent).sum();
-            let avg = (-(total as f64) / n as f64).round() as i64;
-            cs.extend(set_budget(conn, month, &c.id, avg)?);
+    for g in budget.groups.iter().filter(|g| !g.is_income && !g.hidden) {
+        for c in g.categories.iter().filter(|c| !c.hidden) {
+            let avg = category_average(conn, budget, month, n, &c.id)?;
+            cs.extend(set_budget(conn, month, &c.id, -avg)?);
         }
     }
     Ok(cs)
+}
+
+/// `getCategoryAverage`: average signed spending over up to `n` months
+/// before `month` (never counting the current or future months), skipping
+/// months before the category's first activity. Rounded like `Math.round`.
+pub fn category_average(conn: &Connection, budget: &EnvelopeBudget, month: Month, n: i32, cat: &str) -> Result<i64, BudgetError> {
+    let current = Month::current();
+    let start = if month.prev() >= current { current.prev() } else { month.prev() };
+    let first: Option<i64> = conn.query_row(
+        "SELECT MIN(month) FROM (
+           SELECT month FROM zero_budgets WHERE category = ?1 AND month <= ?2
+           UNION ALL
+           SELECT CAST(t.date / 100 AS INTEGER) FROM rs_transactions_alive t
+             LEFT JOIN accounts a ON a.id = t.account
+            WHERE t.category = ?1 AND CAST(t.date / 100 AS INTEGER) <= ?2 AND a.offbudget = 0)",
+        params![cat, start.to_db()],
+        |r| r.get(0),
+    )?;
+    let mut months = Vec::new();
+    let mut m = start;
+    for _ in 0..n {
+        if first.is_some_and(|f| m.to_db() < f) {
+            break;
+        }
+        months.push(m);
+        m = m.prev();
+    }
+    if months.is_empty() {
+        return Ok(0);
+    }
+    let sum: i64 = months.iter().map(|&m| budget.category(m, cat).spent).sum();
+    Ok((sum as f64 / months.len() as f64 + 0.5).floor() as i64)
 }
 
 // ------------------------------------------------------------ categories
@@ -457,6 +489,34 @@ pub fn update_category_group(id: &str, name: Option<&str>, hidden: Option<bool>)
     cs
 }
 
+/// `moveCategory`: puts the category in `group`, before `target` (or last).
+pub fn move_category(conn: &Connection, id: &str, group: &str, target: Option<&str>) -> Result<ChangeSet, BudgetError> {
+    let items = sort_items(
+        conn,
+        "SELECT id, sort_order FROM categories WHERE cat_group = ? AND tombstone = 0 ORDER BY sort_order, id",
+        [group],
+    )?;
+    let (updates, order) = shove_sort_orders(&items, target);
+    let mut cs = ChangeSet::new();
+    for (uid, o) in updates {
+        cs.set("categories", &uid, vec![("sort_order", o.into())]);
+    }
+    cs.set("categories", id, vec![("sort_order", order.into()), ("cat_group", group.into())]);
+    Ok(cs)
+}
+
+/// `moveCategoryGroup`: puts the group before `target` (or last).
+pub fn move_category_group(conn: &Connection, id: &str, target: Option<&str>) -> Result<ChangeSet, BudgetError> {
+    let items = sort_items(conn, "SELECT id, sort_order FROM category_groups WHERE tombstone = 0 ORDER BY sort_order, id", [])?;
+    let (updates, order) = shove_sort_orders(&items, target);
+    let mut cs = ChangeSet::new();
+    for (uid, o) in updates {
+        cs.set("category_groups", &uid, vec![("sort_order", o.into())]);
+    }
+    cs.set("category_groups", id, vec![("sort_order", order.into())]);
+    Ok(cs)
+}
+
 /// `deleteCategory`, optionally moving its budgets and transactions to
 /// `transfer_to` (the mapping forwards existing transactions).
 pub fn delete_category(
@@ -481,19 +541,39 @@ pub fn delete_category(
             return Err(BudgetError::Invalid("Cannot transfer between income and expense categories.".into()));
         }
         if is_income == 0 {
-            // `doTransfer`: add this category's budgets onto the target's
-            for &m in &budget.months {
-                let total = budget_amount(conn, m, id)? + budget_amount(conn, m, t)?;
-                cs.extend(set_budget(conn, m, t, total)?);
-            }
+            cs.extend(do_transfer(conn, budget, &[id.to_string()], t)?);
         }
+        cs.extend(forward_category(conn, id, t)?);
+    }
+    cs.delete("categories", id);
+    Ok(cs)
+}
+
+/// `doTransfer`: adds the categories' budgets onto the target's, one
+/// `setBudget` per month.
+fn do_transfer(conn: &Connection, budget: &EnvelopeBudget, from: &[String], to: &str) -> Result<ChangeSet, BudgetError> {
+    let mut cs = ChangeSet::new();
+    for &m in &budget.months {
+        let mut total = budget_amount(conn, m, to)?;
+        for id in from {
+            total += budget_amount(conn, m, id)?;
+        }
+        cs.extend(set_budget(conn, m, to, total)?);
+    }
+    Ok(cs)
+}
+
+/// The mapping half of `db.deleteCategory`: transactions (and categories
+/// already forwarded here) now point at `t`.
+fn forward_category(conn: &Connection, id: &str, t: &str) -> Result<ChangeSet, BudgetError> {
+    let mut cs = ChangeSet::new();
+    {
         let forwarded = sort_items(conn, "SELECT id, 0 FROM category_mapping WHERE transferId = ?", [id])?;
         for (mid, _) in forwarded {
             cs.set("category_mapping", &mid, vec![("transferId", t.into())]);
         }
         cs.set("category_mapping", id, vec![("transferId", t.into())]);
     }
-    cs.delete("categories", id);
     Ok(cs)
 }
 
@@ -513,10 +593,33 @@ pub fn delete_category_group(
     id: &str,
     transfer_to: Option<&str>,
 ) -> Result<ChangeSet, BudgetError> {
-    let cats = sort_items(conn, "SELECT id, 0 FROM categories WHERE cat_group = ?", [id])?;
+    let cats: Vec<String> = sort_items(conn, "SELECT id, 0 FROM categories WHERE cat_group = ? AND tombstone = 0", [id])?
+        .into_iter()
+        .map(|(c, _)| c)
+        .collect();
     let mut cs = ChangeSet::new();
-    for (cat, _) in cats {
-        cs.extend(delete_category(conn, budget, &cat, transfer_to)?);
+    if let Some(t) = transfer_to {
+        let (g_income, t_income): (i64, i64) = conn.query_row(
+            "SELECT IFNULL((SELECT is_income FROM category_groups WHERE id = ?1), 0),
+                    IFNULL((SELECT is_income FROM categories WHERE id = ?2), -1)",
+            params![id, t],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        if t_income == -1 {
+            return Err(BudgetError::Invalid("Transfer category not found.".into()));
+        }
+        if t_income != g_income {
+            return Err(BudgetError::Invalid("Cannot transfer between income and expense categories.".into()));
+        }
+        if g_income == 0 {
+            cs.extend(do_transfer(conn, budget, &cats, t)?);
+        }
+    }
+    for cat in &cats {
+        if let Some(t) = transfer_to {
+            cs.extend(forward_category(conn, cat, t)?);
+        }
+        cs.delete("categories", cat);
     }
     cs.delete("category_groups", id);
     Ok(cs)
@@ -631,11 +734,14 @@ pub fn update_account(id: &str, name: Option<&str>, offbudget: Option<bool>) -> 
     cs
 }
 
-/// `closeAccount` for the common case. A non-zero balance must first be
-/// moved out (or `force` writes it off by closing anyway, like "force close").
+/// `closeAccount`. An account without transactions is deleted. Otherwise a
+/// non-zero balance must be moved out first (the caller adds the closing
+/// transfer), unless `force`, which deletes the account with all its
+/// transactions and unlinks their transfer counterparts, like the web's
+/// "force close".
 pub fn close_account(conn: &Connection, id: &str, force: bool) -> Result<ChangeSet, BudgetError> {
     let (balance, count): (i64, i64) = conn.query_row(
-        "SELECT IFNULL(SUM(amount), 0), COUNT(*) FROM rs_transactions WHERE account = ? AND is_parent = 0",
+        "SELECT IFNULL(SUM(CASE WHEN is_parent = 0 THEN amount END), 0), COUNT(*) FROM rs_transactions WHERE account = ?",
         [id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
@@ -644,10 +750,24 @@ pub fn close_account(conn: &Connection, id: &str, force: bool) -> Result<ChangeS
         cs.delete("accounts", id);
         return Ok(cs);
     }
-    if balance != 0 && !force {
-        return Err(BudgetError::Invalid(
-            "This account still has a balance. Transfer it to another account first, or close anyway.".into(),
-        ));
+    if force {
+        let payee = transfer_payee(conn, id)?
+            .ok_or_else(|| BudgetError::Invalid("This account's transfer payee is missing.".into()))?;
+        let mut stmt = conn.prepare("SELECT id, transfer_id FROM rs_transactions WHERE account = ?")?;
+        let rows: Vec<(String, Option<String>)> =
+            stmt.query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+        for (tid, transfer) in rows {
+            if let Some(other) = transfer {
+                cs.set("transactions", &other, vec![("description", Value::Null), ("transferred_id", Value::Null)]);
+            }
+            cs.delete("transactions", &tid);
+        }
+        cs.delete("accounts", id);
+        cs.delete("payees", &payee);
+        return Ok(cs);
+    }
+    if balance != 0 {
+        return Err(BudgetError::Invalid("This account still has a balance. Transfer it to another account first.".into()));
     }
     cs.set("accounts", id, vec![("closed", Value::from(true))]);
     Ok(cs)
@@ -859,27 +979,41 @@ fn refresh_split_error(conn: &Connection, parent_id: &str, changed: Option<(&str
 
 /// Replaces a transaction's split lines (turns a normal transaction into a
 /// split, edits lines, or with no lines turns a split back into a normal one).
-pub fn set_splits(conn: &Connection, id: &str, lines: &[SplitLine]) -> Result<ChangeSet, BudgetError> {
+/// Also returns the ids of the lines it removes, which must go to
+/// `Budget::edit_transactions` as deleted so their transfers are removed.
+pub fn set_splits(conn: &Connection, id: &str, lines: &[SplitLine]) -> Result<(ChangeSet, Vec<String>), BudgetError> {
+    set_splits_with_amount(conn, id, lines, None)
+}
+
+/// `set_splits` when the parent's amount is changing in the same batch.
+pub fn set_splits_with_amount(
+    conn: &Connection,
+    id: &str,
+    lines: &[SplitLine],
+    parent_amount: Option<i64>,
+) -> Result<(ChangeSet, Vec<String>), BudgetError> {
     let current = crate::model::transaction(conn, id)?.ok_or_else(|| BudgetError::Invalid("Transaction not found.".into()))?;
     let account = current.account.clone().ok_or_else(|| BudgetError::Invalid("Transaction has no account.".into()))?;
     let date = date_to_db(&current.date).ok_or_else(|| BudgetError::Invalid("Invalid date".into()))?;
     let mut cs = ChangeSet::new();
+    let mut removed = Vec::new();
     let keep: Vec<&str> = lines.iter().filter_map(|l| l.id.as_deref()).collect();
     for child in &current.subtransactions {
         if !keep.contains(&child.id.as_str()) {
             cs.delete("transactions", &child.id);
+            removed.push(child.id.clone());
         }
     }
     if lines.is_empty() {
         if current.is_parent {
             cs.set("transactions", id, vec![("isParent", Value::from(false)), ("error", Value::Null)]);
         }
-        return Ok(cs);
+        return Ok((cs, removed));
     }
     cs.set(
         "transactions",
         id,
-        vec![("isParent", Value::from(true)), ("category", Value::Null), ("error", split_error(current.amount, lines).into())],
+        vec![("isParent", Value::from(true)), ("category", Value::Null), ("error", split_error(parent_amount.unwrap_or(current.amount), lines).into())],
     );
     for (i, line) in lines.iter().enumerate() {
         let sort_order = current.sort_order - (i as f64 + 1.0);
@@ -919,7 +1053,7 @@ pub fn set_splits(conn: &Connection, id: &str, lines: &[SplitLine]) -> Result<Ch
             }
         }
     }
-    Ok(cs)
+    Ok((cs, removed))
 }
 
 /// Deletes a transaction and, for a split, its lines (`idsWithChildren`).

@@ -43,6 +43,8 @@ struct Row {
 struct EditState {
     id: Option<String>,
     original: Option<Transaction>,
+    /// The editor's fields as loaded, to tell whether the user changed them.
+    loaded: String,
     splits: Option<Vec<SplitLine>>,
 }
 
@@ -88,6 +90,7 @@ pub struct Register {
     keep_filter: Cell<bool>,
     rows: RefCell<Vec<Row>>,
     loading: Cell<bool>,
+    quiet_save: Cell<bool>,
 }
 
 // ---------------------------------------------------------------- dates
@@ -280,7 +283,7 @@ impl Register {
                 if r.is_child {
                     return (String::new(), vec![]);
                 }
-                let pref = model::preference(&app.db, "dateFormat").ok().flatten().unwrap_or_else(|| "MM/dd/yyyy".into());
+                let pref = app.date_format.borrow().clone();
                 (format_date(&r.date, &pref), vec!["tnum"])
             },
             w.clone(),
@@ -419,6 +422,7 @@ impl Register {
             keep_filter: Cell::new(false),
             rows: RefCell::new(Vec::new()),
             loading: Cell::new(false),
+            quiet_save: Cell::new(false),
         });
 
         let w = Rc::downgrade(&reg);
@@ -433,7 +437,23 @@ impl Register {
             }
             let row = r.rows.borrow().get(pos as usize).cloned();
             if let Some(row) = row {
-                r.edit(Some(row.parent.clone().unwrap_or(row.id.clone())));
+                let target = row.parent.clone().unwrap_or(row.id.clone());
+                if r.editor.state.borrow().id.as_deref() == Some(target.as_str()) {
+                    return;
+                }
+                // Moving to another row saves what was typed (like leaving a
+                // row in the web register).
+                if r.editor_dirty() {
+                    r.save_quiet();
+                }
+                r.edit(Some(target));
+            }
+        });
+        // Enter or double-click on a row: start editing it.
+        let w = Rc::downgrade(&reg);
+        reg.view.connect_activate(move |_, _| {
+            if let Some(r) = w.upgrade() {
+                r.editor.payee.widget().grab_focus();
             }
         });
         let w = Rc::downgrade(&reg);
@@ -622,6 +642,8 @@ impl Register {
                         let mut r = to_row(c, None);
                         r.date = t.date.clone();
                         r.parent = Some(t.id.clone());
+                        r.cleared = t.cleared;
+                        r.reconciled = t.reconciled;
                         rows.push(r);
                     }
                 } else if t.category.as_ref() == Some(cat) {
@@ -692,7 +714,9 @@ impl Register {
         // The edited transaction may have changed (sync, undo) or vanished.
         if let Some(id) = selected_id {
             match model::transaction(&app.db, &id).ok().flatten() {
-                Some(t) if Some(&t) != self.editor.state.borrow().original.as_ref() => self.edit(Some(id)),
+                Some(t) if Some(&t) != self.editor.state.borrow().original.as_ref() && !self.editor_dirty() => {
+                    self.edit(Some(id))
+                }
                 None => self.new_transaction_quiet(),
                 _ => {}
             }
@@ -744,9 +768,11 @@ impl Register {
             if let Some(l) = btn.child().and_downcast::<gtk::Label>() {
                 l.set_xalign(0.0);
             }
-            let p = pop.clone();
+            let p = pop.downgrade();
             btn.connect_clicked(move |_| {
-                p.popdown();
+                if let Some(p) = p.upgrade() {
+                    p.popdown();
+                }
                 f();
             });
             b.append(&btn);
@@ -765,28 +791,42 @@ impl Register {
         let mut payee_choices: Vec<Choice> = payees
             .iter()
             .filter(|p| p.transfer_acct.is_none())
-            .map(|p| Choice { id: p.id.clone(), label: p.name.clone(), detail: if p.favorite { "★".into() } else { String::new() } })
+            .map(|p| Choice {
+                id: p.id.clone(),
+                label: p.name.clone(),
+                detail: if p.favorite { "★".into() } else { String::new() },
+                hidden: false,
+            })
             .collect();
         payee_choices.sort_by_key(|c| (c.detail.is_empty(), c.label.to_lowercase()));
         for p in payees.iter().filter(|p| p.transfer_acct.is_some()) {
             let acct = accounts.iter().find(|a| Some(&a.id) == p.transfer_acct.as_ref());
-            if acct.is_some_and(|a| !a.closed && Some(&a.id) != current.as_ref()) {
-                payee_choices.push(Choice { id: p.id.clone(), label: format!("Transfer: {}", p.name), detail: "Transfer".into() });
-            }
+            // Closed accounts (and this one) aren't offered, but existing
+            // transfers to them still display and save unchanged.
+            let hidden = acct.is_none_or(|a| a.closed || Some(&a.id) == current.as_ref());
+            payee_choices.push(Choice { id: p.id.clone(), label: format!("Transfer: {}", p.name), detail: "Transfer".into(), hidden });
         }
         self.editor.payee.set_choices(payee_choices);
 
         let mut cat_choices = Vec::new();
-        for g in groups.iter().filter(|g| !g.hidden || !g.is_income) {
-            for c in g.categories.iter().filter(|c| !c.hidden) {
-                cat_choices.push(Choice { id: c.id.clone(), label: c.name.clone(), detail: g.name.clone() });
+        for g in groups {
+            for c in &g.categories {
+                cat_choices.push(Choice {
+                    id: c.id.clone(),
+                    label: c.name.clone(),
+                    detail: g.name.clone(),
+                    hidden: c.hidden || g.hidden,
+                });
             }
         }
         self.editor.category.set_choices(cat_choices);
 
-        let open: Vec<&model::Account> = accounts.iter().filter(|a| !a.closed).collect();
-        let names: Vec<&str> = open.iter().map(|a| a.name.as_str()).collect();
-        let ids: Vec<String> = open.iter().map(|a| a.id.clone()).collect();
+        // Every account, so a transaction in a closed one keeps its account;
+        // closed ones are marked.
+        let names: Vec<String> =
+            accounts.iter().map(|a| if a.closed { format!("{} (closed)", a.name) } else { a.name.clone() }).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let ids: Vec<String> = accounts.iter().map(|a| a.id.clone()).collect();
         if *self.editor.account_ids.borrow() != ids {
             self.editor.account.set_model(Some(&gtk::StringList::new(&names)));
             *self.editor.account_ids.borrow_mut() = ids;
@@ -863,7 +903,7 @@ impl Register {
         self.selection.set_selected(gtk::INVALID_LIST_POSITION);
         self.loading.set(false);
         e.heading.set_text("New transaction");
-        let pref = model::preference(&app.db, "dateFormat").ok().flatten().unwrap_or_else(|| "MM/dd/yyyy".into());
+        let pref = app.date_format.borrow().clone();
         e.date.set_text(&format_date(&actual_budget::month::today(), &pref));
         e.payee.set(None);
         e.category.set(None);
@@ -874,8 +914,14 @@ impl Register {
         e.delete.set_visible(false);
         let current = self.account.borrow().clone();
         let idx = current.and_then(|id| e.account_ids.borrow().iter().position(|a| *a == id));
-        e.account.set_selected(idx.unwrap_or(0) as u32);
+        let first_open = model::accounts(&app.db).ok().and_then(|a| {
+            let ids = e.account_ids.borrow();
+            a.iter().filter(|a| !a.closed).find_map(|a| ids.iter().position(|x| *x == a.id))
+        });
+        e.account.set_selected(idx.or(first_open).unwrap_or(0) as u32);
         self.update_category_state();
+        let snap = self.snapshot();
+        e.state.borrow_mut().loaded = snap;
     }
 
     /// Loads a transaction into the editor.
@@ -884,7 +930,7 @@ impl Register {
         let Some(id) = id else { return self.new_transaction_quiet() };
         let Some(t) = model::transaction(&app.db, &id).ok().flatten() else { return };
         let e = &self.editor;
-        let pref = model::preference(&app.db, "dateFormat").ok().flatten().unwrap_or_else(|| "MM/dd/yyyy".into());
+        let pref = app.date_format.borrow().clone();
         e.heading.set_text(if t.reconciled { "Edit transaction (reconciled)" } else { "Edit transaction" });
         e.date.set_text(&format_date(&t.date, &pref));
         e.payee.set_by_id(t.payee.as_deref());
@@ -915,8 +961,10 @@ impl Register {
         } else {
             None
         };
-        *e.state.borrow_mut() = EditState { id: Some(id), original: Some(t), splits };
+        *e.state.borrow_mut() = EditState { id: Some(id), original: Some(t), splits, loaded: String::new() };
         self.update_category_state();
+        let snap = self.snapshot();
+        e.state.borrow_mut().loaded = snap;
     }
 
     fn wire_editor(self: &Rc<Self>) {
@@ -1014,6 +1062,35 @@ impl Register {
         }
     }
 
+    fn snapshot(&self) -> String {
+        let e = &self.editor;
+        format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
+            e.account.selected(),
+            e.date.text(),
+            e.payee.text(),
+            e.category.text(),
+            e.notes.text(),
+            e.outflow.text(),
+            e.inflow.text(),
+            e.cleared.is_active(),
+            e.state.borrow().splits,
+        )
+    }
+
+    /// Whether the editor holds changes the user hasn't saved.
+    fn editor_dirty(&self) -> bool {
+        let app_writable = self.app.upgrade().is_some_and(|a| a.writable);
+        app_writable && self.snapshot() != self.editor.state.borrow().loaded
+    }
+
+    /// Saves without moving focus or resetting the editor for the next entry.
+    fn save_quiet(self: &Rc<Self>) {
+        self.quiet_save.set(true);
+        self.save();
+        self.quiet_save.set(false);
+    }
+
     fn save(self: &Rc<Self>) {
         let Some(app) = self.app.upgrade() else { return };
         if !app.writable {
@@ -1021,7 +1098,7 @@ impl Register {
         }
         let e = &self.editor;
         let fmt = app.fmt.get();
-        let pref = model::preference(&app.db, "dateFormat").ok().flatten().unwrap_or_else(|| "MM/dd/yyyy".into());
+        let pref = app.date_format.borrow().clone();
         let Some(date) = parse_date(&e.date.text(), &pref) else {
             app.toast("Enter a valid date.");
             e.date.grab_focus();
@@ -1106,7 +1183,13 @@ impl Register {
                         date: Some(date).filter(|d| *d != orig.date),
                         amount: Some(amount).filter(|a| *a != orig.amount),
                         payee: Some(payee).filter(|p| *p != orig.payee),
-                        category: if orig.is_parent { None } else { Some(category).filter(|c| *c != orig.category) },
+                        // A split's category lives on its lines, unless it's
+                        // being turned back into a normal transaction.
+                        category: if orig.is_parent && splits.as_ref().is_none_or(|l| !l.is_empty()) {
+                            None
+                        } else {
+                            Some(category).filter(|c| *c != orig.category)
+                        },
                         notes: Some(notes).filter(|n| n.as_deref().unwrap_or("") != orig.notes.as_deref().unwrap_or("")),
                         cleared: Some(cleared).filter(|c| *c != orig.cleared),
                         reconciled: None,
@@ -1117,31 +1200,48 @@ impl Register {
                         cs.extend(ops::update_transaction(conn, &id, &u)?);
                     }
                     let new_lines = splits.unwrap_or_default();
-                    let old_lines: Vec<(Option<String>, i64, Option<String>, Option<String>)> = orig
+                    let old_lines: Vec<SplitLine> = orig
                         .subtransactions
                         .iter()
-                        .map(|c| (Some(c.id.clone()), c.amount, c.category.clone(), c.notes.clone()))
+                        .map(|c| SplitLine {
+                            id: Some(c.id.clone()),
+                            amount: c.amount,
+                            payee: c.payee.clone(),
+                            category: c.category.clone(),
+                            notes: c.notes.clone(),
+                        })
                         .collect();
-                    let new_cmp: Vec<(Option<String>, i64, Option<String>, Option<String>)> =
-                        new_lines.iter().map(|l| (l.id.clone(), l.amount, l.category.clone(), l.notes.clone())).collect();
-                    if new_cmp != old_lines {
-                        if !cs.is_empty() {
-                            // Apply the parent's edit first so the split
-                            // lines are checked against its new amount.
-                            s.budget.edit_transactions(cs, changed.clone(), Vec::new())?;
-                            cs = ops::ChangeSet::new();
+                    let mut deleted = Vec::new();
+                    if new_lines != old_lines {
+                        // Written after the parent's own edit in the same
+                        // batch; the split error uses the parent's new amount.
+                        let (scs, removed) = ops::set_splits_with_amount(conn, &id, &new_lines, u.amount)?;
+                        cs.extend(scs);
+                        // New lines copy the parent's stored date and account;
+                        // give them the edited ones.
+                        for l in new_lines.iter().filter(|l| !old_lines.iter().any(|o| o.id == l.id)) {
+                            let lid = l.id.clone().unwrap_or_default();
+                            if let Some(d) = u.date.as_deref().and_then(actual_budget::month::date_to_db) {
+                                cs.set("transactions", &lid, vec![("date", d.into())]);
+                            }
+                            if let Some(a) = &u.account {
+                                cs.set("transactions", &lid, vec![("acct", a.as_str().into())]);
+                            }
                         }
-                        let conn = s.budget.conn();
-                        cs.extend(ops::set_splits(conn, &id, &new_lines)?);
+                        changed.retain(|c| !removed.contains(c));
                         changed.extend(new_lines.iter().filter_map(|l| l.id.clone()));
+                        deleted = removed;
                     }
                     if cs.is_empty() {
                         return Ok(Default::default());
                     }
-                    s.budget.edit_transactions(cs, changed, Vec::new())
+                    s.budget.edit_transactions(cs, changed, deleted)
                 }
             }
         });
+        if self.quiet_save.get() {
+            return;
+        }
         if self.editor.state.borrow().id.is_none() {
             // Ready for the next one, keeping the date (YNAB4 habit).
             let date = self.editor.date.text();
@@ -1164,7 +1264,7 @@ impl Register {
         let row = self.rows.borrow().get(pos as usize).cloned();
         if let Some(row) = row {
             // Deleting a split line edits its parent's split.
-            if let Some(parent) = row.parent.clone().filter(|_| row.is_child) {
+            if let Some(parent) = row.parent.clone() {
                 self.edit(Some(parent));
                 let mut st = self.editor.state.borrow_mut();
                 if let Some(lines) = st.splits.as_mut() {
@@ -1278,10 +1378,11 @@ impl Register {
                 row.append(&remove);
                 list.append(&row);
                 let ws = widgets.clone();
-                let lst = list.clone();
+                let lst = list.downgrade();
                 let u = update.clone();
-                let r2 = row.clone();
+                let r2 = row.downgrade();
                 remove.connect_clicked(move |_| {
+                    let (Some(lst), Some(r2)) = (lst.upgrade(), r2.upgrade()) else { return };
                     lst.remove(&r2);
                     ws.borrow_mut().retain(|w| w.5 != r2);
                     u();
@@ -1314,13 +1415,24 @@ impl Register {
         d.set_close_response("cancel");
         d.set_default_response(Some("ok"));
         d.set_extra_child(Some(&content));
+        let line_payees: std::collections::HashMap<String, Option<String>> = self
+            .editor
+            .state
+            .borrow()
+            .splits
+            .iter()
+            .flatten()
+            .filter_map(|l| Some((l.id.clone()?, l.payee.clone())))
+            .collect();
         let w = Rc::downgrade(self);
         d.connect_response(None, move |_, resp| {
+            // Drop the line widgets (and the closures that reference them).
+            let lines = std::mem::take(&mut *widgets.borrow_mut());
             let Some(r) = w.upgrade() else { return };
             match resp {
                 "ok" => {
                     let mut out = Vec::new();
-                    for (id, cat, memo, o, i, _) in widgets.borrow().iter() {
+                    for (id, cat, memo, o, i, _) in lines.iter() {
                         let p = |e: &gtk::Entry| if e.text().trim().is_empty() { 0 } else { fmt.parse(&e.text()).unwrap_or(0) };
                         let category = cat.selected().filter(|c| c.label == cat.text()).map(|c| c.id);
                         let amount = p(i) - p(o);
@@ -1330,7 +1442,7 @@ impl Register {
                         out.push(SplitLine {
                             id: id.clone().or_else(|| Some(ops::new_id())),
                             amount,
-                            payee: None,
+                            payee: id.as_ref().and_then(|i| line_payees.get(i).cloned().flatten()),
                             category,
                             notes: Some(memo.text().to_string()).filter(|n| !n.is_empty()),
                         });
@@ -1423,6 +1535,8 @@ fn toggle_cleared(app: &Rc<App>, row: &Row) {
     if !app.writable || row.is_child {
         return;
     }
+    // A split line shown on its own (category filter) clears its parent.
+    let row = &Row { id: row.parent.clone().unwrap_or(row.id.clone()), ..row.clone() };
     if row.reconciled {
         app.toast("This transaction is reconciled. Edit it to change it.");
         return;
@@ -1452,6 +1566,7 @@ impl Editor {
         account.set_size_request(150, -1);
         let date = gtk::Entry::builder().placeholder_text("Date").width_chars(11).build();
         let payee = Autocomplete::new("Payee");
+        payee.set_allow_create(true);
         payee.widget().set_width_chars(14);
         let category = Autocomplete::new("Category");
         category.widget().set_width_chars(14);

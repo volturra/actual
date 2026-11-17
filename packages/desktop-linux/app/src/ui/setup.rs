@@ -34,6 +34,8 @@ struct Setup {
     spinner: gtk::Spinner,
     client: std::cell::RefCell<Option<ServerClient>>,
     on_open: Box<dyn Fn(OpenRequest)>,
+    /// Closes the budget that's open, before its files are replaced.
+    close_current: Box<dyn Fn()>,
 }
 
 fn friendly(e: &SyncError) -> String {
@@ -47,7 +49,12 @@ fn friendly(e: &SyncError) -> String {
 
 /// Shows the start window. `on_open` runs (and the window closes) once a
 /// budget is ready.
-pub fn show(gtk_app: &adw::Application, parent: Option<&gtk::Window>, on_open: impl Fn(OpenRequest) + 'static) {
+pub fn show(
+    gtk_app: &adw::Application,
+    parent: Option<&gtk::Window>,
+    on_open: impl Fn(OpenRequest) + 'static,
+    close_current: impl Fn() + 'static,
+) {
     let window = adw::Window::builder().application(gtk_app).title("Open a budget — Actual").default_width(560).default_height(640).build();
     if let Some(p) = parent {
         window.set_transient_for(Some(p));
@@ -135,6 +142,7 @@ pub fn show(gtk_app: &adw::Application, parent: Option<&gtk::Window>, on_open: i
         spinner,
         client: Default::default(),
         on_open: Box::new(on_open),
+        close_current: Box::new(close_current),
     });
 
     let w = Rc::downgrade(&s);
@@ -403,9 +411,19 @@ impl Setup {
 
     fn download(self: &Rc<Self>, file: RemoteFile, client: ServerClient, key: Option<Key>) {
         let root = config::budgets_dir();
+        let mut replace = None;
         if let Some(dir) = actual_budget::find_local_by_cloud_id(&root, &file.file_id) {
-            // Already here; opening syncs it up to date.
-            return self.finish(OpenRequest { dir, key, client: Some(client) });
+            // A reset or a new encryption key on the server gives the file a
+            // new group (or key) id; the local copy then can't sync and is
+            // replaced. Otherwise it's opened and syncs up to date.
+            let current = dir.read_meta().ok().is_some_and(|m| {
+                m.group_id() == file.group_id.as_deref() && m.encrypt_key_id() == file.encrypt_key_id.as_deref()
+            });
+            if current {
+                return self.finish(OpenRequest { dir, key, client: Some(client) });
+            }
+            replace = dir.path.file_name().map(|n| n.to_string_lossy().to_string());
+            (self.close_current)();
         }
         self.busy(true);
         self.toast(&format!("Downloading “{}”…", file.name));
@@ -414,7 +432,7 @@ impl Setup {
         background(
             move || {
                 std::fs::create_dir_all(&root).map_err(SyncError::from)?;
-                files::download(&c, &root, &file.file_id, k.as_ref(), None)
+                files::download(&c, &root, &file.file_id, k.as_ref(), replace.as_deref())
             },
             move |res| {
                 let Some(s) = w.upgrade() else { return };

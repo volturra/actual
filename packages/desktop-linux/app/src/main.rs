@@ -15,6 +15,7 @@ use rusqlite::{Connection, OpenFlags};
 use actual_budget::config::{self, Config};
 use actual_budget::{schema, Budget};
 use actual_sync::client::ServerClient;
+use actual_sync::crypto::Key;
 use actual_sync::files::BudgetDir;
 
 use engine::{Engine, EngineState};
@@ -106,11 +107,16 @@ fn show_setup(app: &adw::Application, parent: Option<&gtk::Window>) {
                 }
             });
         }
+    }, || {
+        if let Some(cur) = CURRENT.with(|c| c.borrow_mut().take()) {
+            cur.window.close();
+        }
     });
 }
 
 fn open_budget(app: &adw::Application, req: OpenRequest) -> Result<(), String> {
     let OpenRequest { dir, key, client } = req;
+    let key_copy = key.clone();
     let budget = Budget::open(dir.clone(), key).map_err(|e| e.to_string())?;
     let name = budget.name().to_string();
     let compat = budget.compat.clone();
@@ -128,6 +134,7 @@ fn open_budget(app: &adw::Application, req: OpenRequest) -> Result<(), String> {
     let _ = cfg.save();
 
     let client = if budget.meta.cloud_file_id().is_some() { client } else { None };
+    let client_copy = client.clone();
     let (tx, rx) = async_channel::unbounded();
     let engine = Engine::start(EngineState { budget, client }, tx);
     let ui = ui::App::new(app, engine.clone(), db, rx, compat, name);
@@ -135,6 +142,9 @@ fn open_budget(app: &adw::Application, req: OpenRequest) -> Result<(), String> {
     let a = app.clone();
     let w = ui.window.clone();
     *ui.on_switch_budget.borrow_mut() = Some(Box::new(move || show_setup(&a, Some(w.upcast_ref()))));
+
+    let (a, d, k, c) = (app.clone(), dir.clone(), key_copy, client_copy);
+    *ui.on_redownload.borrow_mut() = Some(Box::new(move || redownload(&a, d.clone(), k.clone(), c.clone())));
 
     // Follow the network: go offline quietly, sync as soon as it's back.
     let monitor = gtk::gio::NetworkMonitor::default();
@@ -149,6 +159,43 @@ fn open_budget(app: &adw::Application, req: OpenRequest) -> Result<(), String> {
     ui.window.present();
     CURRENT.with(|c| *c.borrow_mut() = Some(ui));
     Ok(())
+}
+
+/// Replaces the open budget with the server's copy (after a reset there).
+fn redownload(app: &adw::Application, dir: BudgetDir, key: Option<Key>, client: Option<ServerClient>) {
+    let Some(client) = client else { return show_setup(app, None) };
+    let Some(cloud) = dir.read_meta().ok().and_then(|m| m.cloud_file_id().map(str::to_string)) else {
+        return show_setup(app, None);
+    };
+    if let Some(cur) = CURRENT.with(|c| c.borrow_mut().take()) {
+        cur.window.close();
+    }
+    let local_id = dir.path.file_name().map(|n| n.to_string_lossy().to_string());
+    let root = dir.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(config::budgets_dir);
+    let a = app.clone();
+    let (c2, k2) = (client.clone(), key.clone());
+    ui::background(
+        move || actual_sync::files::download(&c2, &root, &cloud, k2.as_ref(), local_id.as_deref()),
+        move |res| {
+            let err = match res {
+                Ok(dir) => match open_budget(&a, OpenRequest { dir, key, client: Some(client) }) {
+                    Ok(()) => return,
+                    Err(e) => e,
+                },
+                // A new encryption password: the setup window asks for it.
+                Err(actual_sync::SyncError::DecryptFailure { .. }) => {
+                    "The budget's encryption password changed. Pick the budget again to enter it.".to_string()
+                }
+                Err(e) => e.to_string(),
+            };
+            show_setup(&a, None);
+            let d = adw::AlertDialog::new(Some("Couldn't download the budget"), Some(&err));
+            d.add_response("ok", "OK");
+            if let Some(w) = a.active_window() {
+                d.present(Some(&w));
+            }
+        },
+    );
 }
 
 fn install_actions(app: &adw::Application) {

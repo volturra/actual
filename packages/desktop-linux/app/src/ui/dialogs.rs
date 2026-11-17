@@ -63,7 +63,7 @@ fn ask(
         });
     }
     if let Some(entry) = activate {
-        let d2 = d.clone();
+        let d2 = d.downgrade();
         entry.connect_activate(move |_| {
             if done.get() {
                 return;
@@ -71,7 +71,9 @@ fn ask(
             let Some(app) = weak.upgrade() else { return };
             if on_ok(&app) {
                 done.set(true);
-                d2.force_close();
+                if let Some(d) = d2.upgrade() {
+                    d.force_close();
+                }
             }
         });
     }
@@ -310,7 +312,7 @@ pub fn close_account(app: &Rc<App>, id: &str) {
         return;
     }
     let others: Vec<model::Account> = accounts.into_iter().filter(|a| a.id != acct.id && !a.closed).collect();
-    let mut labels = vec!["Don't transfer — close anyway".to_string()];
+    let mut labels = vec!["Don't transfer — delete the account and its transactions".to_string()];
     labels.extend(others.iter().map(|a| a.name.clone()));
     let dd = choice_dropdown(&labels);
     if !others.is_empty() {
@@ -324,8 +326,8 @@ pub fn close_account(app: &Rc<App>, id: &str) {
         let target = if idx == 0 { None } else { others.get(idx - 1).map(|a| a.id.clone()) };
         let id = id.clone();
         app.engine.run("Close account", move |s| {
-            if let Some(target) = target {
-                let payee = ops::transfer_payee(s.budget.conn(), &target)?
+            if let Some(target) = &target {
+                let payee = ops::transfer_payee(s.budget.conn(), target)?
                     .ok_or_else(|| BudgetError::Invalid("The other account has no transfer payee.".into()))?;
                 let tx = NewTransaction {
                     id: None,
@@ -334,7 +336,7 @@ pub fn close_account(app: &Rc<App>, id: &str) {
                     amount: -balance,
                     payee: Some(payee),
                     category: None,
-                    notes: None,
+                    notes: Some("Closing account".into()),
                     cleared: true,
                     starting_balance_flag: false,
                     splits: Vec::new(),
@@ -343,8 +345,17 @@ pub fn close_account(app: &Rc<App>, id: &str) {
                 let (ids, cs) = ops::insert_transaction(&tx)?;
                 s.budget.edit_transactions(cs, ids, Vec::new())?;
             }
-            let cs = ops::close_account(s.budget.conn(), &id, true)?;
-            s.budget.apply(cs)
+            match target {
+                Some(_) => {
+                    let mut cs = ops::ChangeSet::new();
+                    cs.set("accounts", &id, vec![("closed", true.into())]);
+                    s.budget.apply(cs)
+                }
+                None => {
+                    let cs = ops::close_account(s.budget.conn(), &id, true)?;
+                    s.budget.apply(cs)
+                }
+            }
         });
         true
     });
@@ -401,14 +412,87 @@ pub fn relogin(app: &Rc<App>) {
             }
         });
     }
-    let d2 = d.clone();
+    let d2 = d.downgrade();
     entry.connect_activate(move |_| {
         RELOGIN_OPEN.with(|c| c.set(false));
         if let Some(app) = weak.upgrade() {
             submit(&app);
         }
-        d2.force_close();
+        if let Some(d) = d2.upgrade() {
+            d.force_close();
+        }
     });
     d.present(Some(&app.window));
     entry.grab_focus();
+}
+
+/// Asks to pick one of `options`; `cb` gets its index.
+pub fn prompt_choice(
+    app: &Rc<App>,
+    title: &str,
+    label: &str,
+    options: &[String],
+    action: &str,
+    cb: impl Fn(&Rc<App>, usize) + 'static,
+) {
+    let dd = choice_dropdown(options);
+    let extra = labelled(label, &dd);
+    ask(app, title, "", Some(extra.upcast_ref()), action, false, None, move |app| {
+        cb(app, dd.selected() as usize);
+        true
+    });
+}
+
+/// Asks for an amount and one of `options` (e.g. "move 50 to Groceries").
+pub fn prompt_amount_choice(
+    app: &Rc<App>,
+    title: &str,
+    initial: i64,
+    label: &str,
+    options: &[String],
+    action: &str,
+    cb: impl Fn(&Rc<App>, i64, usize) + 'static,
+) {
+    let entry = gtk::Entry::builder().text(app.fmt.get().format(initial)).xalign(1.0).build();
+    entry.set_enable_undo(false);
+    let dd = choice_dropdown(options);
+    let b = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    b.append(&labelled("Amount", &entry));
+    b.append(&labelled(label, &dd));
+    let e = entry.clone();
+    ask(app, title, "", Some(b.upcast_ref()), action, false, Some(&entry), move |app| match app.fmt.get().parse(&e.text()) {
+        Some(v) if v > 0 => {
+            cb(app, v, dd.selected() as usize);
+            true
+        }
+        _ => {
+            app.toast("Enter an amount above zero.");
+            false
+        }
+    });
+}
+
+/// The server copy was reset or re-keyed: this copy can't sync any more and
+/// has to be replaced with a fresh download.
+pub fn redownload(app: &Rc<App>) {
+    let d = adw::AlertDialog::new(
+        Some("This budget was reset on the server"),
+        Some(
+            "Another device reset sync or changed the encryption password. Download the server's copy to keep syncing. \
+             Changes made here since the last sync will be replaced.",
+        ),
+    );
+    d.add_responses(&[("later", "Not now"), ("ok", "Download again")]);
+    d.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
+    d.set_default_response(Some("ok"));
+    d.set_close_response("later");
+    let weak = app.weak();
+    d.connect_response(Some("ok"), move |_, _| {
+        if let Some(app) = weak.upgrade() {
+            if let Some(f) = app.on_redownload.borrow().as_ref() {
+                f();
+            }
+        }
+    });
+    d.present(Some(&app.window));
 }

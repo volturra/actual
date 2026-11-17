@@ -24,7 +24,10 @@ the same budget at the same time.
   network returns.
 
 Not yet supported: rules, schedules, reports, bank sync, tracking budgets and
-OpenID login. A budget whose database was migrated by a newer or older Actual
+OpenID login. The register edits one transaction at a time in an editor bar
+(no multi-select, inline editing, column sorting or filters beyond search),
+reconciling is a single step rather than a reconcile mode, and categories are
+reordered with Move up / Move down rather than drag and drop. A budget whose database was migrated by a newer or older Actual
 than this client was built against opens read-only.
 
 ## Layout

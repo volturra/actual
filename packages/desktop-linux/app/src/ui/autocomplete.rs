@@ -7,13 +7,19 @@ use std::rc::Rc;
 
 use gtk::prelude::*;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Choice {
     pub id: String,
     pub label: String,
     /// Shown dimmed after the label (e.g. the category's group).
     pub detail: String,
+    /// Not offered while typing, but still shown when a transaction already
+    /// uses it (a hidden category, a closed account's transfer payee).
+    pub hidden: bool,
 }
+
+/// The id of the "Create …" row, which keeps the typed text as a new value.
+const CREATE_ID: &str = "\u{0}create";
 
 struct Inner {
     entry: gtk::Entry,
@@ -23,6 +29,7 @@ struct Inner {
     shown: RefCell<Vec<Choice>>,
     selected: RefCell<Option<Choice>>,
     suppress: std::cell::Cell<bool>,
+    allow_create: std::cell::Cell<bool>,
     on_pick: RefCell<Option<Box<dyn Fn(&Choice)>>>,
 }
 
@@ -52,6 +59,7 @@ impl Autocomplete {
             shown: RefCell::new(Vec::new()),
             selected: RefCell::new(None),
             suppress: std::cell::Cell::new(false),
+            allow_create: std::cell::Cell::new(false),
             on_pick: RefCell::new(None),
         });
         let ac = Autocomplete(inner);
@@ -146,6 +154,11 @@ impl Autocomplete {
         *self.0.choices.borrow_mut() = choices;
     }
 
+    /// Offers a "Create “…”" row for text that matches no choice exactly.
+    pub fn set_allow_create(&self, allow: bool) {
+        self.0.allow_create.set(allow);
+    }
+
     pub fn choices(&self) -> Vec<Choice> {
         self.0.choices.borrow().clone()
     }
@@ -186,16 +199,26 @@ impl Autocomplete {
     }
 
     fn refilter(&self, show: bool) {
-        let q = self.0.entry.text().to_lowercase();
-        let shown: Vec<Choice> = self
+        let text = self.0.entry.text().trim().to_string();
+        let q = text.to_lowercase();
+        let mut shown: Vec<Choice> = self
             .0
             .choices
             .borrow()
             .iter()
-            .filter(|c| q.is_empty() || c.label.to_lowercase().contains(&q) || c.detail.to_lowercase().contains(&q))
+            .filter(|c| !c.hidden && (q.is_empty() || c.label.to_lowercase().contains(&q) || c.detail.to_lowercase().contains(&q)))
             .take(50)
             .cloned()
             .collect();
+        // Prefer the first name that starts with what was typed; if none
+        // does, the "Create" row is the default so a new name isn't
+        // silently replaced by a longer existing one.
+        let starts = shown.iter().position(|c| c.label.to_lowercase().starts_with(&q));
+        let mut preselect = starts.unwrap_or(0);
+        if self.0.allow_create.get() && !q.is_empty() && !shown.iter().any(|c| c.label.to_lowercase() == q) {
+            shown.insert(0, Choice { id: CREATE_ID.into(), label: format!("Create “{text}”"), ..Default::default() });
+            preselect = starts.map(|i| i + 1).unwrap_or(0);
+        }
         while let Some(row) = self.0.list.row_at_index(0) {
             self.0.list.remove(&row);
         }
@@ -213,7 +236,7 @@ impl Autocomplete {
             }
             self.0.list.append(&b);
         }
-        if let Some(r) = self.0.list.row_at_index(0) {
+        if let Some(r) = self.0.list.row_at_index(preselect as i32) {
             if !q.is_empty() {
                 self.0.list.select_row(Some(&r));
             }
@@ -229,6 +252,13 @@ impl Autocomplete {
 
     fn pick_index(&self, idx: usize) {
         let Some(c) = self.0.shown.borrow().get(idx).cloned() else { return };
+        if c.id == CREATE_ID {
+            // Keep the typed text as a new name.
+            *self.0.selected.borrow_mut() = None;
+            self.0.popover.popdown();
+            self.0.entry.set_position(-1);
+            return;
+        }
         self.set(Some(&c));
         self.0.entry.set_position(-1);
         if let Some(f) = self.0.on_pick.borrow().as_ref() {

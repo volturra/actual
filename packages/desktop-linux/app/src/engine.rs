@@ -56,16 +56,22 @@ pub enum Event {
 #[derive(Clone)]
 pub struct Engine {
     tx: mpsc::Sender<Msg>,
+    /// Disconnects when the engine thread has exited.
+    finished: std::sync::Arc<std::sync::Mutex<mpsc::Receiver<()>>>,
 }
 
 impl Engine {
     pub fn start(state: EngineState, events: async_channel::Sender<Event>) -> Engine {
         let (tx, rx) = mpsc::channel::<Msg>();
+        let (done_tx, done_rx) = mpsc::channel::<()>();
         thread::Builder::new()
             .name("actual-engine".into())
-            .spawn(move || run(state, rx, events))
+            .spawn(move || {
+                run(state, rx, events);
+                drop(done_tx);
+            })
             .expect("spawn engine");
-        Engine { tx }
+        Engine { tx, finished: std::sync::Arc::new(std::sync::Mutex::new(done_rx)) }
     }
 
     /// Runs `job` on the engine. `label` names the action in error toasts.
@@ -81,8 +87,14 @@ impl Engine {
         let _ = self.tx.send(Msg::SetOnline(online));
     }
 
-    pub fn shutdown(&self) {
+    /// Stops the engine after it pushes pending changes, waiting up to
+    /// `timeout` so they reach the server before the app exits or reopens
+    /// the same budget.
+    pub fn shutdown_wait(&self, timeout: Duration) {
         let _ = self.tx.send(Msg::Shutdown);
+        if let Ok(rx) = self.finished.lock() {
+            let _ = rx.recv_timeout(timeout);
+        }
     }
 }
 

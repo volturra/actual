@@ -45,6 +45,9 @@ pub enum BudgetError {
 struct UndoEntry {
     before: Vec<Change>,
     after: Vec<Change>,
+    /// `tombstone = 0` for rows the step created, sent again on redo
+    /// (`redoResurrections` in loot-core's undo.ts).
+    resurrect: Vec<Change>,
 }
 
 /// An open budget.
@@ -171,29 +174,41 @@ impl Budget {
         self.conn().prepare(&sql).is_ok()
     }
 
-    /// Records the values `changes` will overwrite, for undo.
-    fn snapshot(&self, changes: &[Change]) -> Result<Vec<Change>, BudgetError> {
+    /// Records the values `changes` will overwrite, for undo, following
+    /// `undoMessage` in loot-core's undo.ts: a row that didn't exist is
+    /// deleted (tombstoned), budget cells go back to 0, notes to null, and
+    /// mapping rows are left alone. Also returns the resurrections redo
+    /// needs for those new rows.
+    fn snapshot(&self, changes: &[Change]) -> Result<(Vec<Change>, Vec<Change>), BudgetError> {
         let mut seen = HashSet::new();
         let mut before = Vec::new();
+        let mut resurrect = Vec::new();
         for c in changes {
             if !seen.insert((c.dataset.clone(), c.row.clone(), c.column.clone())) {
                 continue;
             }
-            match self.current_value(c)? {
-                Some(v) => before.push(Change { value: v, ..c.clone() }),
-                None => {
-                    // The row is new: undo deletes it (or blanks the cell).
-                    if self.has_tombstone(&c.dataset) {
-                        if seen.insert((c.dataset.clone(), c.row.clone(), "tombstone".into())) {
-                            before.push(Change::new(&c.dataset, &c.row, "tombstone", 1i64));
-                        }
-                    } else {
-                        before.push(Change { value: Value::Null, ..c.clone() });
-                    }
+            if let Some(v) = self.current_value(c)? {
+                before.push(Change { value: v, ..c.clone() });
+                continue;
+            }
+            match c.dataset.as_str() {
+                "category_mapping" | "payee_mapping" => {}
+                "zero_budget_months" | "zero_budgets" | "reflect_budgets" => match c.column.as_str() {
+                    "buffered" | "amount" | "carryover" => before.push(Change { value: Value::Number(0.0), ..c.clone() }),
+                    "goal" | "long_goal" => before.push(Change { value: Value::Null, ..c.clone() }),
+                    _ => {}
+                },
+                "notes" => before.push(Change { value: Value::Null, ..c.clone() }),
+                _ if self.has_tombstone(&c.dataset)
+                    && seen.insert((c.dataset.clone(), c.row.clone(), "tombstone".into())) =>
+                {
+                    before.push(Change::new(&c.dataset, &c.row, "tombstone", 1i64));
+                    resurrect.push(Change::new(&c.dataset, &c.row, "tombstone", 0i64));
                 }
+                _ => {}
             }
         }
-        Ok(before)
+        Ok((before, resurrect))
     }
 
     fn send(&mut self, changes: Vec<Change>) -> Result<Changed, BudgetError> {
@@ -214,9 +229,10 @@ impl Budget {
         let mut entry = UndoEntry::default();
         let mut changed = Changed::default();
         for cs in steps {
-            let before = self.snapshot(&cs.changes)?;
+            let (before, resurrect) = self.snapshot(&cs.changes)?;
             entry.after.extend(cs.changes.iter().cloned());
             entry.before.splice(0..0, before);
+            entry.resurrect.extend(resurrect);
             changed.tables.extend(self.send(cs.changes)?.tables);
         }
         if !entry.after.is_empty() {
@@ -242,14 +258,28 @@ impl Budget {
                 (id.clone(), t.and_then(|t| t.transfer_id))
             })
             .collect();
-        let before = self.snapshot(&cs.changes)?;
+        let (before, mut resurrect) = self.snapshot(&cs.changes)?;
         let after1 = cs.changes.clone();
         let mut changed = self.send(cs.changes)?;
-        let followups = ops::transfer_followups(self.conn(), &changed_ids, &deleted)?;
-        let before2 = self.snapshot(&followups.changes)?;
-        let after2 = followups.changes.clone();
-        changed.tables.extend(self.send(followups.changes)?.tables);
-        let mut entry = UndoEntry { before: before2, after: after1 };
+        // The follow-ups read the first step's result, so it's committed
+        // first; if they can't be built or sent, roll the first step back
+        // rather than leave a half-made transfer.
+        let step2 = ops::transfer_followups(self.conn(), &changed_ids, &deleted).and_then(|f| {
+            let (before2, resurrect2) = self.snapshot(&f.changes)?;
+            let after2 = f.changes.clone();
+            let t = self.send(f.changes)?;
+            Ok((before2, resurrect2, after2, t))
+        });
+        let (before2, resurrect2, after2, t2) = match step2 {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = self.send(before);
+                return Err(e);
+            }
+        };
+        changed.tables.extend(t2.tables);
+        resurrect.extend(resurrect2);
+        let mut entry = UndoEntry { before: before2, after: after1, resurrect };
         entry.before.extend(before);
         entry.after.extend(after2);
         self.undo.push(entry);
@@ -278,7 +308,9 @@ impl Budget {
     pub fn redo(&mut self) -> Result<Changed, BudgetError> {
         self.ensure_writable()?;
         let Some(entry) = self.redo.pop() else { return Ok(Changed::default()) };
-        let changed = self.send(entry.after.clone())?;
+        let mut msgs = entry.after.clone();
+        msgs.extend(entry.resurrect.iter().cloned());
+        let changed = self.send(msgs)?;
         self.undo.push(entry);
         Ok(changed)
     }

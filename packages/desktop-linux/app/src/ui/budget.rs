@@ -33,6 +33,15 @@ pub struct BudgetView {
     /// Budget-cell entries in display order, per month, for Enter-to-next.
     entries: RefCell<Vec<(String, Month, gtk::Entry)>>,
     data: RefCell<Option<EnvelopeBudget>>,
+    /// The budget cell being typed in; refreshes wait until it's committed
+    /// so a background sync can't throw the edit away.
+    dirty: RefCell<Option<(String, Month)>>,
+    pending_refresh: Cell<bool>,
+}
+
+/// Boxes a menu action (lets `vec![]` of mixed closures type-check).
+pub fn boxed(f: impl Fn() + 'static) -> Box<dyn Fn()> {
+    Box::new(f)
 }
 
 pub fn menu_popover(parent: &impl IsA<gtk::Widget>, items: Vec<(String, Box<dyn Fn()>)>) -> gtk::Popover {
@@ -44,9 +53,11 @@ pub fn menu_popover(parent: &impl IsA<gtk::Widget>, items: Vec<(String, Box<dyn 
         if let Some(l) = btn.child().and_downcast::<gtk::Label>() {
             l.set_xalign(0.0);
         }
-        let p = pop.clone();
+        let p = pop.downgrade();
         btn.connect_clicked(move |_| {
-            p.popdown();
+            if let Some(p) = p.upgrade() {
+                    p.popdown();
+                }
             f();
         });
         b.append(&btn);
@@ -125,28 +136,27 @@ impl BudgetView {
             focus_next: RefCell::new(None),
             entries: RefCell::new(Vec::new()),
             data: RefCell::new(None),
+            dirty: RefCell::new(None),
+            pending_refresh: Cell::new(false),
         });
         month_btns[1].set_active(true);
 
         let w = Rc::downgrade(&view);
         prev.connect_clicked(move |_| {
             if let Some(v) = w.upgrade() {
-                v.start.set(v.start.get().prev());
-                v.rebuild();
+                v.set_start(v.start.get().prev());
             }
         });
         let w = Rc::downgrade(&view);
         next.connect_clicked(move |_| {
             if let Some(v) = w.upgrade() {
-                v.start.set(v.start.get().next());
-                v.rebuild();
+                v.set_start(v.start.get().next());
             }
         });
         let w = Rc::downgrade(&view);
         today.connect_clicked(move |_| {
             if let Some(v) = w.upgrade() {
-                v.start.set(Month::current());
-                v.rebuild();
+                v.set_start(Month::current());
             }
         });
         for (i, b) in month_btns.iter().enumerate() {
@@ -155,7 +165,7 @@ impl BudgetView {
                 if b.is_active() {
                     if let Some(v) = w.upgrade() {
                         v.count.set(i + 1);
-                        v.rebuild();
+                        v.set_start(v.start.get());
                     }
                 }
             });
@@ -179,7 +189,7 @@ impl BudgetView {
             });
         });
 
-        // Ctrl+Left/Right page months.
+        // Alt+Left/Right page months.
         let keys = gtk::EventControllerKey::new();
         let w = Rc::downgrade(&view);
         keys.connect_key_pressed(move |_, key, _, mods| {
@@ -189,13 +199,11 @@ impl BudgetView {
             }
             match key {
                 gtk::gdk::Key::Left => {
-                    v.start.set(v.start.get().prev());
-                    v.rebuild();
+                    v.set_start(v.start.get().prev());
                     glib::Propagation::Stop
                 }
                 gtk::gdk::Key::Right => {
-                    v.start.set(v.start.get().next());
-                    v.rebuild();
+                    v.set_start(v.start.get().next());
                     glib::Propagation::Stop
                 }
                 _ => glib::Propagation::Proceed,
@@ -212,10 +220,38 @@ impl BudgetView {
     /// Recomputes the budget and redraws.
     pub fn refresh(self: &Rc<Self>) {
         let Some(app) = self.app.upgrade() else { return };
+        if self.dirty.borrow().is_some() {
+            self.pending_refresh.set(true);
+            return;
+        }
+        self.pending_refresh.set(false);
+        // Keep keyboard focus on the same cell across the redraw.
+        if self.focus_next.borrow().is_none() {
+            let focused = self
+                .entries
+                .borrow()
+                .iter()
+                .find(|(_, _, e)| e.state_flags().contains(gtk::StateFlags::FOCUS_WITHIN))
+                .map(|(c, m, _)| (c.clone(), *m));
+            *self.focus_next.borrow_mut() = focused;
+        }
         match envelope::compute(&app.db, Month::current()) {
             Ok(b) => *self.data.borrow_mut() = Some(b),
             Err(e) => app.toast(&format!("Could not compute budget: {e}")),
         }
+        self.rebuild();
+    }
+
+    /// Moves the first visible month, kept within the budget's range.
+    fn set_start(self: &Rc<Self>, m: Month) {
+        let mut m = m;
+        if let Some(d) = self.data.borrow().as_ref() {
+            if let (Some(first), Some(last)) = (d.first(), d.last()) {
+                let max = last.plus(1 - self.count.get() as i32).max(first);
+                m = m.min(max).max(first);
+            }
+        }
+        self.start.set(m);
         self.rebuild();
     }
 
@@ -487,6 +523,31 @@ impl BudgetView {
                             s.budget.apply(cs)
                         })
                     })),
+                    mk("Budget 6-month average", {
+                        let a = app.clone();
+                        Box::new(move || {
+                            a.engine.run("6-month average", move |s| {
+                                let env = s.budget.envelope()?;
+                                let cs = ops::set_n_month_avg(s.budget.conn(), &env, m, 6)?;
+                                s.budget.apply(cs)
+                            })
+                        })
+                    }),
+                    mk("Budget 12-month average", {
+                        let a = app.clone();
+                        Box::new(move || {
+                            a.engine.run("12-month average", move |s| {
+                                let env = s.budget.envelope()?;
+                                let cs = ops::set_n_month_avg(s.budget.conn(), &env, m, 12)?;
+                                s.budget.apply(cs)
+                            })
+                        })
+                    }),
+                    mk("Move To Be Budgeted to a category…", {
+                        let a = app.clone();
+                        let v = v.clone();
+                        Box::new(move || v.move_available_dialog(&a, m))
+                    }),
                     mk("Set all budgets to zero", Box::new(move || {
                         a3.engine.run("Set to zero", move |s| {
                             let cs = ops::set_zero(s.budget.conn(), m)?;
@@ -577,68 +638,123 @@ impl BudgetView {
     }
 
     fn wire_budget_entry(self: &Rc<Self>, app: &Rc<App>, entry: &gtk::Entry, cat: String, m: Month, current: i64) {
+        // Undo here is the budget's, not the text field's.
+        entry.set_enable_undo(false);
         let fmt = app.fmt.get();
+        // One commit per visit: Enter moves focus, which would otherwise
+        // commit a second time from the focus-leave handler.
+        let done = Rc::new(Cell::new(false));
         let commit = {
             let w = Rc::downgrade(self);
             let cat = cat.clone();
-            Rc::new(move |e: &gtk::Entry, move_down: bool| {
+            let done = done.clone();
+            Rc::new(move |e: &gtk::Entry, step: i32| {
                 let Some(v) = w.upgrade() else { return };
                 let Some(app) = v.app.upgrade() else { return };
-                let text = e.text().to_string();
-                let parsed = if text.trim().is_empty() { Some(0) } else { fmt.parse(&text) };
-                if move_down {
+                let target = (step != 0).then(|| {
                     let entries = v.entries.borrow();
-                    let pos = entries.iter().position(|(c, mm, _)| *c == cat && *mm == m);
-                    let next = pos.and_then(|p| entries.iter().skip(p + 1).find(|(_, mm, _)| *mm == m));
-                    *v.focus_next.borrow_mut() = next.map(|(c, mm, _)| (c.clone(), *mm));
-                    if let Some((_, _, ne)) = next {
-                        ne.grab_focus();
+                    let col: Vec<&(String, Month, gtk::Entry)> = entries.iter().filter(|(_, mm, _)| *mm == m).collect();
+                    let pos = col.iter().position(|(c, _, _)| *c == cat)? as i32 + step;
+                    (pos >= 0).then(|| col.get(pos as usize).map(|(c, mm, e)| (c.clone(), *mm, e.clone()))).flatten()
+                });
+                let target = target.flatten();
+                if !done.replace(true) {
+                    let text = e.text().to_string();
+                    let parsed = if text.trim().is_empty() { Some(0) } else { fmt.parse(&text) };
+                    match parsed {
+                        Some(amount) if amount != current && app.writable => {
+                            *v.focus_next.borrow_mut() = target.as_ref().map(|(c, mm, _)| (c.clone(), *mm));
+                            let cat = cat.clone();
+                            app.engine.run("Budget", move |s| {
+                                let cs = ops::set_budget(s.budget.conn(), m, &cat, amount)?;
+                                s.budget.apply(cs)
+                            });
+                        }
+                        Some(_) => {
+                            if text != fmt.format(current) {
+                                e.set_text(&fmt.format(current));
+                            }
+                        }
+                        None => {
+                            app.toast(&format!("“{text}” isn't an amount"));
+                            e.set_text(&fmt.format(current));
+                        }
+                    }
+                    // After any set_text above, whose intermediate empty
+                    // text would mark the cell dirty again.
+                    if v.dirty.borrow().as_ref().is_some_and(|(c, mm)| *c == cat && *mm == m) {
+                        *v.dirty.borrow_mut() = None;
+                    }
+                    if v.pending_refresh.get() {
+                        let v2 = v.clone();
+                        glib::idle_add_local_once(move || v2.refresh());
                     }
                 }
-                match parsed {
-                    Some(amount) if amount != current && app.writable => {
-                        let cat = cat.clone();
-                        app.engine.run("Budget", move |s| {
-                            let cs = ops::set_budget(s.budget.conn(), m, &cat, amount)?;
-                            s.budget.apply(cs)
-                        });
-                    }
-                    Some(_) => e.set_text(&fmt.format(current)),
-                    None => {
-                        app.toast(&format!("“{text}” isn't an amount"));
-                        e.set_text(&fmt.format(current));
-                    }
+                if let Some((_, _, ne)) = target {
+                    ne.grab_focus();
                 }
             })
         };
         let c = commit.clone();
-        entry.connect_activate(move |e| c(e, true));
+        entry.connect_activate(move |e| c(e, 1));
+        {
+            let w = Rc::downgrade(self);
+            let cat = cat.clone();
+            entry.connect_changed(move |e| {
+                let Some(v) = w.upgrade() else { return };
+                if e.state_flags().contains(gtk::StateFlags::FOCUS_WITHIN) && e.text() != fmt.format(current) {
+                    *v.dirty.borrow_mut() = Some((cat.clone(), m));
+                }
+            });
+        }
         let focus = gtk::EventControllerFocus::new();
         let e2 = entry.clone();
+        let d = done.clone();
         focus.connect_enter(move |_| {
+            d.set(false);
             let e = e2.clone();
             glib::idle_add_local_once(move || e.select_region(0, -1));
         });
         let e3 = entry.clone();
         let c = commit.clone();
-        let done = Rc::new(Cell::new(false));
         let d = done.clone();
         focus.connect_leave(move |_| {
-            if !d.get() && e3.text() != fmt.format(current) {
-                d.set(true);
-                c(&e3, false);
+            if !d.get() {
+                c(&e3, 0);
             }
         });
         entry.add_controller(focus);
         let keys = gtk::EventControllerKey::new();
         let e4 = entry.clone();
-        keys.connect_key_pressed(move |_, key, _, _| {
-            if key == gtk::gdk::Key::Escape {
-                e4.set_text(&fmt.format(current));
-                e4.select_region(0, -1);
-                return glib::Propagation::Stop;
+        let w = Rc::downgrade(self);
+        let c = commit.clone();
+        keys.connect_key_pressed(move |_, key, _, mods| {
+            match key {
+                gtk::gdk::Key::Escape => {
+                    e4.set_text(&fmt.format(current));
+                    e4.select_region(0, -1);
+                    if let Some(v) = w.upgrade() {
+                        *v.dirty.borrow_mut() = None;
+                        if v.pending_refresh.get() {
+                            v.refresh();
+                        }
+                    }
+                    glib::Propagation::Stop
+                }
+                gtk::gdk::Key::Up => {
+                    c(&e4, -1);
+                    glib::Propagation::Stop
+                }
+                gtk::gdk::Key::Down => {
+                    c(&e4, 1);
+                    glib::Propagation::Stop
+                }
+                gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter if mods.contains(gtk::gdk::ModifierType::SHIFT_MASK) => {
+                    c(&e4, -1);
+                    glib::Propagation::Stop
+                }
+                _ => glib::Propagation::Proceed,
             }
-            glib::Propagation::Proceed
         });
         entry.add_controller(keys);
     }
@@ -663,6 +779,38 @@ impl BudgetView {
             let p = p.clone();
             glib::idle_add_local_once(move || p.unparent());
         });
+
+        // Quick budget values for this one cell (the web's per-category
+        // budget menu).
+        let t = gtk::Label::builder().label("Set budgeted to").xalign(0.0).build();
+        t.add_css_class("heading");
+        b.append(&t);
+        let quick = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).max_children_per_line(3).build();
+        let choices: [(&str, i32); 5] = [("Last month", -1), ("3-mo avg", 3), ("6-mo avg", 6), ("12-mo avg", 12), ("Zero", 0)];
+        for (label, kind) in choices {
+            let btn = gtk::Button::with_label(label);
+            btn.add_css_class("flat");
+            let (a, p, cat2) = (app.clone(), pop.downgrade(), cat.to_string());
+            btn.connect_clicked(move |_| {
+                let cat = cat2.clone();
+                a.engine.run("Budget", move |s| {
+                    let env = s.budget.envelope()?;
+                    let amount = match kind {
+                        -1 => env.category(m.prev(), &cat).budgeted,
+                        0 => 0,
+                        n => -ops::category_average(s.budget.conn(), &env, m, n, &cat)?,
+                    };
+                    let cs = ops::set_budget(s.budget.conn(), m, &cat, amount)?;
+                    s.budget.apply(cs)
+                });
+                if let Some(p) = p.upgrade() {
+                    p.popdown();
+                }
+            });
+            quick.insert(&btn, -1);
+        }
+        b.append(&quick);
+        b.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 
         // Targets: To Be Budgeted plus every visible expense category.
         let mut names = vec!["To Be Budgeted".to_string()];
@@ -689,7 +837,7 @@ impl BudgetView {
             b.append(&btn);
             let ids2 = ids.clone();
             let a = app.clone();
-            let p = pop.clone();
+            let p = pop.downgrade();
             let cat2 = cat.to_string();
             btn.connect_clicked(move |_| {
                 let from = ids2.get(from.selected() as usize).cloned().flatten();
@@ -702,7 +850,9 @@ impl BudgetView {
                     }
                     s.budget.apply(cs)
                 });
-                p.popdown();
+                if let Some(p) = p.upgrade() {
+                    p.popdown();
+                }
             });
             b.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         }
@@ -718,7 +868,7 @@ impl BudgetView {
         let mv = gtk::Button::with_label("Move");
         b.append(&mv);
         let a = app.clone();
-        let p = pop.clone();
+        let p = pop.downgrade();
         let cat2 = cat.to_string();
         let ids2 = ids.clone();
         mv.connect_clicked(move |_| {
@@ -733,7 +883,9 @@ impl BudgetView {
                 let cs = ops::transfer_category(s.budget.conn(), &env, m, cents, &cat, to.as_deref())?;
                 s.budget.apply(cs)
             });
-            p.popdown();
+            if let Some(p) = p.upgrade() {
+                    p.popdown();
+                }
         });
 
         b.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -755,9 +907,11 @@ impl BudgetView {
         let cat2 = cat.to_string();
         let hist = gtk::Button::with_label("Show transactions");
         hist.add_css_class("flat");
-        let p = pop.clone();
+        let p = pop.downgrade();
         hist.connect_clicked(move |_| {
-            p.popdown();
+            if let Some(p) = p.upgrade() {
+                    p.popdown();
+                }
             if let Some(r) = a.register.borrow().as_ref() {
                 r.set_filter_category(Some(cat2.clone()), Some(m));
             }
@@ -789,23 +943,105 @@ impl BudgetView {
             let pop = menu_popover(
                 &widget2,
                 vec![
-                    ("Rename…".to_string(), Box::new(move || {
+                    ("Rename…".to_string(), boxed(move || {
                         let id = id1.clone();
                         dialogs::prompt_text(&a1, "Rename category", "Name", &n1, "Rename", move |app, new| {
                             let cs = ops::update_category(&id, Some(&new), None);
                             app.engine.run("Rename", move |s| s.budget.apply(cs));
                         })
                     })),
-                    (if hidden { "Show" } else { "Hide" }.to_string(), Box::new(move || {
+                    (if hidden { "Show" } else { "Hide" }.to_string(), boxed(move || {
                         let cs = ops::update_category(&id2, None, Some(!hidden));
                         a2.engine.run("Hide category", move |s| s.budget.apply(cs));
                     })),
-                    ("Delete…".to_string(), Box::new(move || dialogs::delete_category(&a3, &id3))),
-                ],
+                    ("Delete…".to_string(), boxed(move || dialogs::delete_category(&a3, &id3))),
+                ]
+                .into_iter()
+                .chain(v.category_extra_items(&app, &id, &name))
+                .collect(),
             );
             pop.popup();
         });
         widget.add_controller(click);
+    }
+
+    /// Notes and reordering items for a category's menu.
+    fn category_extra_items(self: &Rc<Self>, app: &Rc<App>, id: &str, name: &str) -> Vec<(String, Box<dyn Fn()>)> {
+        let mut items: Vec<(String, Box<dyn Fn()>)> = Vec::new();
+        let (a, cid, title) = (app.clone(), id.to_string(), format!("Notes for {name}"));
+        items.push(("Notes…".into(), Box::new(move || dialogs::edit_note(&a, &cid, &title))));
+        let data = self.data.borrow();
+        let Some(d) = data.as_ref() else { return items };
+        let Some(group) = d.groups.iter().find(|g| g.categories.iter().any(|c| c.id == id)) else { return items };
+        let cats: Vec<String> = group.categories.iter().map(|c| c.id.clone()).collect();
+        let pos = cats.iter().position(|c| c == id).unwrap_or(0);
+        let gid = group.id.clone();
+        let mut add_move = |label: &str, target: Option<String>| {
+            let (a, cid, gid) = (app.clone(), id.to_string(), gid.clone());
+            items.push((label.into(), Box::new(move || {
+                let (cid, gid, target) = (cid.clone(), gid.clone(), target.clone());
+                a.engine.run("Move category", move |s| {
+                    let cs = ops::move_category(s.budget.conn(), &cid, &gid, target.as_deref())?;
+                    s.budget.apply(cs)
+                })
+            })));
+        };
+        if pos > 0 {
+            add_move("Move up", Some(cats[pos - 1].clone()));
+        }
+        if pos + 1 < cats.len() {
+            add_move("Move down", cats.get(pos + 2).cloned());
+        }
+        let others: Vec<(String, String)> = d
+            .groups
+            .iter()
+            .filter(|g| g.is_income == group.is_income && g.id != group.id)
+            .map(|g| (g.id.clone(), g.name.clone()))
+            .collect();
+        if !others.is_empty() {
+            let (a, cid) = (app.clone(), id.to_string());
+            items.push(("Move to group…".into(), Box::new(move || {
+                let labels: Vec<String> = others.iter().map(|(_, n)| n.clone()).collect();
+                let (others, cid) = (others.clone(), cid.clone());
+                dialogs::prompt_choice(&a, "Move category", "Group", &labels, "Move", move |app, i| {
+                    let Some((gid, _)) = others.get(i).cloned() else { return };
+                    let cid = cid.clone();
+                    app.engine.run("Move category", move |s| {
+                        let cs = ops::move_category(s.budget.conn(), &cid, &gid, None)?;
+                        s.budget.apply(cs)
+                    });
+                });
+            })));
+        }
+        items
+    }
+
+    /// Moves part of To Be Budgeted into a category (`transfer-available`).
+    fn move_available_dialog(self: &Rc<Self>, app: &Rc<App>, m: Month) {
+        let data = self.data.borrow();
+        let Some(d) = data.as_ref() else { return };
+        let available = d.month(m).map(|s| s.to_budget).unwrap_or(0);
+        if available <= 0 {
+            app.toast("There's nothing to budget this month.");
+            return;
+        }
+        let mut ids = Vec::new();
+        let mut labels = Vec::new();
+        for g in d.groups.iter().filter(|g| !g.is_income) {
+            for c in g.categories.iter().filter(|c| !c.hidden) {
+                ids.push(c.id.clone());
+                labels.push(format!("{}: {}", g.name, c.name));
+            }
+        }
+        drop(data);
+        dialogs::prompt_amount_choice(app, "Move To Be Budgeted", available, "To category", &labels, "Move", move |app, amount, i| {
+            let Some(cat) = ids.get(i).cloned() else { return };
+            app.engine.run("Move money", move |s| {
+                let env = s.budget.envelope()?;
+                let cs = ops::transfer_available(s.budget.conn(), &env, m, amount, &cat)?;
+                s.budget.apply(cs)
+            });
+        });
     }
 
     fn group_menu(self: &Rc<Self>, app: &Rc<App>, widget: &gtk::Box, id: String, name: String, hidden: bool) {
@@ -814,28 +1050,70 @@ impl BudgetView {
         }
         let click = gtk::GestureClick::new();
         click.set_button(3);
-        let a = app.clone();
+        let wa = app.weak();
+        let wv = Rc::downgrade(self);
         let widget2 = widget.clone();
         click.connect_pressed(move |_, _, _, _| {
+            let (Some(a), Some(v)) = (wa.upgrade(), wv.upgrade()) else { return };
             let (id1, id2, id3) = (id.clone(), id.clone(), id.clone());
             let n1 = name.clone();
             let (a1, a2, a3) = (a.clone(), a.clone(), a.clone());
+            // Neighbours among the expense groups, for Move up / down.
+            let order: Vec<String> = v
+                .data
+                .borrow()
+                .as_ref()
+                .map(|d| d.groups.iter().filter(|g| !g.is_income).map(|g| g.id.clone()).collect())
+                .unwrap_or_default();
+            let all: Vec<String> =
+                v.data.borrow().as_ref().map(|d| d.groups.iter().map(|g| g.id.clone()).collect()).unwrap_or_default();
+            let pos = order.iter().position(|g| *g == id);
+            let mut moves: Vec<(String, Box<dyn Fn()>)> = Vec::new();
+            if let Some(p) = pos {
+                if p > 0 {
+                    let (a, gid, target) = (a.clone(), id.clone(), order[p - 1].clone());
+                    moves.push(("Move up".into(), Box::new(move || {
+                        let (gid, target) = (gid.clone(), target.clone());
+                        a.engine.run("Move group", move |s| {
+                            let cs = ops::move_category_group(s.budget.conn(), &gid, Some(&target))?;
+                            s.budget.apply(cs)
+                        })
+                    })));
+                }
+                if p + 1 < order.len() {
+                    // Before the group after next (or wherever the next one
+                    // is followed by, income groups included).
+                    let next = &order[p + 1];
+                    let after = all.iter().position(|g| g == next).and_then(|i| all.get(i + 1)).cloned();
+                    let (a, gid) = (a.clone(), id.clone());
+                    moves.push(("Move down".into(), Box::new(move || {
+                        let (gid, after) = (gid.clone(), after.clone());
+                        a.engine.run("Move group", move |s| {
+                            let cs = ops::move_category_group(s.budget.conn(), &gid, after.as_deref())?;
+                            s.budget.apply(cs)
+                        })
+                    })));
+                }
+            }
             let pop = menu_popover(
                 &widget2,
                 vec![
-                    ("Rename group…".to_string(), Box::new(move || {
+                    ("Rename group…".to_string(), boxed(move || {
                         let id = id1.clone();
                         dialogs::prompt_text(&a1, "Rename group", "Name", &n1, "Rename", move |app, new| {
                             let cs = ops::update_category_group(&id, Some(&new), None);
                             app.engine.run("Rename group", move |s| s.budget.apply(cs));
                         })
                     })),
-                    (if hidden { "Show group" } else { "Hide group" }.to_string(), Box::new(move || {
+                    (if hidden { "Show group" } else { "Hide group" }.to_string(), boxed(move || {
                         let cs = ops::update_category_group(&id2, None, Some(!hidden));
                         a2.engine.run("Hide group", move |s| s.budget.apply(cs));
                     })),
-                    ("Delete group…".to_string(), Box::new(move || dialogs::delete_group(&a3, &id3))),
-                ],
+                    ("Delete group…".to_string(), boxed(move || dialogs::delete_group(&a3, &id3))),
+                ]
+                .into_iter()
+                .chain(moves)
+                .collect(),
             );
             pop.popup();
         });
