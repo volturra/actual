@@ -67,6 +67,10 @@ fn main() -> glib::ExitCode {
             cur.window.present();
             return;
         }
+        if let Some(w) = app.windows().into_iter().find(|w| w.widget_name() == "setup") {
+            w.present();
+            return;
+        }
         let cfg = Config::load();
         let last = cfg.last_budget.as_ref().map(|id| BudgetDir::new(config::budgets_dir().join(id)));
         if let Some(dir) = last.filter(|d| d.db_path().exists()) {
@@ -92,11 +96,17 @@ fn saved_client(cfg: &Config) -> Option<ServerClient> {
 fn show_setup(app: &adw::Application, parent: Option<&gtk::Window>) {
     let a = app.clone();
     ui::setup::show(app, parent, move |req| {
-        // Close the budget that's open (its engine pushes pending changes).
+        if !ready_to_leave() {
+            return false;
+        }
         close_current();
+        // No window may be left while the budget opens (or fails to); keep
+        // the app running until the error is shown.
+        let guard = a.hold();
         if let Err(e) = open_budget(&a, req) {
             let a2 = a.clone();
             glib::idle_add_local_once(move || {
+                let _guard = guard;
                 show_setup(&a2, None);
                 let d = adw::AlertDialog::new(Some("Couldn't open the budget"), Some(&e));
                 d.add_response("ok", "OK");
@@ -105,8 +115,13 @@ fn show_setup(app: &adw::Application, parent: Option<&gtk::Window>) {
                 }
             });
         }
+        true
     }, || {
+        if !ready_to_leave() {
+            return false;
+        }
         close_current();
+        true
     });
 }
 
@@ -114,8 +129,11 @@ fn show_setup(app: &adw::Application, parent: Option<&gtk::Window>) {
 /// first, before anything the user can't take back.
 fn close_current() {
     if let Some(cur) = CURRENT.with(|c| c.borrow_mut().take()) {
+        // Destroyed rather than closed: a close only dismisses an open
+        // dialog, which would leave the window up with its App gone.
         cur.discard_edit.set(true);
-        cur.window.close();
+        cur.engine.shutdown_wait(std::time::Duration::from_secs(5));
+        cur.window.destroy();
     }
 }
 

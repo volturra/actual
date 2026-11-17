@@ -33,9 +33,11 @@ struct Setup {
     server_label: gtk::Label,
     spinner: gtk::Spinner,
     client: std::cell::RefCell<Option<ServerClient>>,
-    on_open: Box<dyn Fn(OpenRequest)>,
-    /// Closes the budget that's open, before its files are replaced.
-    close_current: Box<dyn Fn()>,
+    /// Opens the budget; false when the open one can't be left yet.
+    on_open: Box<dyn Fn(OpenRequest) -> bool>,
+    /// Closes the budget that's open, before its files are replaced; false
+    /// when it can't be left yet.
+    close_current: Box<dyn Fn() -> bool>,
 }
 
 fn friendly(e: &SyncError) -> String {
@@ -52,8 +54,8 @@ fn friendly(e: &SyncError) -> String {
 pub fn show(
     gtk_app: &adw::Application,
     parent: Option<&gtk::Window>,
-    on_open: impl Fn(OpenRequest) + 'static,
-    close_current: impl Fn() + 'static,
+    on_open: impl Fn(OpenRequest) -> bool + 'static,
+    close_current: impl Fn() -> bool + 'static,
 ) {
     let window = adw::Window::builder().application(gtk_app).title("Open a budget — Actual").default_width(560).default_height(640).build();
     window.set_widget_name("setup");
@@ -424,7 +426,10 @@ impl Setup {
                 return self.finish(OpenRequest { dir, key, client: Some(client) });
             }
             replace = dir.path.file_name().map(|n| n.to_string_lossy().to_string());
-            (self.close_current)();
+            if !(self.close_current)() {
+                self.toast("Fix or clear the transaction being edited first.");
+                return;
+            }
         }
         self.busy(true);
         self.toast(&format!("Downloading “{}”…", file.name));
@@ -447,7 +452,10 @@ impl Setup {
     }
 
     fn finish(&self, req: OpenRequest) {
-        (self.on_open)(req);
-        self.window.close();
+        if (self.on_open)(req) {
+            self.window.close();
+        } else {
+            self.toast("Fix or clear the transaction being edited first.");
+        }
     }
 }
