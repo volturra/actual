@@ -137,6 +137,14 @@ export function BalanceWithCarryover({
   const getDefaultClassName = (balanceValue: number) =>
     css({
       ...getBalanceAmountStyle(balanceValue),
+      // A tinted pill behind non-zero balances makes them scannable at a glance
+      ...(balanceValue !== 0 &&
+        balanceValue != null && {
+          backgroundColor: theme.budgetBalancePillBackground,
+          borderRadius: 999,
+          padding: '1px 7px',
+          marginRight: -7,
+        }),
       overflow: 'hidden',
       textOverflow: 'ellipsis',
       textAlign: 'right',

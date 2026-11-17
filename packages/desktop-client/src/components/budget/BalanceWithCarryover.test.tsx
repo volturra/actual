@@ -221,7 +221,7 @@ describe('BalanceWithCarryover goal progress ring', () => {
       setSheetValues(values);
       renderBalance({ isGoalTemplatesEnabled });
       expect(screen.getByTestId('budget202401!leftover-groceries')).toHaveStyle(
-        { color: theme.budgetNumberPositive },
+        { color: theme.budgetBalancePositive },
       );
     },
   );
@@ -261,7 +261,7 @@ describe('BalanceCell goal progress ring', () => {
   });
 
   it.each([
-    ['without a goal', { goal: null }, theme.budgetNumberPositive],
+    ['without a goal', { goal: null }, theme.budgetBalancePositive],
     [
       'once funded',
       { budget: 65000, leftover: 65000 },
@@ -302,7 +302,7 @@ describe('Goals on income categories', () => {
     expect(screen.queryByRole('img')).toBeNull();
     expect(screen.queryByRole('progressbar')).toBeNull();
     expect(screen.getByText('1,200.00')).toHaveStyle({
-      color: theme.budgetNumberPositive,
+      color: theme.budgetBalancePositive,
     });
   });
 
@@ -327,7 +327,7 @@ describe('Goals on income categories', () => {
     );
     expect(screen.queryByRole('img')).toBeNull();
     expect(screen.getByText('1,200.00')).toHaveStyle({
-      color: theme.budgetNumberPositive,
+      color: theme.budgetBalancePositive,
     });
   });
 

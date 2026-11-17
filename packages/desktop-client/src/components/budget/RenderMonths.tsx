@@ -22,7 +22,7 @@ export function RenderMonths({ children, style }: RenderMonthsProps) {
       <View
         style={{
           flex: 1,
-          borderLeft: '1px solid ' + theme.tableBorder,
+          borderLeft: '2px solid ' + theme.budgetMonthDivider,
           ...style,
         }}
       >
