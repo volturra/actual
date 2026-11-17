@@ -638,6 +638,22 @@ impl BudgetView {
         row + 1
     }
 
+    /// Saves a cell being typed in (when the window closes).
+    pub fn commit_pending(&self) {
+        let Some((cat, m)) = self.dirty.borrow_mut().take() else { return };
+        let Some(app) = self.app.upgrade() else { return };
+        let entry = self.entries.borrow().iter().find(|(c, mm, _)| *c == cat && *mm == m).map(|(_, _, e)| e.clone());
+        let Some(entry) = entry else { return };
+        let text = entry.text();
+        let parsed = if text.trim().is_empty() { Some(0) } else { app.fmt.get().parse(&text) };
+        if let (Some(amount), true) = (parsed, app.writable) {
+            app.engine.run("Budget", move |s| {
+                let cs = ops::set_budget(s.budget.conn(), m, &cat, amount)?;
+                s.budget.apply(cs)
+            });
+        }
+    }
+
     fn wire_budget_entry(self: &Rc<Self>, app: &Rc<App>, entry: &gtk::Entry, cat: String, m: Month, current: i64) {
         // Undo here is the budget's, not the text field's.
         entry.set_enable_undo(false);

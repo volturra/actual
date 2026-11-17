@@ -279,8 +279,13 @@ impl App {
         let weak = Rc::downgrade(&app);
         app.window.connect_close_request(move |_| {
             // Queue the register's unsaved edit before the engine stops.
-            if let Some(r) = weak.upgrade().and_then(|a| a.register.borrow().clone()) {
-                r.save_pending();
+            if let Some(a) = weak.upgrade() {
+                if let Some(r) = a.register.borrow().clone() {
+                    r.save_pending();
+                }
+                if let Some(b) = a.budget_view.borrow().clone() {
+                    b.commit_pending();
+                }
             }
             engine.shutdown_wait(std::time::Duration::from_secs(5));
             glib::Propagation::Proceed

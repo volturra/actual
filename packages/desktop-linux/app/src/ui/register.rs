@@ -90,6 +90,7 @@ pub struct Register {
     keep_filter: Cell<bool>,
     rows: RefCell<Vec<Row>>,
     loading: Cell<bool>,
+    rebuilding_accounts: Cell<bool>,
     quiet_save: Cell<bool>,
 }
 
@@ -422,6 +423,7 @@ impl Register {
             keep_filter: Cell::new(false),
             rows: RefCell::new(Vec::new()),
             loading: Cell::new(false),
+            rebuilding_accounts: Cell::new(false),
             quiet_save: Cell::new(false),
         });
 
@@ -532,16 +534,18 @@ impl Register {
         if !self.keep_filter.replace(false) {
             *self.filter.borrow_mut() = None;
         }
-        if self.editor_dirty() {
-            self.save_quiet();
-        }
+        // An edit that can't be saved (its toast says why) stays in the
+        // editor so it isn't lost.
+        let keep_edit = self.editor_dirty() && !self.save();
         let changed = *self.account.borrow() != id;
         *self.account.borrow_mut() = id;
         if changed {
             self.search.set_text("");
         }
         self.refresh();
-        self.new_transaction_quiet();
+        if !keep_edit {
+            self.new_transaction_quiet();
+        }
     }
 
     /// Limits the list to one category (and month), for "Show transactions"
@@ -859,11 +863,15 @@ impl Register {
         if *self.editor.account_ids.borrow() != ids || !same_names {
             // A new model resets the selection; keep the account the editor
             // shows (and so its unsaved state) across the change.
+            // `set_model` selects the first account in between; the guard
+            // keeps that from clearing the category field.
             let keep = self.selected_account();
+            self.rebuilding_accounts.set(true);
             self.editor.account.set_model(Some(&gtk::StringList::new(&names)));
             let idx = keep.and_then(|k| ids.iter().position(|i| *i == k));
             *self.editor.account_ids.borrow_mut() = ids;
             self.editor.account.set_selected(idx.map(|i| i as u32).unwrap_or(gtk::INVALID_LIST_POSITION));
+            self.rebuilding_accounts.set(false);
         }
         let ro = !app.writable;
         for w in [
@@ -1046,7 +1054,7 @@ impl Register {
         });
         let w = Rc::downgrade(self);
         e.account.connect_selected_notify(move |_| {
-            if let Some(r) = w.upgrade() {
+            if let Some(r) = w.upgrade().filter(|r| !r.rebuilding_accounts.get()) {
                 r.update_category_state();
             }
         });
@@ -1341,7 +1349,15 @@ impl Register {
         if let Some(row) = row {
             // Deleting a split line edits its parent's split.
             if let Some(parent) = row.parent.clone() {
-                self.edit(Some(parent));
+                // Keep unsaved edits to that same split; save any other edit
+                // first.
+                let editing_parent = self.editor.state.borrow().id.as_deref() == Some(parent.as_str());
+                if !editing_parent {
+                    if self.editor_dirty() && !self.save() {
+                        return;
+                    }
+                    self.edit(Some(parent));
+                }
                 let mut st = self.editor.state.borrow_mut();
                 if let Some(lines) = st.splits.as_mut() {
                     lines.retain(|l| l.id.as_deref() != Some(&row.id));
@@ -1396,10 +1412,31 @@ impl Register {
         type LineWidgets = (Option<String>, Autocomplete, gtk::Entry, gtk::Entry, gtk::Entry, gtk::Box);
         let widgets: Rc<RefCell<Vec<LineWidgets>>> = Rc::new(RefCell::new(Vec::new()));
 
+        // "Done" is off while a line has an invalid amount or an unpicked
+        // category, so the typed lines are never thrown away.
+        let dialog_ref: Rc<RefCell<Option<glib::WeakRef<adw::AlertDialog>>>> = Rc::new(RefCell::new(None));
         let update_remainder = {
             let widgets = widgets.clone();
             let remainder = remainder.clone();
+            let dialog_ref = dialog_ref.clone();
             Rc::new(move || {
+                let problem = widgets.borrow().iter().find_map(|(_, cat, _, o, i, _)| {
+                    if [o, i].iter().any(|e| !e.text().trim().is_empty() && fmt.parse(&e.text()).is_none()) {
+                        Some("A line has an invalid amount")
+                    } else if !cat.text().trim().is_empty() && !cat.selected().is_some_and(|c| c.label == cat.text()) {
+                        Some("Pick each line's category from the list")
+                    } else {
+                        None
+                    }
+                });
+                if let Some(d) = dialog_ref.borrow().as_ref().and_then(|w| w.upgrade()) {
+                    d.set_response_enabled("ok", problem.is_none());
+                }
+                if let Some(msg) = problem {
+                    remainder.set_text(msg);
+                    remainder.add_css_class("split-error");
+                    return;
+                }
                 let sum: i64 = widgets
                     .borrow()
                     .iter()
@@ -1445,6 +1482,10 @@ impl Register {
                     let u = update.clone();
                     e.connect_changed(move |_| u());
                 }
+                let u = update.clone();
+                cat.widget().connect_changed(move |_| u());
+                let u = update.clone();
+                cat.connect_pick(move |_| u());
                 let remove = gtk::Button::from_icon_name("list-remove-symbolic");
                 remove.add_css_class("flat");
                 row.append(cat.widget());
@@ -1491,6 +1532,8 @@ impl Register {
         d.set_close_response("cancel");
         d.set_default_response(Some("ok"));
         d.set_extra_child(Some(&content));
+        *dialog_ref.borrow_mut() = Some(d.downgrade());
+        update_remainder();
         let line_payees: std::collections::HashMap<String, Option<String>> = self
             .editor
             .state
