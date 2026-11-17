@@ -27,7 +27,8 @@ impl NumberFormat {
             NumberFormat::CommaDot | NumberFormat::CommaDotIn => (",", '.'),
             NumberFormat::DotComma => (".", ','),
             NumberFormat::SpaceComma => ("\u{202F}", ','),
-            NumberFormat::ApostropheDot => ("'", '.'),
+            // loot-core uses the right single quotation mark.
+            NumberFormat::ApostropheDot => ("\u{2019}", '.'),
         }
     }
 }
@@ -39,6 +40,12 @@ pub struct AmountFormat {
 }
 
 impl AmountFormat {
+    /// The format for a field the user edits: always with cents, so
+    /// hideFraction can't round an amount that's saved back.
+    pub fn editable(self) -> AmountFormat {
+        AmountFormat { hide_fraction: false, ..self }
+    }
+
     /// Formats integer cents, e.g. `-123456` → `-1,234.56`.
     pub fn format(&self, cents: i64) -> String {
         let (group, decimal) = self.format.separators();
@@ -75,7 +82,7 @@ impl AmountFormat {
         let (_, decimal) = self.format.separators();
         let cleaned: String = input
             .chars()
-            .filter(|c| !c.is_whitespace() && *c != '\u{202F}' && *c != '\'' && !"$€£¥₹".contains(*c))
+            .filter(|c| !c.is_whitespace() && *c != '\u{202F}' && *c != '\'' && *c != '\u{2019}' && !"$€£¥₹".contains(*c))
             .collect();
         if cleaned.is_empty() {
             return None;
@@ -273,6 +280,13 @@ mod tests {
         assert_eq!(f.parse("-7"), Some(-700));
         assert_eq!(f.parse("10+5.5"), Some(1550));
         assert_eq!(f.parse("(3*4)"), Some(1200));
+        let ap = AmountFormat { format: NumberFormat::ApostropheDot, hide_fraction: false };
+        assert_eq!(ap.format(100033), "1\u{2019}000.33");
+        assert_eq!(ap.parse("1\u{2019}000.33"), Some(100033));
+        assert_eq!(ap.parse("1'000.33"), Some(100033));
+        let hidden = AmountFormat { hide_fraction: true, ..f };
+        assert_eq!(hidden.format(40045), "400");
+        assert_eq!(hidden.editable().format(40045), "400.45");
         assert_eq!(f.parse("$1,000"), Some(100000));
         assert_eq!(f.parse("abc"), None);
         assert_eq!(f.parse(""), None);

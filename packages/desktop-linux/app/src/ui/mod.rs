@@ -211,7 +211,9 @@ impl App {
         let weak = Rc::downgrade(&app);
         app.sync_button.connect_clicked(move |_| {
             if let Some(app) = weak.upgrade() {
-                // Also leaves "work offline" mode.
+                // Also leaves "work offline" mode. A sync the user asked
+                // for reports its outcome again (e.g. re-asks to sign in).
+                app.last_sync_text.borrow_mut().clear();
                 app.engine.set_online(true);
             }
         });
@@ -261,6 +263,7 @@ impl App {
                     glib::Propagation::Stop
                 }
                 gtk::gdk::Key::F5 => {
+                    app.last_sync_text.borrow_mut().clear();
                     app.engine.sync_now();
                     glib::Propagation::Stop
                 }
@@ -337,11 +340,20 @@ impl App {
 
     fn load_format(&self) {
         let pref = |k| model::preference(&self.db, k).ok().flatten();
+        let (old_fmt, old_date) = (self.fmt.get(), self.date_format.borrow().clone());
         self.fmt.set(AmountFormat {
             format: actual_budget::format::NumberFormat::from_pref(pref("numberFormat").as_deref()),
             hide_fraction: pref("hideFraction").as_deref() == Some("true"),
         });
         *self.date_format.borrow_mut() = pref("dateFormat").unwrap_or_else(|| "MM/dd/yyyy".into());
+        // A format change (from sync) re-renders what the editor holds, so
+        // it isn't read back in the new format.
+        let new_date = self.date_format.borrow().clone();
+        if old_fmt != self.fmt.get() || old_date != new_date {
+            if let Some(r) = self.register.borrow().clone() {
+                r.reformat_editor(old_fmt, self.fmt.get(), &old_date, &new_date);
+            }
+        }
     }
 
     pub fn toast(&self, msg: &str) {

@@ -200,10 +200,13 @@ impl ServerClient {
             .json(&json!({ "loginMethod": "password", "password": password }))
             .send()
             .map_err(Self::net)?;
-        let r: R = Self::unwrap_ok(&Self::check(res)?).map_err(|e| match e {
+        // The server answers a wrong password with 400 `invalid-password`,
+        // which `check` already turns into an error.
+        let wrong = |e: SyncError| match e {
             SyncError::Server(reason) if reason == "invalid-password" => SyncError::Unauthorized,
             other => other,
-        })?;
+        };
+        let r: R = Self::unwrap_ok(&Self::check(res).map_err(wrong)?).map_err(wrong)?;
         self.token = Some(r.token.clone());
         Ok(r.token)
     }

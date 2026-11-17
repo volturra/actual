@@ -507,7 +507,7 @@ pub fn prompt_amount_choice(
     action: &str,
     cb: impl Fn(&Rc<App>, i64, usize) + 'static,
 ) {
-    let entry = gtk::Entry::builder().text(app.fmt.get().format(initial)).xalign(1.0).build();
+    let entry = gtk::Entry::builder().text(app.fmt.get().editable().format(initial)).xalign(1.0).build();
     entry.set_enable_undo(false);
     let dd = choice_dropdown(options);
     let b = gtk::Box::new(gtk::Orientation::Vertical, 12);

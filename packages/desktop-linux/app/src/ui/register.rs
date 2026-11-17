@@ -10,6 +10,7 @@ use std::rc::{Rc, Weak};
 use adw::prelude::*;
 use chrono::{Datelike, NaiveDate};
 
+use actual_budget::format::AmountFormat;
 use actual_budget::model::{self, Transaction};
 use actual_budget::month::Month;
 use actual_budget::ops::{self, NewTransaction, SplitLine, TransactionUpdate};
@@ -1017,7 +1018,7 @@ impl Register {
         e.payee.set_by_id(t.payee.as_deref());
         e.category.set_by_id(t.category.as_deref());
         e.notes.set_text(t.notes.as_deref().unwrap_or(""));
-        let fmt = app.fmt.get();
+        let fmt = app.fmt.get().editable();
         e.outflow.set_text(&if t.amount < 0 { fmt.format(-t.amount) } else { String::new() });
         e.inflow.set_text(&if t.amount > 0 { fmt.format(t.amount) } else { String::new() });
         e.cleared.set_active(t.cleared);
@@ -1152,6 +1153,26 @@ impl Register {
     }
 
     /// Saves without moving focus or resetting the editor for the next entry.
+    /// Re-renders the editor's date and amounts after the budget's number
+    /// or date format changed.
+    pub fn reformat_editor(&self, old_fmt: AmountFormat, new_fmt: AmountFormat, old_date: &str, new_date: &str) {
+        let e = &self.editor;
+        let was_dirty = self.editor_dirty();
+        if let Some(iso) = parse_date(&e.date.text(), old_date) {
+            e.date.set_text(&format_date(&iso, new_date));
+        }
+        for f in [&e.outflow, &e.inflow] {
+            let t = f.text();
+            if let Some(v) = (!t.trim().is_empty()).then(|| old_fmt.editable().parse(&t)).flatten() {
+                f.set_text(&new_fmt.editable().format(v));
+            }
+        }
+        if !was_dirty {
+            let snap = self.snapshot();
+            e.state.borrow_mut().loaded = snap;
+        }
+    }
+
     /// Saves the editor if it holds changes (when the window closes).
     /// False when there's an edit that can't be saved.
     pub fn save_pending(self: &Rc<Self>) -> bool {
@@ -1422,7 +1443,7 @@ impl Register {
     /// are saved with the transaction.
     fn split_dialog(self: &Rc<Self>) {
         let Some(app) = self.app.upgrade() else { return };
-        let fmt = app.fmt.get();
+        let fmt = app.fmt.get().editable();
         let parse = |entry: &gtk::Entry| -> Option<i64> {
             let t = entry.text();
             if t.trim().is_empty() { Some(0) } else { fmt.parse(&t) }
@@ -1636,7 +1657,7 @@ impl Register {
         let accounts = model::accounts(&app.db).unwrap_or_default();
         let Some(acct) = accounts.into_iter().find(|a| a.id == account) else { return };
         let fmt = app.fmt.get();
-        let entry = gtk::Entry::builder().text(fmt.format(acct.cleared)).xalign(1.0).build();
+        let entry = gtk::Entry::builder().text(fmt.editable().format(acct.cleared)).xalign(1.0).build();
         let b = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let l = gtk::Label::builder().label("Your bank statement's balance").xalign(0.0).build();
         l.add_css_class("caption-heading");

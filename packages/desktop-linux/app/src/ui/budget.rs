@@ -444,10 +444,20 @@ impl BudgetView {
 
         // Income section (read-only totals, like YNAB4's Income row)
         if let Some(inc) = data.groups.iter().find(|g| g.is_income) {
-            let l = gtk::Label::builder().label(&inc.name).xalign(0.0).build();
-            l.add_css_class("budget-group");
-            l.set_size_request(CAT_W, -1);
-            grid.attach(&l, 0, row, 1, 1);
+            let hb = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            hb.add_css_class("budget-group");
+            hb.set_size_request(CAT_W, -1);
+            let l = gtk::Label::builder().label(&inc.name).xalign(0.0).hexpand(true).build();
+            l.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            hb.append(&l);
+            let add = gtk::Button::from_icon_name("list-add-symbolic");
+            add.add_css_class("flat");
+            add.set_tooltip_text(Some("Add income category"));
+            add.set_sensitive(app.writable);
+            hb.append(&add);
+            grid.attach(&hb, 0, row, 1, 1);
+            self.add_category_button(&app, &add, inc.id.clone());
+            self.group_menu(&app, &hb, inc.id.clone(), inc.name.clone(), inc.hidden, true);
             for (i, &m) in months.iter().enumerate() {
                 let s = data.month(m).cloned().unwrap_or_default();
                 let filler = gtk::Label::new(Some(""));
@@ -658,20 +668,8 @@ impl BudgetView {
                 v.rebuild();
             }
         });
-        let gid = g.id.clone();
-        let wa = app.weak();
-        add.connect_clicked(move |_| {
-            let gid = gid.clone();
-            let Some(a) = wa.upgrade() else { return };
-            dialogs::prompt_text(&a, "New category", "Name", "", "Create", move |app, name| {
-                let gid = gid.clone();
-                app.engine.run("Create category", move |s| {
-                    let (_, cs) = ops::create_category(s.budget.conn(), &name, &gid)?;
-                    s.budget.apply(cs)
-                });
-            });
-        });
-        self.group_menu(app, &hb, g.id.clone(), g.name.clone(), g.hidden);
+        self.add_category_button(app, &add, g.id.clone());
+        self.group_menu(app, &hb, g.id.clone(), g.name.clone(), g.hidden, false);
         for (i, &m) in months.iter().enumerate() {
             let gm = data.month(m).and_then(|s| s.groups.get(&g.id)).cloned().unwrap_or_default();
             for (j, v) in [gm.budgeted, gm.spent, gm.balance].into_iter().enumerate() {
@@ -698,7 +696,10 @@ impl BudgetView {
     fn wire_budget_entry(self: &Rc<Self>, app: &Rc<App>, entry: &gtk::Entry, cat: String, m: Month, current: i64) {
         // Undo here is the budget's, not the text field's.
         entry.set_enable_undo(false);
-        let fmt = app.fmt.get();
+        // Shown as the budget's format (hideFraction rounds), edited with
+        // cents so an untouched cell never saves a rounded amount.
+        let shown = app.fmt.get();
+        let fmt = shown.editable();
         // One commit per visit: Enter moves focus, which would otherwise
         // commit a second time from the focus-leave handler.
         let done = Rc::new(Cell::new(false));
@@ -729,8 +730,8 @@ impl BudgetView {
                             });
                         }
                         Some(_) => {
-                            if text != fmt.format(current) {
-                                e.set_text(&fmt.format(current));
+                            if text != shown.format(current) {
+                                e.set_text(&shown.format(current));
                             }
                         }
                         None => {
@@ -743,6 +744,9 @@ impl BudgetView {
                     if v.dirty.borrow().as_ref().is_some_and(|(c, mm)| *c == cat && *mm == m) {
                         *v.dirty.borrow_mut() = None;
                     }
+                    // That set_text also cleared `done`; this visit is
+                    // committed.
+                    done.set(true);
                     if v.pending_refresh.get() {
                         let v2 = v.clone();
                         glib::idle_add_local_once(move || v2.refresh());
@@ -772,8 +776,19 @@ impl BudgetView {
         let focus = gtk::EventControllerFocus::new();
         let e2 = entry.clone();
         let d = done.clone();
+        let w = Rc::downgrade(self);
+        let cat_e = cat.clone();
         focus.connect_enter(move |_| {
             d.set(false);
+            if shown != fmt && e2.text() == shown.format(current) {
+                e2.set_text(&fmt.format(current));
+                // set_text's intermediate empty text isn't an edit.
+                if let Some(v) = w.upgrade() {
+                    if v.dirty.borrow().as_ref().is_some_and(|(c, mm)| *c == cat_e && *mm == m) {
+                        *v.dirty.borrow_mut() = None;
+                    }
+                }
+            }
             let e = e2.clone();
             glib::idle_add_local_once(move || e.select_region(0, -1));
         });
@@ -930,7 +945,7 @@ impl BudgetView {
         let t = gtk::Label::builder().label("Move money to").xalign(0.0).build();
         t.add_css_class("heading");
         b.append(&t);
-        let amount = gtk::Entry::builder().text(fmt.format(cm.balance.max(0))).xalign(1.0).build();
+        let amount = gtk::Entry::builder().text(fmt.editable().format(cm.balance.max(0))).xalign(1.0).build();
         b.append(&amount);
         let to = super::string_dropdown(&names_ref, true);
         b.append(&to);
@@ -1113,7 +1128,25 @@ impl BudgetView {
         });
     }
 
-    fn group_menu(self: &Rc<Self>, app: &Rc<App>, widget: &gtk::Box, id: String, name: String, hidden: bool) {
+    /// A group's "+": asks for a name and creates a category in it.
+    fn add_category_button(&self, app: &Rc<App>, add: &gtk::Button, gid: String) {
+        let wa = app.weak();
+        add.connect_clicked(move |_| {
+            let gid = gid.clone();
+            let Some(a) = wa.upgrade() else { return };
+            dialogs::prompt_text(&a, "New category", "Name", "", "Create", move |app, name| {
+                let gid = gid.clone();
+                app.engine.run("Create category", move |s| {
+                    let (_, cs) = ops::create_category(s.budget.conn(), &name, &gid)?;
+                    s.budget.apply(cs)
+                });
+            });
+        });
+    }
+
+    /// The group's right-click menu. The income group can only be renamed
+    /// (it can't be hidden, deleted or moved, as in the web app).
+    fn group_menu(self: &Rc<Self>, app: &Rc<App>, widget: &gtk::Box, id: String, name: String, hidden: bool, is_income: bool) {
         if !app.writable {
             return;
         }
@@ -1164,9 +1197,7 @@ impl BudgetView {
                     })));
                 }
             }
-            let pop = menu_popover(
-                &widget2,
-                vec![
+            let mut items: Vec<(String, Box<dyn Fn()>)> = vec![
                     ("Rename group…".to_string(), boxed(move || {
                         let id = id1.clone();
                         dialogs::prompt_text(&a1, "Rename group", "Name", &n1, "Rename", move |app, new| {
@@ -1179,11 +1210,13 @@ impl BudgetView {
                         a2.engine.run("Hide group", move |s| s.budget.apply(cs));
                     })),
                     ("Delete group…".to_string(), boxed(move || dialogs::delete_group(&a3, &id3))),
-                ]
-                .into_iter()
-                .chain(moves)
-                .collect(),
-            );
+                ];
+            if is_income {
+                items.truncate(1);
+            } else {
+                items.extend(moves);
+            }
+            let pop = menu_popover(&widget2, items);
             pop.popup();
         });
         widget.add_controller(click);
