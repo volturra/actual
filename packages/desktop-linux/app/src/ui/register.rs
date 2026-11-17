@@ -1654,10 +1654,17 @@ impl Register {
         entry.set_activates_default(true);
         let weak = app.weak();
         let entry2 = entry.clone();
-        d.connect_response(Some("ok"), move |_, _| {
+        d.connect_response(Some("ok"), move |d, _| {
             let Some(app) = weak.upgrade() else { return };
             let Some(target) = app.fmt.get().parse(&entry2.text()) else {
                 app.toast("That isn't a valid amount.");
+                // Show it again with what was typed, to correct it.
+                let (d, e, w) = (d.clone(), entry2.clone(), app.window.clone());
+                glib::idle_add_local_once(move || {
+                    d.present(Some(&w));
+                    e.grab_focus();
+                    e.select_region(0, -1);
+                });
                 return;
             };
             let account = account.clone();

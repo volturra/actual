@@ -48,7 +48,9 @@ fn ask(
     {
         let last_text = last_text.clone();
         d.connect_focus_widget_notify(move |d| {
-            if let Some(w) = d.focus().filter(|w| w.is::<gtk::Text>() || w.is::<gtk::TextView>()) {
+            // Not a drop-down's search field, which lives in a popover.
+            let in_popover = |w: &gtk::Widget| w.native().is_some_and(|n| n.is::<gtk::Popover>());
+            if let Some(w) = d.focus().filter(|w| (w.is::<gtk::Text>() || w.is::<gtk::TextView>()) && !in_popover(w)) {
                 last_text.borrow().set(Some(&w));
             }
         });
