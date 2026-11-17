@@ -43,8 +43,19 @@ fn ask(
     // handled by intercepting the button: run the check first, then close.
     d.set_response_enabled("ok", true);
     let done = Rc::new(Cell::new(false));
+    // The text field last typed in, to return to when the input is refused.
+    let last_text: Rc<RefCell<glib::WeakRef<gtk::Widget>>> = Rc::new(RefCell::new(glib::WeakRef::new()));
+    {
+        let last_text = last_text.clone();
+        d.connect_focus_widget_notify(move |d| {
+            if let Some(w) = d.focus().filter(|w| w.is::<gtk::Text>() || w.is::<gtk::TextView>()) {
+                last_text.borrow().set(Some(&w));
+            }
+        });
+    }
     {
         let on_ok = on_ok.clone();
+        let last_text = last_text.clone();
         let weak = weak.clone();
         let done = done.clone();
         d.connect_response(Some("ok"), move |d, _| {
@@ -56,7 +67,16 @@ fn ask(
                 // Re-open with the same content so the input isn't lost.
                 let d = d.clone();
                 let app2 = app.clone();
-                glib::idle_add_local_once(move || d.present(Some(&app2.window)));
+                let field = last_text.borrow().upgrade();
+                glib::idle_add_local_once(move || {
+                    d.present(Some(&app2.window));
+                    if let Some(f) = field {
+                        f.grab_focus();
+                        if let Some(t) = f.downcast_ref::<gtk::Text>() {
+                            t.select_region(0, -1);
+                        }
+                    }
+                });
             } else {
                 done.set(true);
             }

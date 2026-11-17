@@ -245,7 +245,8 @@ impl BudgetView {
         }
         // Rebuilding the grid would destroy an open menu or balance
         // popover (and what's typed in it); wait for it to close.
-        if let Some(pop) = open_popover(self.grid_holder.upcast_ref()) {
+        let open = open_popover(self.grid_holder.upcast_ref()).or_else(|| open_popover(self.banners.upcast_ref()));
+        if let Some(pop) = open {
             if !self.waiting_popover.replace(true) {
                 let w = Rc::downgrade(self);
                 pop.connect_closed(move |_| {
