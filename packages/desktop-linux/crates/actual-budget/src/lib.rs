@@ -287,6 +287,28 @@ impl Budget {
         Ok(changed)
     }
 
+    /// The undo stack's height, to pass to `merge_undo_since`.
+    pub fn undo_depth(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// Joins the undo steps pushed since `depth` into one, so a user action
+    /// made of several edits undoes in one go.
+    pub fn merge_undo_since(&mut self, depth: usize) {
+        if self.undo.len() <= depth + 1 {
+            return;
+        }
+        let steps = self.undo.split_off(depth);
+        let mut merged = UndoEntry::default();
+        for step in steps {
+            // Later steps' old values go first so undo restores the oldest.
+            merged.before.splice(0..0, step.before);
+            merged.after.extend(step.after);
+            merged.resurrect.extend(step.resurrect);
+        }
+        self.undo.push(merged);
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

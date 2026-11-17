@@ -244,9 +244,9 @@ impl App {
             let shift = mods.contains(gtk::gdk::ModifierType::SHIFT_MASK);
             // Leave undo to text fields that keep their own history (notes,
             // names); budget cells and the register editor turn theirs off.
-            let in_text = gtk::prelude::GtkWindowExt::focus(&app.window)
-                .and_then(|w| w.downcast::<gtk::Text>().ok())
-                .is_some_and(|t| t.enables_undo());
+            let focus = gtk::prelude::GtkWindowExt::focus(&app.window);
+            let in_text = focus.as_ref().and_then(|w| w.downcast_ref::<gtk::Text>()).is_some_and(|t| t.enables_undo())
+                || focus.as_ref().and_then(|w| w.downcast_ref::<gtk::TextView>()).is_some_and(|t| t.buffer().enables_undo());
             match key {
                 gtk::gdk::Key::z | gtk::gdk::Key::Z if ctrl && !in_text => {
                     if shift {
@@ -523,4 +523,20 @@ fn account_row(name: &str, balance: i64, fmt: &AmountFormat, bold: bool) -> gtk:
     b.append(&n);
     b.append(&amt);
     gtk::ListBoxRow::builder().child(&b).build()
+}
+
+/// A drop-down of strings whose search box (when on) filters by the text.
+pub fn string_dropdown(items: &[&str], search: bool) -> gtk::DropDown {
+    let dd = gtk::DropDown::from_strings(items);
+    if search {
+        // Without an expression the search entry shows but can't filter.
+        dd.set_expression(Some(gtk::PropertyExpression::new(
+            gtk::StringObject::static_type(),
+            None::<gtk::Expression>,
+            "string",
+        )));
+        dd.set_search_match_mode(gtk::StringFilterMatchMode::Substring);
+        dd.set_enable_search(true);
+    }
+    dd
 }

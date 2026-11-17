@@ -37,11 +37,28 @@ pub struct BudgetView {
     /// so a background sync can't throw the edit away.
     dirty: RefCell<Option<(String, Month)>>,
     pending_refresh: Cell<bool>,
+    /// A refresh is waiting for an open popover to close.
+    waiting_popover: Cell<bool>,
 }
 
 /// Boxes a menu action (lets `vec![]` of mixed closures type-check).
 pub fn boxed(f: impl Fn() + 'static) -> Box<dyn Fn()> {
     Box::new(f)
+}
+
+/// The visible popover inside `w`, if any.
+fn open_popover(w: &gtk::Widget) -> Option<gtk::Popover> {
+    let mut child = w.first_child();
+    while let Some(c) = child {
+        if let Some(p) = c.downcast_ref::<gtk::Popover>().filter(|p| p.is_visible()) {
+            return Some(p.clone());
+        }
+        if let Some(p) = open_popover(&c) {
+            return Some(p);
+        }
+        child = c.next_sibling();
+    }
+    None
 }
 
 pub fn menu_popover(parent: &impl IsA<gtk::Widget>, items: Vec<(String, Box<dyn Fn()>)>) -> gtk::Popover {
@@ -138,6 +155,7 @@ impl BudgetView {
             data: RefCell::new(None),
             dirty: RefCell::new(None),
             pending_refresh: Cell::new(false),
+            waiting_popover: Cell::new(false),
         });
         month_btns[1].set_active(true);
 
@@ -225,6 +243,19 @@ impl BudgetView {
             self.pending_refresh.set(true);
             return;
         }
+        // Rebuilding the grid would destroy an open menu or balance
+        // popover (and what's typed in it); wait for it to close.
+        if let Some(pop) = open_popover(self.grid_holder.upcast_ref()) {
+            if !self.waiting_popover.replace(true) {
+                let w = Rc::downgrade(self);
+                pop.connect_closed(move |_| {
+                    let Some(v) = w.upgrade() else { return };
+                    v.waiting_popover.set(false);
+                    glib::idle_add_local_once(move || v.refresh());
+                });
+            }
+            return;
+        }
         self.pending_refresh.set(false);
         // Keep keyboard focus on the same cell across the redraw.
         if self.focus_next.borrow().is_none() {
@@ -251,6 +282,17 @@ impl BudgetView {
                 let max = last.plus(1 - self.count.get() as i32).max(first);
                 m = m.min(max).max(first);
             }
+        }
+        // Keep focus on the same category, in the same column.
+        let old = self.start.get();
+        if self.focus_next.borrow().is_none() {
+            let focused = self
+                .entries
+                .borrow()
+                .iter()
+                .find(|(_, _, e)| e.state_flags().contains(gtk::StateFlags::FOCUS_WITHIN))
+                .map(|(c, fm, _)| (c.clone(), fm.plus(m.diff(old))));
+            *self.focus_next.borrow_mut() = focused;
         }
         self.start.set(m);
         self.rebuild();
@@ -792,7 +834,16 @@ impl BudgetView {
         b.set_margin_bottom(8);
         b.set_margin_start(8);
         b.set_margin_end(8);
-        let pop = gtk::Popover::builder().child(&b).build();
+        // Scrolls when taller than the room beside the pill (a popover that
+        // fits neither above nor below isn't shown at all).
+        let scroll = gtk::ScrolledWindow::builder()
+            .child(&b)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_height(true)
+            .propagate_natural_width(true)
+            .max_content_height((app.window.height() / 2 - 40).max(240))
+            .build();
+        let pop = gtk::Popover::builder().child(&scroll).build();
         pop.set_parent(pill);
         pop.connect_closed(|p| {
             let p = p.clone();
@@ -848,8 +899,7 @@ impl BudgetView {
             let t = gtk::Label::builder().label("Cover overspending from").xalign(0.0).build();
             t.add_css_class("heading");
             b.append(&t);
-            let from = gtk::DropDown::from_strings(&names_ref);
-            from.set_enable_search(true);
+            let from = super::string_dropdown(&names_ref, true);
             b.append(&from);
             let btn = gtk::Button::with_label(&format!("Cover {}", fmt.format(-cm.balance)));
             btn.add_css_class("suggested-action");
@@ -881,8 +931,7 @@ impl BudgetView {
         b.append(&t);
         let amount = gtk::Entry::builder().text(fmt.format(cm.balance.max(0))).xalign(1.0).build();
         b.append(&amount);
-        let to = gtk::DropDown::from_strings(&names_ref);
-        to.set_enable_search(true);
+        let to = super::string_dropdown(&names_ref, true);
         b.append(&to);
         let mv = gtk::Button::with_label("Move");
         b.append(&mv);

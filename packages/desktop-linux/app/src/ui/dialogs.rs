@@ -169,9 +169,7 @@ pub fn edit_note(app: &Rc<App>, id: &str, title: &str) {
 /// A drop-down of (id, label) choices; index 0 may be a "none" entry.
 fn choice_dropdown(labels: &[String]) -> gtk::DropDown {
     let strs: Vec<&str> = labels.iter().map(String::as_str).collect();
-    let dd = gtk::DropDown::from_strings(&strs);
-    dd.set_enable_search(labels.len() > 12);
-    dd
+    super::string_dropdown(&strs, labels.len() > 12)
 }
 
 fn category_in_use(app: &App, ids: &[String]) -> bool {
@@ -266,7 +264,7 @@ fn confirm_delete(
 
 pub fn add_account(app: &Rc<App>) {
     let name = gtk::Entry::new();
-    let balance = gtk::Entry::builder().placeholder_text(app.fmt.get().format(0)).build();
+    let balance = gtk::Entry::builder().placeholder_text(app.fmt.get().format(0)).activates_default(true).build();
     let off = gtk::CheckButton::with_label("Off budget (tracking only, e.g. investments, mortgage)");
     let b = gtk::Box::new(gtk::Orientation::Vertical, 12);
     b.append(&labelled("Account name", &name));
@@ -352,6 +350,7 @@ pub fn close_account(app: &Rc<App>, id: &str) {
         app.engine.run("Close account", move |s| {
             // The balance as of now: a sync may have changed it while the
             // dialog was open.
+            let depth = s.budget.undo_depth();
             let balance = model::accounts(s.budget.conn())?.into_iter().find(|a| a.id == id).map(|a| a.balance).unwrap_or(0);
             if let Some(target) = target.as_ref().filter(|_| balance != 0) {
                 let payee = ops::transfer_payee(s.budget.conn(), target)?
@@ -372,7 +371,7 @@ pub fn close_account(app: &Rc<App>, id: &str) {
                 let (ids, cs) = ops::insert_transaction(&tx)?;
                 s.budget.edit_transactions(cs, ids, Vec::new())?;
             }
-            match target {
+            let r = match target {
                 Some(_) => {
                     let mut cs = ops::ChangeSet::new();
                     cs.set("accounts", &id, vec![("closed", true.into())]);
@@ -382,7 +381,10 @@ pub fn close_account(app: &Rc<App>, id: &str) {
                     let cs = ops::close_account(s.budget.conn(), &id, true)?;
                     s.budget.apply(cs)
                 }
-            }
+            };
+            // The transfer and the close undo together.
+            s.budget.merge_undo_since(depth);
+            r
         });
         true
     });

@@ -45,6 +45,11 @@ impl Month {
         self.year as i64 * 100 + self.month as i64
     }
 
+    /// Months from `other` to `self`.
+    pub fn diff(self, other: Month) -> i32 {
+        (self.year * 12 + self.month as i32) - (other.year * 12 + other.month as i32)
+    }
+
     pub fn plus(self, n: i32) -> Month {
         let total = self.year * 12 + (self.month as i32 - 1) + n;
         Month::new(total.div_euclid(12), (total.rem_euclid(12) + 1) as u32)
@@ -133,6 +138,7 @@ mod tests {
         let m = Month::new(2024, 1);
         assert_eq!(m.prev(), Month::new(2023, 12));
         assert_eq!(m.plus(13), Month::new(2025, 2));
+        assert_eq!(Month::new(2025, 2).diff(m), 13);
         assert_eq!(Month::new(2024, 2).bounds(), (20240201, 20240229));
         assert_eq!(Month::parse("2024-07-15"), Some(Month::new(2024, 7)));
         assert_eq!(Month::from_db(202412), Some(Month::new(2024, 12)));

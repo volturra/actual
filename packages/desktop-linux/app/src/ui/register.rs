@@ -751,6 +751,10 @@ impl Register {
             return;
         };
         self.account_menu.set_visible(true);
+        // Don't replace the menu while it's open; the next refresh does.
+        if self.account_menu.popover().is_some_and(|p| p.is_visible()) {
+            return;
+        }
         let b = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let pop = gtk::Popover::builder().child(&b).build();
         let mut items: Vec<(String, Box<dyn Fn()>)> = Vec::new();
@@ -1208,6 +1212,18 @@ impl Register {
         // A typed name that isn't an existing payee creates one.
         let payee_text = e.payee.text().trim().to_string();
         let payee_pick = e.payee.selected().filter(|c| c.label == payee_text).map(|c| c.id);
+        let self_transfer = payee_pick.as_ref().is_some_and(|p| {
+            app.db
+                .query_row("SELECT transfer_acct FROM payees WHERE id = ?", [p], |r| r.get::<_, Option<String>>(0))
+                .ok()
+                .flatten()
+                .is_some_and(|t| t == account)
+        });
+        if self_transfer {
+            app.toast("A transfer needs a different account.");
+            e.payee.widget().grab_focus();
+            return false;
+        }
         let category = if e.category.widget().is_sensitive() {
             match e.category.selected() {
                 Some(c) if c.label == e.category.text() => Some(c.id),
@@ -1646,6 +1662,7 @@ impl Register {
             };
             let account = account.clone();
             app.engine.run("Reconcile", move |s| {
+                let depth = s.budget.undo_depth();
                 // The cleared balance as of now (a sync may have changed it
                 // while the dialog was open).
                 let cleared = model::accounts(s.budget.conn())?
@@ -1676,7 +1693,10 @@ impl Register {
                     s.budget.edit_transactions(cs, ids, Vec::new())?;
                 }
                 let cs = ops::reconcile_account(s.budget.conn(), &account)?;
-                s.budget.apply(cs)
+                let r = s.budget.apply(cs);
+                // The adjustment and the reconcile undo together.
+                s.budget.merge_undo_since(depth);
+                r
             });
         });
         d.present(Some(&app.window));
