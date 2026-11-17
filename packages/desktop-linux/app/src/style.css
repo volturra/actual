@@ -1,0 +1,216 @@
+/* A YNAB4-flavoured look on top of libadwaita: a dark account sidebar,
+   month columns with a To Be Budgeted banner, and coloured balance pills.
+   Colours come from Adwaita's named colours where possible so dark mode
+   works. */
+
+.sidebar-pane {
+  background-color: #2f3b47;
+  color: #e9eef2;
+}
+.sidebar-pane list {
+  background: transparent;
+  color: inherit;
+}
+.sidebar-pane row {
+  padding: 6px 12px;
+  border-radius: 6px;
+  margin: 1px 6px;
+}
+.sidebar-pane row:selected {
+  background-color: rgba(255, 255, 255, 0.14);
+}
+.sidebar-pane row:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+.sidebar-heading {
+  font-size: 0.8em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #9fb0bf;
+  margin: 14px 18px 4px 18px;
+}
+.sidebar-nav {
+  font-weight: 700;
+  font-size: 1.05em;
+}
+.sidebar-amount {
+  font-feature-settings: "tnum";
+  color: #c9d6e0;
+}
+.sidebar-amount.negative {
+  color: #ff8a80;
+}
+.sidebar-total {
+  font-weight: 700;
+}
+.sidebar-pane button.flat {
+  color: #c9d6e0;
+}
+
+.tnum {
+  font-feature-settings: "tnum";
+}
+
+/* Budget month banner */
+.month-banner {
+  background-color: #3d6f99;
+  color: white;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin: 8px 6px 4px 6px;
+}
+.month-banner .month-name {
+  font-size: 1.25em;
+  font-weight: 700;
+}
+.month-banner .tbb-amount {
+  font-size: 1.6em;
+  font-weight: 800;
+  font-feature-settings: "tnum";
+}
+.month-banner.tbb-negative {
+  background-color: #b3443a;
+}
+.month-banner.tbb-zero {
+  background-color: #5b6b78;
+}
+.month-banner .breakdown {
+  font-size: 0.85em;
+  opacity: 0.92;
+  font-feature-settings: "tnum";
+}
+
+/* Budget grid */
+.budget-grid {
+  margin: 0 6px 12px 6px;
+}
+.budget-colhead {
+  font-size: 0.8em;
+  font-weight: 700;
+  color: alpha(currentColor, 0.6);
+  padding: 4px 8px;
+  border-bottom: 1px solid alpha(currentColor, 0.15);
+}
+.budget-group {
+  background-color: alpha(@accent_bg_color, 0.10);
+  font-weight: 700;
+  padding: 5px 8px;
+  border-top: 1px solid alpha(currentColor, 0.12);
+}
+.budget-cat {
+  padding: 2px 8px 2px 22px;
+  border-bottom: 1px solid alpha(currentColor, 0.06);
+  min-height: 30px;
+}
+.budget-cell {
+  padding: 2px 8px;
+  border-bottom: 1px solid alpha(currentColor, 0.06);
+  font-feature-settings: "tnum";
+}
+.budget-cell.month-start {
+  border-left: 1px solid alpha(currentColor, 0.15);
+}
+.budget-cat.hidden-cat, .budget-cell.hidden-cat {
+  opacity: 0.55;
+}
+entry.budget-input {
+  min-height: 26px;
+  padding: 0 6px;
+  background: transparent;
+  box-shadow: none;
+  border: 1px solid transparent;
+  font-feature-settings: "tnum";
+}
+entry.budget-input:focus-within {
+  background-color: @view_bg_color;
+  border-color: @accent_color;
+}
+
+button.pill {
+  min-height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-feature-settings: "tnum";
+  color: white;
+}
+button.pill.positive { background-color: #5fa83a; }
+button.pill.zero { background-color: alpha(currentColor, 0.12); color: inherit; font-weight: 400; }
+button.pill.negative { background-color: #d9534f; }
+button.pill.carry { border: 2px solid #f0ad4e; }
+
+/* Register */
+.register-editor {
+  background-color: alpha(@accent_bg_color, 0.08);
+  border-bottom: 1px solid alpha(currentColor, 0.12);
+  padding: 8px;
+}
+.account-header {
+  padding: 12px 16px 8px 16px;
+}
+.account-title {
+  font-size: 1.5em;
+  font-weight: 800;
+}
+.balance-chip {
+  font-feature-settings: "tnum";
+  padding: 2px 10px;
+  border-radius: 6px;
+  background-color: alpha(currentColor, 0.07);
+}
+.amount-negative {
+  color: #c0392b;
+}
+.split-child {
+  color: alpha(currentColor, 0.75);
+}
+.split-error {
+  color: #c0392b;
+  font-weight: 700;
+}
+columnview.register row:selected {
+  background-color: alpha(@accent_bg_color, 0.25);
+}
+.welcome-title {
+  font-size: 2em;
+  font-weight: 800;
+}
+.register-toolbar {
+  padding: 4px 16px 8px 16px;
+}
+.register-editor {
+  padding: 8px 16px;
+}
+.account-balance {
+  font-size: 1.1em;
+  font-weight: 700;
+}
+.account-balance.negative,
+columnview.register label.negative {
+  color: #c0392b;
+}
+columnview.register > listview > row {
+  min-height: 0;
+}
+columnview.register > listview > row > cell {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+button.cleared-toggle {
+  min-height: 0;
+  min-width: 0;
+  padding: 0 6px;
+  font-weight: 700;
+  color: alpha(currentColor, 0.35);
+}
+button.cleared-toggle.is-cleared {
+  color: #3b8f2a;
+}
+button.cleared-toggle.is-reconciled {
+  color: @accent_color;
+}
+.filter-chip {
+  padding: 0 4px 0 10px;
+  border-radius: 999px;
+  background-color: alpha(@accent_bg_color, 0.15);
+}
