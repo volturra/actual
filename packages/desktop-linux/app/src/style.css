@@ -34,7 +34,7 @@
   font-size: 1.05em;
 }
 .sidebar-amount {
-  font-feature-settings: "tnum";
+  font-feature-settings: 'tnum';
   color: #c9d6e0;
 }
 .sidebar-amount.negative {
@@ -48,7 +48,7 @@
 }
 
 .tnum {
-  font-feature-settings: "tnum";
+  font-feature-settings: 'tnum';
 }
 
 /* Budget month banner */
@@ -66,7 +66,7 @@
 .month-banner .tbb-amount {
   font-size: 1.6em;
   font-weight: 800;
-  font-feature-settings: "tnum";
+  font-feature-settings: 'tnum';
 }
 .month-banner.tbb-negative {
   background-color: #b3443a;
@@ -77,7 +77,7 @@
 .month-banner .breakdown {
   font-size: 0.85em;
   opacity: 0.92;
-  font-feature-settings: "tnum";
+  font-feature-settings: 'tnum';
 }
 
 /* Budget grid */
@@ -92,7 +92,7 @@
   border-bottom: 1px solid alpha(currentColor, 0.15);
 }
 .budget-group {
-  background-color: alpha(@accent_bg_color, 0.10);
+  background-color: alpha(@accent_bg_color, 0.1);
   font-weight: 700;
   padding: 5px 8px;
   border-top: 1px solid alpha(currentColor, 0.12);
@@ -105,12 +105,13 @@
 .budget-cell {
   padding: 2px 8px;
   border-bottom: 1px solid alpha(currentColor, 0.06);
-  font-feature-settings: "tnum";
+  font-feature-settings: 'tnum';
 }
 .budget-cell.month-start {
   border-left: 1px solid alpha(currentColor, 0.15);
 }
-.budget-cat.hidden-cat, .budget-cell.hidden-cat {
+.budget-cat.hidden-cat,
+.budget-cell.hidden-cat {
   opacity: 0.55;
 }
 entry.budget-input {
@@ -119,7 +120,7 @@ entry.budget-input {
   background: transparent;
   box-shadow: none;
   border: 1px solid transparent;
-  font-feature-settings: "tnum";
+  font-feature-settings: 'tnum';
 }
 entry.budget-input:focus-within {
   background-color: @view_bg_color;
@@ -131,13 +132,23 @@ button.pill {
   padding: 0 10px;
   border-radius: 999px;
   font-weight: 700;
-  font-feature-settings: "tnum";
+  font-feature-settings: 'tnum';
   color: white;
 }
-button.pill.positive { background-color: #5fa83a; }
-button.pill.zero { background-color: alpha(currentColor, 0.12); color: inherit; font-weight: 400; }
-button.pill.negative { background-color: #d9534f; }
-button.pill.carry { border: 2px solid #f0ad4e; }
+button.pill.positive {
+  background-color: #5fa83a;
+}
+button.pill.zero {
+  background-color: alpha(currentColor, 0.12);
+  color: inherit;
+  font-weight: 400;
+}
+button.pill.negative {
+  background-color: #d9534f;
+}
+button.pill.carry {
+  border: 2px solid #f0ad4e;
+}
 
 /* Register */
 .register-editor {
@@ -153,7 +164,7 @@ button.pill.carry { border: 2px solid #f0ad4e; }
   font-weight: 800;
 }
 .balance-chip {
-  font-feature-settings: "tnum";
+  font-feature-settings: 'tnum';
   padding: 2px 10px;
   border-radius: 6px;
   background-color: alpha(currentColor, 0.07);

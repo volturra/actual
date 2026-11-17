@@ -5,8 +5,10 @@
 // Usage: node web-client.mjs <command> <json-args>
 // Prints one JSON object on stdout.
 import fs from 'node:fs';
-import path from 'node:path';
 
+// Not a workspace package: run from this repository, it uses the
+// workspace build of the API (see the README).
+// oxlint-disable-next-line actual/no-extraneous-dependencies
 import * as api from '@actual-app/api';
 
 const [command, rawArgs = '{}'] = process.argv.slice(2);
@@ -25,11 +27,18 @@ function out(value) {
   realLog(JSON.stringify(value));
 }
 
-const lib = await api.init({ dataDir, serverURL: args.serverURL, password: args.password });
+const lib = await api.init({
+  dataDir,
+  serverURL: args.serverURL,
+  password: args.password,
+});
 const send = lib.send;
 
 async function open() {
-  await api.downloadBudget(args.syncId, args.encryptPassword ? { password: args.encryptPassword } : {});
+  await api.downloadBudget(
+    args.syncId,
+    args.encryptPassword ? { password: args.encryptPassword } : {},
+  );
   await api.sync();
 }
 
@@ -93,14 +102,26 @@ try {
       await api.batchBudgetUpdates(async () => {
         const groupId = await api.createCategoryGroup({ name: 'Bills' });
         result.groupId = groupId;
-        result.rent = await api.createCategory({ name: 'Rent', group_id: groupId });
-        result.power = await api.createCategory({ name: 'Power', group_id: groupId });
+        result.rent = await api.createCategory({
+          name: 'Rent',
+          group_id: groupId,
+        });
+        result.power = await api.createCategory({
+          name: 'Power',
+          group_id: groupId,
+        });
       });
       result.checking = await api.createAccount({ name: 'Checking' }, 250000);
       result.savings = await api.createAccount({ name: 'Savings' }, 1000000);
       result.payee = await api.createPayee({ name: 'Landlord' });
       await api.addTransactions(result.checking, [
-        { date: args.month + '-03', amount: -120000, payee: result.payee, category: result.rent, notes: 'web rent' },
+        {
+          date: args.month + '-03',
+          amount: -120000,
+          payee: result.payee,
+          category: result.rent,
+          notes: 'web rent',
+        },
         {
           date: args.month + '-05',
           amount: -9000,

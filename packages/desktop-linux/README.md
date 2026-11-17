@@ -32,12 +32,12 @@ than this client was built against opens read-only.
 
 ## Layout
 
-| Path | What's there |
-| --- | --- |
-| `crates/actual-sync` | The sync protocol: timestamps, merkle, protobuf, crypto, server client, file download and upload. |
-| `crates/actual-budget` | The budget engine: data model, envelope math (ported from loot-core), edits, transfers, undo. |
-| `app` | The GTK app (`actual-linux`). |
-| `interop` | A Node helper that drives the real loot-core engine through `@actual-app/api`, for interop tests. |
+| Path                   | What's there                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| `crates/actual-sync`   | The sync protocol: timestamps, merkle, protobuf, crypto, server client, file download and upload. |
+| `crates/actual-budget` | The budget engine: data model, envelope math (ported from loot-core), edits, transfers, undo.     |
+| `app`                  | The GTK app (`actual-linux`).                                                                     |
+| `interop`              | A Node helper that drives the real loot-core engine through `@actual-app/api`, for interop tests. |
 
 ## Building
 
