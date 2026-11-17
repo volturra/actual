@@ -850,9 +850,20 @@ impl Register {
             accounts.iter().map(|a| if a.closed { format!("{} (closed)", a.name) } else { a.name.clone() }).collect();
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
         let ids: Vec<String> = accounts.iter().map(|a| a.id.clone()).collect();
-        if *self.editor.account_ids.borrow() != ids {
+        let same_names = self.editor.account.model().is_some_and(|m| {
+            m.n_items() as usize == names.len()
+                && names.iter().enumerate().all(|(i, n)| {
+                    m.item(i as u32).and_downcast::<gtk::StringObject>().is_some_and(|o| o.string() == *n)
+                })
+        });
+        if *self.editor.account_ids.borrow() != ids || !same_names {
+            // A new model resets the selection; keep the account the editor
+            // shows (and so its unsaved state) across the change.
+            let keep = self.selected_account();
             self.editor.account.set_model(Some(&gtk::StringList::new(&names)));
+            let idx = keep.and_then(|k| ids.iter().position(|i| *i == k));
             *self.editor.account_ids.borrow_mut() = ids;
+            self.editor.account.set_selected(idx.map(|i| i as u32).unwrap_or(gtk::INVALID_LIST_POSITION));
         }
         let ro = !app.writable;
         for w in [
@@ -913,6 +924,10 @@ impl Register {
 
     /// Clears the editor for a new transaction and focuses it.
     fn new_transaction(self: &Rc<Self>) {
+        // Starting a new one saves the edit in progress, like moving rows.
+        if self.editor_dirty() && !self.save() {
+            return;
+        }
         self.new_transaction_quiet();
         self.editor.date.grab_focus();
         self.editor.date.select_region(0, -1);
@@ -953,21 +968,6 @@ impl Register {
         let Some(id) = id else { return self.new_transaction_quiet() };
         let Some(t) = model::transaction(&app.db, &id).ok().flatten() else { return };
         let e = &self.editor;
-        let pref = app.date_format.borrow().clone();
-        e.heading.set_text(if t.reconciled { "Edit transaction (reconciled)" } else { "Edit transaction" });
-        e.date.set_text(&format_date(&t.date, &pref));
-        e.payee.set_by_id(t.payee.as_deref());
-        e.category.set_by_id(t.category.as_deref());
-        e.notes.set_text(t.notes.as_deref().unwrap_or(""));
-        let fmt = app.fmt.get();
-        e.outflow.set_text(&if t.amount < 0 { fmt.format(-t.amount) } else { String::new() });
-        e.inflow.set_text(&if t.amount > 0 { fmt.format(t.amount) } else { String::new() });
-        e.cleared.set_active(t.cleared);
-        e.delete.set_visible(app.writable);
-        let idx = t.account.as_ref().and_then(|a| e.account_ids.borrow().iter().position(|x| x == a));
-        if let Some(i) = idx {
-            e.account.set_selected(i as u32);
-        }
         let splits = if t.is_parent {
             Some(
                 t.subtransactions
@@ -984,7 +984,23 @@ impl Register {
         } else {
             None
         };
-        *e.state.borrow_mut() = EditState { id: Some(id), original: Some(t), splits, loaded: String::new() };
+        // The new state goes in first: the widget updates below read it.
+        *e.state.borrow_mut() = EditState { id: Some(id), original: Some(t.clone()), splits, loaded: String::new() };
+        let idx = t.account.as_ref().and_then(|a| e.account_ids.borrow().iter().position(|x| x == a));
+        if let Some(i) = idx {
+            e.account.set_selected(i as u32);
+        }
+        let pref = app.date_format.borrow().clone();
+        e.heading.set_text(if t.reconciled { "Edit transaction (reconciled)" } else { "Edit transaction" });
+        e.date.set_text(&format_date(&t.date, &pref));
+        e.payee.set_by_id(t.payee.as_deref());
+        e.category.set_by_id(t.category.as_deref());
+        e.notes.set_text(t.notes.as_deref().unwrap_or(""));
+        let fmt = app.fmt.get();
+        e.outflow.set_text(&if t.amount < 0 { fmt.format(-t.amount) } else { String::new() });
+        e.inflow.set_text(&if t.amount > 0 { fmt.format(t.amount) } else { String::new() });
+        e.cleared.set_active(t.cleared);
+        e.delete.set_visible(app.writable);
         self.update_category_state();
         let snap = self.snapshot();
         e.state.borrow_mut().loaded = snap;
@@ -1088,8 +1104,8 @@ impl Register {
     fn snapshot(&self) -> String {
         let e = &self.editor;
         format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
-            e.account.selected(),
+            "{:?}|{}|{}|{}|{}|{}|{}|{}|{:?}",
+            self.selected_account(),
             e.date.text(),
             e.payee.text(),
             e.category.text(),
@@ -1115,6 +1131,13 @@ impl Register {
     }
 
     /// Saves without moving focus or resetting the editor for the next entry.
+    /// Saves the editor if it holds changes (when the window closes).
+    pub fn save_pending(self: &Rc<Self>) {
+        if self.editor_dirty() {
+            self.save_quiet();
+        }
+    }
+
     fn save_quiet(self: &Rc<Self>) -> bool {
         self.quiet_save.set(true);
         let ok = self.save();
@@ -1258,7 +1281,7 @@ impl Register {
                                 }
                             }
                         }
-                        let (scs, removed) = ops::set_splits_with_amount(conn, &id, &new_lines, u.amount)?;
+                        let (scs, removed) = ops::set_splits_with_amount(conn, &id, &new_lines, Some(&u))?;
                         cs.extend(scs);
                         if matches!(u.payee, Some(None)) {
                             for l in new_lines.iter().filter(|l| l.payee.is_none()) {
@@ -1486,8 +1509,20 @@ impl Register {
                 "ok" => {
                     let mut out = Vec::new();
                     for (id, cat, memo, o, i, _) in lines.iter() {
-                        let p = |e: &gtk::Entry| if e.text().trim().is_empty() { 0 } else { fmt.parse(&e.text()).unwrap_or(0) };
+                        let bad_amount = [o, i].iter().any(|e| !e.text().trim().is_empty() && fmt.parse(&e.text()).is_none());
                         let category = cat.selected().filter(|c| c.label == cat.text()).map(|c| c.id);
+                        let bad_cat = category.is_none() && !cat.text().trim().is_empty();
+                        if bad_amount || bad_cat {
+                            if let Some(app) = r.app.upgrade() {
+                                app.toast(if bad_amount {
+                                    "A split line has an invalid amount; the split wasn't changed."
+                                } else {
+                                    "Pick each split line's category from the list; the split wasn't changed."
+                                });
+                            }
+                            return;
+                        }
+                        let p = |e: &gtk::Entry| if e.text().trim().is_empty() { 0 } else { fmt.parse(&e.text()).unwrap_or(0) };
                         let amount = p(i) - p(o);
                         if amount == 0 && category.is_none() && memo.text().is_empty() {
                             continue;
@@ -1539,7 +1574,6 @@ impl Register {
         d.set_extra_child(Some(&b));
         entry.set_activates_default(true);
         let weak = app.weak();
-        let cleared = acct.cleared;
         let entry2 = entry.clone();
         d.connect_response(Some("ok"), move |_, _| {
             let Some(app) = weak.upgrade() else { return };
@@ -1547,13 +1581,16 @@ impl Register {
                 app.toast("That isn't a valid amount.");
                 return;
             };
-            let diff = target - cleared;
             let account = account.clone();
-            if diff != 0 {
-                let fmt = app.fmt.get();
-                app.toast(&format!("Added a {} balance adjustment", fmt.format(diff)));
-            }
             app.engine.run("Reconcile", move |s| {
+                // The cleared balance as of now (a sync may have changed it
+                // while the dialog was open).
+                let cleared = model::accounts(s.budget.conn())?
+                    .into_iter()
+                    .find(|a| a.id == account)
+                    .map(|a| a.cleared)
+                    .unwrap_or(0);
+                let diff = target - cleared;
                 if diff != 0 {
                     let mut cs = ops::ChangeSet::new();
                     let (pid, pcs) = ops::get_or_create_payee(s.budget.conn(), "Reconciliation balance adjustment")?;

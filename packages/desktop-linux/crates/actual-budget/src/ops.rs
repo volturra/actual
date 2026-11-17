@@ -593,32 +593,24 @@ pub fn delete_category_group(
     id: &str,
     transfer_to: Option<&str>,
 ) -> Result<ChangeSet, BudgetError> {
-    let cats: Vec<String> = sort_items(conn, "SELECT id, 0 FROM categories WHERE cat_group = ? AND tombstone = 0", [id])?
-        .into_iter()
-        .map(|(c, _)| c)
-        .collect();
+    // `db.deleteCategoryGroup` forwards every category of the group,
+    // including ones deleted earlier.
+    let all: Vec<(String, f64)> = sort_items(conn, "SELECT id, tombstone FROM categories WHERE cat_group = ?", [id])?;
+    let cats: Vec<String> = all.iter().filter(|(_, t)| *t == 0.0).map(|(c, _)| c.clone()).collect();
     let mut cs = ChangeSet::new();
     if let Some(t) = transfer_to {
-        let (g_income, t_income): (i64, i64) = conn.query_row(
-            "SELECT IFNULL((SELECT is_income FROM category_groups WHERE id = ?1), 0),
-                    IFNULL((SELECT is_income FROM categories WHERE id = ?2), -1)",
-            params![id, t],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        if t_income == -1 {
+        let found: i64 = conn.query_row("SELECT COUNT(*) FROM categories WHERE id = ?", [t], |r| r.get(0))?;
+        if found == 0 {
             return Err(BudgetError::Invalid("Transfer category not found.".into()));
         }
-        if t_income != g_income {
-            return Err(BudgetError::Invalid("Cannot transfer between income and expense categories.".into()));
-        }
-        if g_income == 0 {
-            cs.extend(do_transfer(conn, budget, &cats, t)?);
-        }
+        cs.extend(do_transfer(conn, budget, &cats, t)?);
     }
-    for cat in &cats {
+    for (cat, _) in &all {
         if let Some(t) = transfer_to {
             cs.extend(forward_category(conn, cat, t)?);
         }
+    }
+    for cat in &cats {
         cs.delete("categories", cat);
     }
     cs.delete("category_groups", id);
@@ -639,13 +631,18 @@ pub fn insert_payee(name: &str, transfer_acct: Option<&str>) -> (String, ChangeS
 /// `createPayee`: reuses an existing payee with the same name.
 pub fn get_or_create_payee(conn: &Connection, name: &str) -> Result<(String, ChangeSet), BudgetError> {
     let name = name.trim();
-    let existing: Option<String> = conn
-        .query_row(
-            "SELECT id FROM payees WHERE LOWER(name) = LOWER(?) AND tombstone = 0 AND transfer_acct IS NULL LIMIT 1",
-            [name],
-            |r| r.get(0),
-        )
-        .optional()?;
+    // `UNICODE_LOWER(name) = name.toLowerCase()`, done here in Rust.
+    let lower = name.to_lowercase();
+    let mut stmt = conn.prepare("SELECT id, name FROM payees WHERE tombstone = 0 AND name IS NOT NULL")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+    let mut existing = None;
+    for row in rows {
+        let (id, n) = row?;
+        if n.to_lowercase() == lower {
+            existing = Some(id);
+            break;
+        }
+    }
     if let Some(id) = existing {
         return Ok((id, ChangeSet::new()));
     }
@@ -1000,9 +997,15 @@ pub fn set_splits_with_amount(
     conn: &Connection,
     id: &str,
     lines: &[SplitLine],
-    parent_amount: Option<i64>,
+    parent: Option<&TransactionUpdate>,
 ) -> Result<(ChangeSet, Vec<String>), BudgetError> {
     let current = crate::model::transaction(conn, id)?.ok_or_else(|| BudgetError::Invalid("Transaction not found.".into()))?;
+    let up = parent.cloned().unwrap_or_default();
+    let parent_amount = up.amount;
+    // Lines copy the parent's state as it is after the edit (`makeChild`).
+    let payee = up.payee.clone().unwrap_or(current.payee.clone());
+    let cleared = up.cleared.unwrap_or(current.cleared);
+    let reconciled = up.reconciled.unwrap_or(current.reconciled);
     let account = current.account.clone().ok_or_else(|| BudgetError::Invalid("Transaction has no account.".into()))?;
     let date = date_to_db(&current.date).ok_or_else(|| BudgetError::Invalid("Invalid date".into()))?;
     let mut cs = ChangeSet::new();
@@ -1016,15 +1019,22 @@ pub fn set_splits_with_amount(
     }
     if lines.is_empty() {
         if current.is_parent {
-            cs.set("transactions", id, vec![("isParent", Value::from(false)), ("error", Value::Null)]);
+            let mut f = vec![("isParent", Value::from(false)), ("error", Value::Null)];
+            // `update_transaction` can't set a category on a parent; the
+            // un-split one takes the category from this edit.
+            if let Some(c) = &up.category {
+                f.push(("category", c.clone().into()));
+            }
+            cs.set("transactions", id, f);
         }
         return Ok((cs, removed));
     }
-    cs.set(
-        "transactions",
-        id,
-        vec![("isParent", Value::from(true)), ("category", Value::Null), ("error", split_error(parent_amount.unwrap_or(current.amount), lines).into())],
-    );
+    let mut pf = vec![("isParent", Value::from(true)), ("category", Value::Null), ("error", split_error(parent_amount.unwrap_or(current.amount), lines).into())];
+    if !current.is_parent {
+        // `splitTransaction`: the payee moves to the lines.
+        pf.push(("description", Value::Null));
+    }
+    cs.set("transactions", id, pf);
     for (i, line) in lines.iter().enumerate() {
         let sort_order = current.sort_order - (i as f64 + 1.0);
         match &line.id {
@@ -1035,7 +1045,7 @@ pub fn set_splits_with_amount(
                     vec![
                         ("amount", line.amount.into()),
                         ("category", line.category.clone().into()),
-                        ("description", line.payee.clone().or(current.payee.clone()).into()),
+                        ("description", line.payee.clone().or(payee.clone()).into()),
                         ("notes", line.notes.clone().filter(|n| !n.is_empty()).into()),
                         ("sort_order", sort_order.into()),
                     ],
@@ -1052,12 +1062,13 @@ pub fn set_splits_with_amount(
                         ("acct", account.clone().into()),
                         ("category", line.category.clone().into()),
                         ("amount", line.amount.into()),
-                        ("description", line.payee.clone().or(current.payee.clone()).into()),
+                        ("description", line.payee.clone().or(payee.clone()).into()),
                         ("notes", line.notes.clone().filter(|n| !n.is_empty()).into()),
                         ("date", date.into()),
                         ("sort_order", sort_order.into()),
-                        ("cleared", Value::from(current.cleared)),
-                        ("reconciled", Value::from(false)),
+                        ("cleared", Value::from(cleared)),
+                        ("reconciled", Value::from(reconciled)),
+                        ("starting_balance_flag", Value::from(current.starting_balance_flag)),
                     ],
                 );
             }

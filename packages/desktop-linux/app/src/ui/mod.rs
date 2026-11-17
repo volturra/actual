@@ -276,7 +276,12 @@ impl App {
         });
 
         let engine = app.engine.clone();
+        let weak = Rc::downgrade(&app);
         app.window.connect_close_request(move |_| {
+            // Queue the register's unsaved edit before the engine stops.
+            if let Some(r) = weak.upgrade().and_then(|a| a.register.borrow().clone()) {
+                r.save_pending();
+            }
             engine.shutdown_wait(std::time::Duration::from_secs(5));
             glib::Propagation::Proceed
         });

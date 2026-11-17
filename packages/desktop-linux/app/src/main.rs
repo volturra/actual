@@ -163,7 +163,8 @@ fn open_budget(app: &adw::Application, req: OpenRequest) -> Result<(), String> {
 
 /// Replaces the open budget with the server's copy (after a reset there).
 fn redownload(app: &adw::Application, dir: BudgetDir, key: Option<Key>, client: Option<ServerClient>) {
-    let Some(client) = client else { return show_setup(app, None) };
+    // Signing in again since the budget opened saves a new token; use it.
+    let Some(client) = saved_client(&Config::load()).or(client) else { return show_setup(app, None) };
     let Some(cloud) = dir.read_meta().ok().and_then(|m| m.cloud_file_id().map(str::to_string)) else {
         return show_setup(app, None);
     };

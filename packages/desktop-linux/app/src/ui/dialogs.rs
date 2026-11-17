@@ -344,14 +344,16 @@ pub fn close_account(app: &Rc<App>, id: &str) {
         dd.connect_selected_notify(move |d| cat_box.set_visible(needs_cat(d.selected())));
     }
     let body = format!("This account has a balance of {}.", app.fmt.get().format(acct.balance));
-    let balance = acct.balance;
     ask(app, &format!("Close “{}”?", acct.name), &body, Some(extra.upcast_ref()), "Close account", true, None, move |app| {
         let idx = dd.selected() as usize;
         let target = if idx == 0 { None } else { others.get(idx - 1).map(|a| a.id.clone()) };
         let category = needs_cat(idx as u32).then(|| cats.get(cat_dd.selected() as usize).map(|(c, _)| c.clone())).flatten();
         let id = id.clone();
         app.engine.run("Close account", move |s| {
-            if let Some(target) = &target {
+            // The balance as of now: a sync may have changed it while the
+            // dialog was open.
+            let balance = model::accounts(s.budget.conn())?.into_iter().find(|a| a.id == id).map(|a| a.balance).unwrap_or(0);
+            if let Some(target) = target.as_ref().filter(|_| balance != 0) {
                 let payee = ops::transfer_payee(s.budget.conn(), target)?
                     .ok_or_else(|| BudgetError::Invalid("The other account has no transfer payee.".into()))?;
                 let tx = NewTransaction {
