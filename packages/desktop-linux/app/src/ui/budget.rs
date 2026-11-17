@@ -806,9 +806,20 @@ impl BudgetView {
         let e3 = entry.clone();
         let c = commit.clone();
         let d = done.clone();
+        let w = Rc::downgrade(self);
+        let cat_l = cat.clone();
         focus.connect_leave(move |_| {
             if !d.get() {
                 c(&e3, 0);
+            } else if shown != fmt && e3.text() == fmt.format(current) {
+                // Committed in place earlier (no cell to move to): show the
+                // rounded value now that focus is leaving.
+                e3.set_text(&shown.format(current));
+                if let Some(v) = w.upgrade() {
+                    if v.dirty.borrow().as_ref().is_some_and(|(cc, mm)| *cc == cat_l && *mm == m) {
+                        *v.dirty.borrow_mut() = None;
+                    }
+                }
             }
         });
         entry.add_controller(focus);

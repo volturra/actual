@@ -33,6 +33,9 @@ impl NumberFormat {
     }
 }
 
+/// The largest amount (in cents) loot-core accepts (`MAX_SAFE_NUMBER`).
+pub const MAX_AMOUNT: i64 = (1 << 51) - 1;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AmountFormat {
     pub format: NumberFormat,
@@ -92,7 +95,9 @@ impl AmountFormat {
         if !value.is_finite() {
             return None;
         }
-        Some((value * 100.0).round() as i64)
+        let cents = (value * 100.0).round();
+        // loot-core refuses amounts beyond MAX_SAFE_NUMBER (2^51 - 1).
+        (cents.abs() <= MAX_AMOUNT as f64).then_some(cents as i64)
     }
 }
 
@@ -280,6 +285,9 @@ mod tests {
         assert_eq!(f.parse("-7"), Some(-700));
         assert_eq!(f.parse("10+5.5"), Some(1550));
         assert_eq!(f.parse("(3*4)"), Some(1200));
+        assert_eq!(f.parse("99999999999999999"), None);
+        assert_eq!(f.parse("22517998136852.47"), Some(MAX_AMOUNT));
+        assert_eq!(f.parse("22517998136852.48"), None);
         let ap = AmountFormat { format: NumberFormat::ApostropheDot, hide_fraction: false };
         assert_eq!(ap.format(100033), "1\u{2019}000.33");
         assert_eq!(ap.parse("1\u{2019}000.33"), Some(100033));
