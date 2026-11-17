@@ -1,7 +1,7 @@
 //! Small modal dialogs: text and amount prompts, notes, deleting categories
 //! and groups, adding and closing accounts, and signing in again.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -389,15 +389,17 @@ pub fn close_account(app: &Rc<App>, id: &str) {
 }
 
 thread_local! {
-    static RELOGIN_OPEN: Cell<bool> = const { Cell::new(false) };
+    /// The open "Sign in again" dialog. Weak and checked for being shown,
+    /// so a dialog destroyed with its window (switching budgets) doesn't
+    /// block the next one.
+    static RELOGIN_OPEN: RefCell<glib::WeakRef<adw::AlertDialog>> = RefCell::new(glib::WeakRef::new());
 }
 
 /// The server rejected our token: ask for the password and sync again.
 pub fn relogin(app: &Rc<App>) {
-    if RELOGIN_OPEN.with(Cell::get) {
+    if RELOGIN_OPEN.with(|c| c.borrow().upgrade().is_some_and(|d| d.is_mapped())) {
         return;
     }
-    RELOGIN_OPEN.with(|c| c.set(true));
     let entry = gtk::PasswordEntry::builder().show_peek_icon(true).build();
     let extra = labelled("Server password", &entry);
     let e = entry.clone();
@@ -430,7 +432,7 @@ pub fn relogin(app: &Rc<App>) {
         let submit = submit.clone();
         let handled = handled.clone();
         d.connect_response(None, move |_, resp| {
-            RELOGIN_OPEN.with(|c| c.set(false));
+            RELOGIN_OPEN.with(|c| c.replace(glib::WeakRef::new()));
             let Some(app) = weak.upgrade() else { return };
             if resp == "ok" {
                 submit(&app);
@@ -441,7 +443,7 @@ pub fn relogin(app: &Rc<App>) {
     }
     let d2 = d.downgrade();
     entry.connect_activate(move |_| {
-        RELOGIN_OPEN.with(|c| c.set(false));
+        RELOGIN_OPEN.with(|c| c.replace(glib::WeakRef::new()));
         if let Some(app) = weak.upgrade() {
             submit(&app);
         }
@@ -450,6 +452,7 @@ pub fn relogin(app: &Rc<App>) {
         }
     });
     d.present(Some(&app.window));
+    RELOGIN_OPEN.with(|c| c.borrow().set(Some(&d)));
     entry.grab_focus();
 }
 

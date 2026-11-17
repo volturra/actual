@@ -1151,7 +1151,19 @@ impl Register {
     /// Saves the editor if it holds changes (when the window closes).
     /// False when there's an edit that can't be saved.
     pub fn save_pending(self: &Rc<Self>) -> bool {
-        !self.editor_dirty() || self.save_quiet()
+        if !self.editor_dirty() {
+            return true;
+        }
+        let was_new = self.editor.state.borrow().id.is_none();
+        if !self.save_quiet() {
+            return false;
+        }
+        // A saved new transaction leaves the editor, or saving again would
+        // add it twice.
+        if was_new {
+            self.new_transaction_quiet();
+        }
+        true
     }
 
     fn save_quiet(self: &Rc<Self>) -> bool {
