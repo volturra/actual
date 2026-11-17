@@ -56,6 +56,7 @@ pub fn show(
     close_current: impl Fn() + 'static,
 ) {
     let window = adw::Window::builder().application(gtk_app).title("Open a budget — Actual").default_width(560).default_height(640).build();
+    window.set_widget_name("setup");
     if let Some(p) = parent {
         window.set_transient_for(Some(p));
         window.set_modal(true);

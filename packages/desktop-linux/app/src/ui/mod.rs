@@ -47,6 +47,9 @@ pub struct App {
     last_sync_text: RefCell<String>,
     /// Re-downloads the open budget (after a reset on the server).
     pub on_redownload: RefCell<Option<Box<dyn Fn()>>>,
+    /// Set when the window is closed to switch budgets: an edit that can't
+    /// be saved was already checked by `ready_to_leave`.
+    pub discard_edit: Cell<bool>,
     /// The budget's `dateFormat` preference.
     pub date_format: RefCell<String>,
 }
@@ -181,6 +184,7 @@ impl App {
             populating: Cell::new(false),
             last_sync_text: RefCell::new(String::new()),
             on_redownload: RefCell::new(None),
+            discard_edit: Cell::new(false),
             date_format: RefCell::new("MM/dd/yyyy".into()),
         });
         app.load_format();
@@ -277,12 +281,11 @@ impl App {
 
         let engine = app.engine.clone();
         let weak = Rc::downgrade(&app);
-        let discard = Rc::new(Cell::new(false));
         app.window.connect_close_request(move |w| {
             // Queue the register's unsaved edit before the engine stops.
             if let Some(a) = weak.upgrade() {
                 if let Some(r) = a.register.borrow().clone() {
-                    if !r.save_pending() && !discard.get() {
+                    if !r.save_pending() && !a.discard_edit.get() {
                         // An edit that can't be saved: ask before losing it.
                         let d = adw::AlertDialog::new(
                             Some("Discard the unsaved transaction?"),
@@ -291,9 +294,11 @@ impl App {
                         d.add_responses(&[("keep", "Keep editing"), ("discard", "Discard")]);
                         d.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
                         d.set_close_response("keep");
-                        let (w2, discard) = (w.clone(), discard.clone());
+                        let (w2, a2) = (w.clone(), Rc::downgrade(&a));
                         d.connect_response(Some("discard"), move |_, _| {
-                            discard.set(true);
+                            if let Some(a) = a2.upgrade() {
+                                a.discard_edit.set(true);
+                            }
                             w2.close();
                         });
                         d.present(Some(w));
@@ -311,6 +316,19 @@ impl App {
         app.refresh_sidebar();
         app.show(View::Budget);
         app
+    }
+
+    /// Before leaving this budget (switch, re-download): saves pending
+    /// edits. False, after a toast, when the register's can't be saved.
+    pub fn ready_to_leave(&self) -> bool {
+        if let Some(b) = self.budget_view.borrow().clone() {
+            b.commit_pending();
+        }
+        let ok = self.register.borrow().clone().is_none_or(|r| r.save_pending());
+        if !ok {
+            self.toast("Fix or clear the transaction being edited first.");
+        }
+        ok
     }
 
     pub fn weak(self: &Rc<Self>) -> Weak<App> {

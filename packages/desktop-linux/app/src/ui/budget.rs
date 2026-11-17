@@ -193,7 +193,7 @@ impl BudgetView {
         let keys = gtk::EventControllerKey::new();
         let w = Rc::downgrade(&view);
         keys.connect_key_pressed(move |_, key, _, mods| {
-            let Some(v) = w.upgrade() else { return glib::Propagation::Proceed };
+            let Some(v) = w.upgrade().filter(|v| v.root.is_mapped()) else { return glib::Propagation::Proceed };
             if !mods.contains(gtk::gdk::ModifierType::ALT_MASK) {
                 return glib::Propagation::Proceed;
             }
@@ -209,7 +209,8 @@ impl BudgetView {
                 _ => glib::Propagation::Proceed,
             }
         });
-        view.root.add_controller(keys);
+        // On the window, so paging works with focus in the sidebar too.
+        app.window.add_controller(keys);
         view
     }
 

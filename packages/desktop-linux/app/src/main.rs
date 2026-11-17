@@ -93,9 +93,7 @@ fn show_setup(app: &adw::Application, parent: Option<&gtk::Window>) {
     let a = app.clone();
     ui::setup::show(app, parent, move |req| {
         // Close the budget that's open (its engine pushes pending changes).
-        if !close_current() {
-            return;
-        }
+        close_current();
         if let Err(e) = open_budget(&a, req) {
             let a2 = a.clone();
             glib::idle_add_local_once(move || {
@@ -112,16 +110,18 @@ fn show_setup(app: &adw::Application, parent: Option<&gtk::Window>) {
     });
 }
 
-/// Closes the open budget's window. False when it stays open (it asked
-/// about an edit it can't save).
-fn close_current() -> bool {
-    let Some(cur) = CURRENT.with(|c| c.borrow_mut().take()) else { return true };
-    cur.window.close();
-    if cur.window.is_visible() {
-        CURRENT.with(|c| *c.borrow_mut() = Some(cur));
-        return false;
+/// Closes the open budget's window. Callers check `App::ready_to_leave`
+/// first, before anything the user can't take back.
+fn close_current() {
+    if let Some(cur) = CURRENT.with(|c| c.borrow_mut().take()) {
+        cur.discard_edit.set(true);
+        cur.window.close();
     }
-    true
+}
+
+/// Whether the open budget (if any) has no edit that would be lost.
+fn ready_to_leave() -> bool {
+    CURRENT.with(|c| c.borrow().clone()).is_none_or(|cur| cur.ready_to_leave())
 }
 
 fn open_budget(app: &adw::Application, req: OpenRequest) -> Result<(), String> {
@@ -151,7 +151,11 @@ fn open_budget(app: &adw::Application, req: OpenRequest) -> Result<(), String> {
 
     let a = app.clone();
     let w = ui.window.clone();
-    *ui.on_switch_budget.borrow_mut() = Some(Box::new(move || show_setup(&a, Some(w.upcast_ref()))));
+    *ui.on_switch_budget.borrow_mut() = Some(Box::new(move || {
+        if ready_to_leave() {
+            show_setup(&a, Some(w.upcast_ref()));
+        }
+    }));
 
     let (a, d, k, c) = (app.clone(), dir.clone(), key_copy, client_copy);
     *ui.on_redownload.borrow_mut() = Some(Box::new(move || redownload(&a, d.clone(), k.clone(), c.clone())));
@@ -181,9 +185,10 @@ fn redownload(app: &adw::Application, dir: BudgetDir, key: Option<Key>, client: 
     // Closing the last window would end the app before the download
     // finishes; hold it open until then.
     let guard = app.hold();
-    if !close_current() {
+    if !ready_to_leave() {
         return;
     }
+    close_current();
     let local_id = dir.path.file_name().map(|n| n.to_string_lossy().to_string());
     let root = dir.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(config::budgets_dir);
     let a = app.clone();
@@ -217,6 +222,11 @@ fn install_actions(app: &adw::Application) {
     let switch = gtk::gio::SimpleAction::new("switch-budget", None);
     let a = app.clone();
     switch.connect_activate(move |_, _| {
+        // One setup window at a time.
+        if let Some(w) = a.windows().into_iter().find(|w| w.widget_name() == "setup") {
+            w.present();
+            return;
+        }
         let cur = CURRENT.with(|c| c.borrow().clone());
         match cur {
             Some(cur) => {
@@ -236,7 +246,7 @@ fn install_actions(app: &adw::Application) {
                     Alt+Left / Alt+Right  Previous / next month\n\
                     Enter  Save the cell and move down\nEscape  Cancel the edit\n\
                     Ctrl+N  New transaction\nCtrl+F  Search transactions\n\
-                    Delete  Delete the selected transaction";
+                    Delete  Delete the selected transaction (in the list)";
         let d = adw::AlertDialog::new(Some("Keyboard shortcuts"), Some(text));
         d.add_response("ok", "Close");
         if let Some(w) = a.active_window() {

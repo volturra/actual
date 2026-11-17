@@ -495,7 +495,7 @@ impl Register {
         let keys = gtk::EventControllerKey::new();
         let w = Rc::downgrade(&reg);
         keys.connect_key_pressed(move |_, key, _, mods| {
-            let Some(r) = w.upgrade() else { return glib::Propagation::Proceed };
+            let Some(r) = w.upgrade().filter(|r| r.root.is_mapped()) else { return glib::Propagation::Proceed };
             let ctrl = mods.contains(gtk::gdk::ModifierType::CONTROL_MASK);
             match key {
                 gtk::gdk::Key::n if ctrl => {
@@ -509,7 +509,9 @@ impl Register {
                 _ => glib::Propagation::Proceed,
             }
         });
-        reg.root.add_controller(keys);
+        // On the window, so they work wherever focus is (the sidebar too)
+        // while the register is showing.
+        app.window.add_controller(keys);
         let keys = gtk::EventControllerKey::new();
         let w = Rc::downgrade(&reg);
         keys.connect_key_pressed(move |_, key, _, _| {
