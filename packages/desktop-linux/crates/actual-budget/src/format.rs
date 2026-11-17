@@ -95,7 +95,8 @@ impl AmountFormat {
         if !value.is_finite() {
             return None;
         }
-        let cents = (value * 100.0).round();
+        // JS Math.round (halves toward +infinity), as the web app rounds.
+        let cents = (value * 100.0 + 0.5).floor();
         // loot-core refuses amounts beyond MAX_SAFE_NUMBER (2^51 - 1).
         (cents.abs() <= MAX_AMOUNT as f64).then_some(cents as i64)
     }
@@ -286,6 +287,8 @@ mod tests {
         assert_eq!(f.parse("10+5.5"), Some(1550));
         assert_eq!(f.parse("(3*4)"), Some(1200));
         assert_eq!(f.parse("99999999999999999"), None);
+        assert_eq!(f.parse("-0.125"), Some(-12));
+        assert_eq!(f.parse("0.125"), Some(13));
         assert_eq!(f.parse("22517998136852.47"), Some(MAX_AMOUNT));
         assert_eq!(f.parse("22517998136852.48"), None);
         let ap = AmountFormat { format: NumberFormat::ApostropheDot, hide_fraction: false };
