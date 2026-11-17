@@ -44,6 +44,8 @@ pub enum SyncError {
     Network(String),
     #[error("not signed in, or the session expired")]
     Unauthorized,
+    #[error("the password is incorrect")]
+    InvalidPassword,
     /// A reason string from the server, e.g. `file-has-reset`.
     #[error("server error: {0}")]
     Server(String),
@@ -74,6 +76,7 @@ impl SyncError {
             SyncError::EncryptFailure { .. } => "encrypt-failure",
             SyncError::Network(_) => "network",
             SyncError::Unauthorized => "unauthorized",
+            SyncError::InvalidPassword => "invalid-password",
             SyncError::Server(r) => r,
             SyncError::Protocol(_) => "internal",
         }

@@ -44,7 +44,7 @@ pub struct App {
     pub on_switch_budget: RefCell<Option<Box<dyn Fn()>>>,
     sidebar_rows: RefCell<Vec<View>>,
     populating: Cell<bool>,
-    last_sync_text: RefCell<String>,
+    pub(crate) last_sync_text: RefCell<String>,
     /// Re-downloads the open budget (after a reset on the server).
     pub on_redownload: RefCell<Option<Box<dyn Fn()>>>,
     /// Set when the window is closed to switch budgets: an edit that can't

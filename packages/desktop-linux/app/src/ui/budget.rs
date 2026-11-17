@@ -494,7 +494,15 @@ impl BudgetView {
         }
 
         drop(data_ref);
+        // Keep the scroll position: a new child would start at the top.
+        let vadj = self.grid_holder.vadjustment();
+        let pos = vadj.value();
         self.grid_holder.set_child(Some(&grid));
+        // (Unless a cell gets focus below, which scrolls to it.)
+        if self.focus_next.borrow().is_none() {
+            let v = vadj.clone();
+            glib::idle_add_local_once(move || v.set_value(pos));
+        }
         *self.entries.borrow_mut() = entries;
         // Taken first: grab_focus below can commit another cell, which sets
         // focus_next again.
@@ -718,6 +726,9 @@ impl BudgetView {
                 });
                 let target = target.flatten();
                 if !done.replace(true) {
+                    // A cell that keeps focus (no cell to move to) keeps
+                    // the full value; one being left shows the rounded one.
+                    let reset = if step == 0 || target.is_some() { shown } else { fmt };
                     let text = e.text().to_string();
                     let parsed = if text.trim().is_empty() { Some(0) } else { fmt.parse(&text) };
                     match parsed {
@@ -730,13 +741,13 @@ impl BudgetView {
                             });
                         }
                         Some(_) => {
-                            if text != shown.format(current) {
-                                e.set_text(&shown.format(current));
+                            if text != reset.format(current) {
+                                e.set_text(&reset.format(current));
                             }
                         }
                         None => {
                             app.toast(&format!("“{text}” isn't an amount"));
-                            e.set_text(&fmt.format(current));
+                            e.set_text(&reset.format(current));
                         }
                     }
                     // After any set_text above, whose intermediate empty

@@ -140,11 +140,13 @@ pub fn prompt_text(
 
 /// Asks for an amount in the budget's number format (arithmetic allowed).
 pub fn prompt_amount(app: &Rc<App>, title: &str, label: &str, cb: impl Fn(&Rc<App>, i64) + 'static) {
+    // Read in the format the field was shown in, even if a sync changes it.
+    let fmt0 = app.fmt.get().editable();
     let entry = gtk::Entry::builder().input_purpose(gtk::InputPurpose::Number).build();
     let extra = labelled(label, &entry);
     let e = entry.clone();
     ask(app, title, "", Some(extra.upcast_ref()), "OK", false, Some(&entry), move |app| {
-        match app.fmt.get().parse(&e.text()) {
+        match fmt0.parse(&e.text()) {
             Some(v) => {
                 cb(app, v);
                 true
@@ -285,6 +287,8 @@ fn confirm_delete(
 }
 
 pub fn add_account(app: &Rc<App>) {
+    // Read in the format the field was shown in, even if a sync changes it.
+    let fmt0 = app.fmt.get().editable();
     let name = gtk::Entry::new();
     let balance = gtk::Entry::builder().placeholder_text(app.fmt.get().format(0)).activates_default(true).build();
     let off = gtk::CheckButton::with_label("Off budget (tracking only, e.g. investments, mortgage)");
@@ -300,7 +304,7 @@ pub fn add_account(app: &Rc<App>) {
             return false;
         }
         let text = bal.text();
-        let amount = if text.trim().is_empty() { Some(0) } else { app.fmt.get().parse(&text) };
+        let amount = if text.trim().is_empty() { Some(0) } else { fmt0.parse(&text) };
         let Some(amount) = amount else {
             app.toast("That isn't a valid balance.");
             return false;
@@ -449,6 +453,9 @@ pub fn relogin(app: &Rc<App>) {
             cfg.save().map_err(|e| BudgetError::Invalid(format!("Couldn't save the sign-in: {e}")))?;
             Ok(Changed::default())
         });
+        // If the password was wrong the sync still needs a sign-in; let
+        // that ask again rather than leave "Signed out" with no prompt.
+        app.last_sync_text.borrow_mut().clear();
         app.engine.sync_now();
     });
     {
@@ -507,6 +514,8 @@ pub fn prompt_amount_choice(
     action: &str,
     cb: impl Fn(&Rc<App>, i64, usize) + 'static,
 ) {
+    // Read in the format the field was shown in, even if a sync changes it.
+    let fmt0 = app.fmt.get().editable();
     let entry = gtk::Entry::builder().text(app.fmt.get().editable().format(initial)).xalign(1.0).build();
     entry.set_enable_undo(false);
     let dd = choice_dropdown(options);
@@ -514,7 +523,7 @@ pub fn prompt_amount_choice(
     b.append(&labelled("Amount", &entry));
     b.append(&labelled(label, &dd));
     let e = entry.clone();
-    ask(app, title, "", Some(b.upcast_ref()), action, false, Some(&entry), move |app| match app.fmt.get().parse(&e.text()) {
+    ask(app, title, "", Some(b.upcast_ref()), action, false, Some(&entry), move |app| match fmt0.parse(&e.text()) {
         Some(v) if v > 0 => {
             cb(app, v, dd.selected() as usize);
             true

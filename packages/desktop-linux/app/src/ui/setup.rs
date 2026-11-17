@@ -43,7 +43,8 @@ struct Setup {
 fn friendly(e: &SyncError) -> String {
     match e {
         SyncError::Network(_) => "Couldn't reach the server. Check the address and your connection.".into(),
-        SyncError::Unauthorized => "The password is incorrect.".into(),
+        SyncError::InvalidPassword => "The password is incorrect.".into(),
+        SyncError::Unauthorized => "Your session ended. Sign in again.".into(),
         SyncError::DecryptFailure { .. } => "Couldn't decrypt this budget with that password.".into(),
         other => other.to_string(),
     }

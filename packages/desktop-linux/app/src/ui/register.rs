@@ -1677,7 +1677,9 @@ impl Register {
         let entry2 = entry.clone();
         d.connect_response(Some("ok"), move |d, _| {
             let Some(app) = weak.upgrade() else { return };
-            let Some(target) = app.fmt.get().parse(&entry2.text()) else {
+            // Read in the format the field was filled with, even if a sync
+            // changed it while the dialog was open.
+            let Some(target) = fmt.editable().parse(&entry2.text()) else {
                 app.toast("That isn't a valid amount.");
                 // Show it again with what was typed, to correct it.
                 let (d, e, w) = (d.clone(), entry2.clone(), app.window.clone());

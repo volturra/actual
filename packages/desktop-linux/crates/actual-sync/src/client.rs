@@ -203,7 +203,7 @@ impl ServerClient {
         // The server answers a wrong password with 400 `invalid-password`,
         // which `check` already turns into an error.
         let wrong = |e: SyncError| match e {
-            SyncError::Server(reason) if reason == "invalid-password" => SyncError::Unauthorized,
+            SyncError::Server(reason) if reason == "invalid-password" => SyncError::InvalidPassword,
             other => other,
         };
         let r: R = Self::unwrap_ok(&Self::check(res).map_err(wrong)?).map_err(wrong)?;
