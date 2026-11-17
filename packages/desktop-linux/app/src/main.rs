@@ -93,8 +93,8 @@ fn show_setup(app: &adw::Application, parent: Option<&gtk::Window>) {
     let a = app.clone();
     ui::setup::show(app, parent, move |req| {
         // Close the budget that's open (its engine pushes pending changes).
-        if let Some(cur) = CURRENT.with(|c| c.borrow_mut().take()) {
-            cur.window.close();
+        if !close_current() {
+            return;
         }
         if let Err(e) = open_budget(&a, req) {
             let a2 = a.clone();
@@ -108,10 +108,20 @@ fn show_setup(app: &adw::Application, parent: Option<&gtk::Window>) {
             });
         }
     }, || {
-        if let Some(cur) = CURRENT.with(|c| c.borrow_mut().take()) {
-            cur.window.close();
-        }
+        close_current();
     });
+}
+
+/// Closes the open budget's window. False when it stays open (it asked
+/// about an edit it can't save).
+fn close_current() -> bool {
+    let Some(cur) = CURRENT.with(|c| c.borrow_mut().take()) else { return true };
+    cur.window.close();
+    if cur.window.is_visible() {
+        CURRENT.with(|c| *c.borrow_mut() = Some(cur));
+        return false;
+    }
+    true
 }
 
 fn open_budget(app: &adw::Application, req: OpenRequest) -> Result<(), String> {
@@ -171,8 +181,8 @@ fn redownload(app: &adw::Application, dir: BudgetDir, key: Option<Key>, client: 
     // Closing the last window would end the app before the download
     // finishes; hold it open until then.
     let guard = app.hold();
-    if let Some(cur) = CURRENT.with(|c| c.borrow_mut().take()) {
-        cur.window.close();
+    if !close_current() {
+        return;
     }
     let local_id = dir.path.file_name().map(|n| n.to_string_lossy().to_string());
     let root = dir.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(config::budgets_dir);

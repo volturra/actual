@@ -442,7 +442,10 @@ impl BudgetView {
         drop(data_ref);
         self.grid_holder.set_child(Some(&grid));
         *self.entries.borrow_mut() = entries;
-        if let Some((cat, m)) = self.focus_next.borrow_mut().take() {
+        // Taken first: grab_focus below can commit another cell, which sets
+        // focus_next again.
+        let next = self.focus_next.borrow_mut().take();
+        if let Some((cat, m)) = next {
             let target = self.entries.borrow().iter().find(|(c, mm, _)| *c == cat && *mm == m).map(|(_, _, e)| e.clone());
             if let Some(e) = target {
                 e.grab_focus();

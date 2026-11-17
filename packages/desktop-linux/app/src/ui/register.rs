@@ -691,10 +691,17 @@ impl Register {
         let show_balance = account.is_some() && filter.is_none() && query.is_empty();
         self.balance_col.set_visible(show_balance);
         if show_balance {
+            // A split counts as its lines (like the account balances), so
+            // an amount left to assign doesn't count.
+            let split_parents: std::collections::HashSet<String> = rows.iter().filter_map(|r| r.parent.clone()).collect();
             let mut running = 0i64;
             for r in rows.iter_mut().rev() {
-                if !r.is_child {
+                if r.is_child {
                     running += r.amount;
+                } else {
+                    if !split_parents.contains(&r.id) {
+                        running += r.amount;
+                    }
                     r.balance = Some(running);
                 }
             }
@@ -1140,10 +1147,9 @@ impl Register {
 
     /// Saves without moving focus or resetting the editor for the next entry.
     /// Saves the editor if it holds changes (when the window closes).
-    pub fn save_pending(self: &Rc<Self>) {
-        if self.editor_dirty() {
-            self.save_quiet();
-        }
+    /// False when there's an edit that can't be saved.
+    pub fn save_pending(self: &Rc<Self>) -> bool {
+        !self.editor_dirty() || self.save_quiet()
     }
 
     fn save_quiet(self: &Rc<Self>) -> bool {

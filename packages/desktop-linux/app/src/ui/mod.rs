@@ -277,11 +277,28 @@ impl App {
 
         let engine = app.engine.clone();
         let weak = Rc::downgrade(&app);
-        app.window.connect_close_request(move |_| {
+        let discard = Rc::new(Cell::new(false));
+        app.window.connect_close_request(move |w| {
             // Queue the register's unsaved edit before the engine stops.
             if let Some(a) = weak.upgrade() {
                 if let Some(r) = a.register.borrow().clone() {
-                    r.save_pending();
+                    if !r.save_pending() && !discard.get() {
+                        // An edit that can't be saved: ask before losing it.
+                        let d = adw::AlertDialog::new(
+                            Some("Discard the unsaved transaction?"),
+                            Some("The transaction being edited has a value that can't be saved."),
+                        );
+                        d.add_responses(&[("keep", "Keep editing"), ("discard", "Discard")]);
+                        d.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
+                        d.set_close_response("keep");
+                        let (w2, discard) = (w.clone(), discard.clone());
+                        d.connect_response(Some("discard"), move |_, _| {
+                            discard.set(true);
+                            w2.close();
+                        });
+                        d.present(Some(w));
+                        return glib::Propagation::Stop;
+                    }
                 }
                 if let Some(b) = a.budget_view.borrow().clone() {
                     b.commit_pending();
