@@ -1,0 +1,11 @@
+== node
+== /home/user/aot/quickjs/qjs
+FAIL typeof Intl got "undefined"
+FAIL typeof TextEncoder got "undefined"
+== /home/user/aot/hermes-build/bin/hermes
+FAIL typeof Intl got "undefined"
+FAIL per-iteration let binding in for-of got "bb"
+== npx --prefix /home/user/aot/npmtools porf
+FAIL integer keys first (JSON.stringify) got "{\"hash\":1,\"1\":2,\"0\":3}"
+FAIL for-in order got "hash,1,0"
+FAIL Unicode toUpperCase got "ß"

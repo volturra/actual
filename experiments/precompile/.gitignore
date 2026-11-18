@@ -1,0 +1,6 @@
+out/
+bin/
+logs/
+logs.*
+__pycache__/
+workloads/goal-template.generated.js

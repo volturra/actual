@@ -1,0 +1,18 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "extends": ["../../.oxlintrc.json"],
+  "ignorePatterns": [
+    "shims/prelude.js",
+    "semantics.js",
+    "workloads/goal-template.generated.js"
+  ],
+  "rules": {
+    "actual/enforce-boundaries": "off",
+    "actual/no-extraneous-dependencies": "off"
+  },
+  "env": {
+    "node": true,
+    "browser": true,
+    "es2024": true
+  }
+}

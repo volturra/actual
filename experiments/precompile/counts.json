@@ -1,0 +1,11 @@
+{
+  "crdt": 20,
+  "protobuf": 1000,
+  "arithmetic": 300,
+  "months": 100,
+  "transactions": 500,
+  "rules": 300,
+  "templates": 2000,
+  "graph": 500,
+  "gc": 10
+}
