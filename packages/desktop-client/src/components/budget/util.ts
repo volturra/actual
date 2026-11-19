@@ -163,7 +163,7 @@ export function makeBalanceAmountStyle(
     if (greyed) {
       return greyed;
     }
-    return { color: theme.budgetNumberPositive };
+    return { color: theme.budgetBalancePositive };
   } else {
     if (getGoalDifference(budgetedValue, goalValue, decimalPlaces) < 0) {
       return { color: theme.templateNumberUnderFunded };

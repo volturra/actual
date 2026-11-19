@@ -72,7 +72,7 @@ describe('makeBalanceAmountStyle', () => {
       color: theme.budgetNumberNegative,
     });
     expect(makeBalanceAmountStyle(40000)).toEqual({
-      color: theme.budgetNumberPositive,
+      color: theme.budgetBalancePositive,
     });
     expect(makeBalanceAmountStyle(0)).toEqual({
       color: theme.budgetNumberZero,

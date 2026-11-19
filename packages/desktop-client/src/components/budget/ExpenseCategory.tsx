@@ -80,6 +80,8 @@ export const ExpenseCategory = memo(function ExpenseCategory({
       collapsed
       style={{
         backgroundColor: theme.budgetCurrentMonth,
+        // Soften the lines between categories so group rows and months stand out
+        '--color-tableBorder': theme.budgetCategoryBorder,
         opacity: cat.hidden || categoryGroup?.hidden ? 0.5 : undefined,
       }}
     >

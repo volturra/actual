@@ -452,5 +452,18 @@
       "#f59e0b"
     ],
     "mode": "dark"
+  },
+  {
+    "name": "Actual Classic",
+    "repo": "volturra/actual-classic-theme",
+    "colors": [
+      "#0c0d22",
+      "#15172d",
+      "#212445",
+      "#4254f0",
+      "#78ba21",
+      "#f17476"
+    ],
+    "mode": "dark"
   }
 ]

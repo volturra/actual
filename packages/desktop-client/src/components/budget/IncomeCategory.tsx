@@ -2,6 +2,7 @@
 import React, { memo } from 'react';
 import type { ComponentProps } from 'react';
 
+import { theme } from '@actual-app/components/theme';
 import type { CategoryEntity } from '@actual-app/core/types/models';
 
 import { DropHighlight, useDraggable, useDroppable } from '#components/sort';
@@ -62,6 +63,8 @@ export const IncomeCategory = memo(function IncomeCategory({
       innerRef={dropRef}
       collapsed
       style={{
+        // Soften the lines between categories so group rows and months stand out
+        '--color-tableBorder': theme.budgetCategoryBorder,
         opacity: cat.hidden ? 0.5 : undefined,
       }}
     >

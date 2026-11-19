@@ -678,6 +678,22 @@ export const colors = {
     dark: 'navy800',
     midnight: 'gray800',
   },
+  budgetCategoryBorder: {
+    all: {
+      raw: 'color-mix(in srgb, var(--color-tableBorder) 40%, var(--color-budgetCurrentMonth))',
+    },
+    description:
+      'Hairline between category rows, softer than the group and month lines',
+  },
+  budgetBalancePositive: { all: { ref: 'numberPositive' } },
+  budgetBalancePillBackground: {
+    all: { raw: 'color-mix(in srgb, currentColor 16%, transparent)' },
+    description: 'Tint behind non-zero category balances, from the text color',
+  },
+  budgetMonthDivider: {
+    all: { ref: 'tableBorder' },
+    description: 'Vertical line between months on the budget page',
+  },
 
   floatingActionBarBackground: {
     light: 'purple400',
