@@ -9,6 +9,11 @@ describe('resolved theme colors', () => {
   it.each(themeNames)('%s resolves every token', theme => {
     const resolved = Object.fromEntries(
       Object.keys(colors).map(name => {
+        // Tokens mixed from currentColor depend on where they're used, so
+        // they have no fixed value; record their CSS instead.
+        if (JSON.stringify(colors[name]).includes('currentColor')) {
+          return [name, 'depends on currentColor'];
+        }
         const color = resolveToken(name, theme, colors, palette);
         const value = { mode: 'rgb' as const, ...color };
         return [name, color.alpha < 1 ? formatHex8(value) : formatHex(value)];

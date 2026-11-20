@@ -2,9 +2,13 @@
 
 exports[`resolved theme colors > dark resolves every token 1`] = `
 {
+  "budgetBalancePillBackground": "depends on currentColor",
+  "budgetBalancePositive": "#65d6ad",
+  "budgetCategoryBorder": "#324c65",
   "budgetCurrentMonth": "#243b53",
   "budgetHeaderCurrentMonth": "#334e68",
   "budgetHeaderOtherMonth": "#243b53",
+  "budgetMonthDivider": "#486581",
   "budgetNumberNegative": "#ff9b9b",
   "budgetNumberNeutral": "#d9e2ec",
   "budgetNumberPositive": "#d9e2ec",
@@ -240,9 +244,13 @@ exports[`resolved theme colors > dark resolves every token 1`] = `
 
 exports[`resolved theme colors > light resolves every token 1`] = `
 {
+  "budgetBalancePillBackground": "depends on currentColor",
+  "budgetBalancePositive": "#147d64",
+  "budgetCategoryBorder": "#f6f7f9",
   "budgetCurrentMonth": "#ffffff",
   "budgetHeaderCurrentMonth": "#f6f8fa",
   "budgetHeaderOtherMonth": "#f0f4f6",
+  "budgetMonthDivider": "#e8ecf0",
   "budgetNumberNegative": "#e12d39",
   "budgetNumberNeutral": "#272630",
   "budgetNumberPositive": "#272630",
@@ -478,9 +486,13 @@ exports[`resolved theme colors > light resolves every token 1`] = `
 
 exports[`resolved theme colors > midnight resolves every token 1`] = `
 {
+  "budgetBalancePillBackground": "depends on currentColor",
+  "budgetBalancePositive": "#65d6ad",
+  "budgetCategoryBorder": "#222431",
   "budgetCurrentMonth": "#141520",
   "budgetHeaderCurrentMonth": "#080811",
   "budgetHeaderOtherMonth": "#141520",
+  "budgetMonthDivider": "#373b4a",
   "budgetNumberNegative": "#ff9b9b",
   "budgetNumberNeutral": "#d4dae0",
   "budgetNumberPositive": "#d4dae0",
