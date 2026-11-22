@@ -71,7 +71,7 @@ describe('EnvelopeIncomeBalanceMenuModal', () => {
     expect(screen.queryByText(/funded/)).not.toBeInTheDocument();
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     expect(screen.getByText('1,200.00')).toHaveStyle({
-      color: theme.budgetNumberPositive,
+      color: theme.budgetBalancePositive,
     });
   });
 });
