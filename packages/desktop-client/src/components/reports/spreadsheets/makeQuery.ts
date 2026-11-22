@@ -11,14 +11,9 @@ export function makeQuery(
   filters: unknown[],
   groupBy?: string,
 ) {
-  // Weekly and Quarterly have no AQL date transform, so they are queried at a
-  // finer grain (days and months) and rolled up by the spreadsheets.
-  const intervalGroup =
-    interval === 'Monthly' || interval === 'Quarterly'
-      ? { $month: '$date' }
-      : interval === 'Yearly'
-        ? { $year: '$date' }
-        : { $day: '$date' };
+  const intervalFilter = getReportQueryDateTransform(interval);
+  const intervalGroup = { [intervalFilter]: '$date' };
+
   const query = q('transactions')
     //Apply filters and split by "Group By"
     .filter({
@@ -91,4 +86,18 @@ function dateRangeFilters(
     ];
   }
   return [{ date: { $gte: startDate } }, { date: { $lte: endDate } }];
+}
+
+export function getReportQueryDateTransform(interval: string) {
+  // Weekly and quarterly reports are queried by day and month, respectively,
+  // before the spreadsheets roll them up into report intervals.
+  switch (interval) {
+    case 'Yearly':
+      return '$year';
+    case 'Monthly':
+    case 'Quarterly':
+      return '$month';
+    default:
+      return '$day';
+  }
 }
