@@ -52,6 +52,8 @@ vi.mock('react-router', async importOriginal => ({
 
 vi.mock('@actual-app/core/platform/client/connection', () => ({
   send: mocks.send,
+  // The fork's shared report requests listen for data changes
+  listen: vi.fn(() => vi.fn()),
 }));
 
 // `setupTests.ts` imports `#redux/store` -> `#modals/modalsSlice` -> `#accounts`,
