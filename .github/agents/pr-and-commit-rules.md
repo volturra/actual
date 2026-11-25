@@ -7,8 +7,8 @@ This file lists the PR and commit rules you have to apply yourself.
 > description (no human-only summary or proof section is enforced), and GitHub
 > comments don't need a 🤖 prefix. The `[AI]` title prefix stays on this fork.
 > When opening a PR against actualbudget/actual itself, follow upstream's rules
-> instead (Human Summary left for the human author, Proof section, 🤖 prefix on
-> comments).
+> instead: leave the Human Summary for the human author, keep Description and
+> Testing to 150 words in total, add a Proof section, and prefix comments with 🤖.
 
 ## Pull Request Rules
 
