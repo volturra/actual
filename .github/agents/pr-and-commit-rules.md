@@ -3,29 +3,27 @@
 This file lists the PR and commit rules you have to apply yourself.
 
 > **Fork note (volturra/actual):** these rules are loosened from upstream
-> actualbudget/actual for work on this fork. Agents write the PR description,
-> and GitHub comments don't need a 🤖 prefix. The `[AI]` prefix stays so changes
-> can still be offered upstream later. When opening a PR against
-> actualbudget/actual itself, follow upstream's rules instead (blank PR
-> template, 🤖 prefix on comments).
+> actualbudget/actual for work on this fork. Agents write the whole PR
+> description (no human-only summary or proof section is enforced), and GitHub
+> comments don't need a 🤖 prefix. PR titles and commit messages take no prefix.
+> When opening a PR against actualbudget/actual itself, follow upstream's rules
+> instead: leave the Human Summary for the human author, keep Description and
+> Testing to 150 words in total, add a Proof section, and prefix comments with 🤖.
 
 ## Pull Request Rules
 
-### `[AI]` prefix on PR titles
+### Draft PRs
 
-**ALL pull request titles MUST be prefixed with `[AI]`** — you have to apply it
-yourself.
-
-**Examples:**
-
-- `[AI] Fix type error in account validation`
-- `Fix type error in account validation` (MISSING PREFIX — NOT ALLOWED)
+Open a PR as a draft while the work is still in progress, and mark it ready for
+review once it is done.
 
 ### PR description
 
 Use the PR template (`.github/PULL_REQUEST_TEMPLATE.md`) as the layout and fill
 it in, in English: what changed and why, related issues, and what you tested.
-Only check a checklist box when it is actually true.
+On this fork you may write the Human Summary too, and the Proof section is
+optional, whatever the template's comments say. Only check a checklist box when
+it is actually true.
 
 ## Do not create GitHub issues
 

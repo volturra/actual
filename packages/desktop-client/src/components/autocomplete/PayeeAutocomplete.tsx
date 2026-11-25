@@ -245,36 +245,36 @@ function PayeeList({
         },
       );
 
-      // Assign indexes in render order; offsets, as React Compiler rejects `i++` here.
+      // assign indexes in render order
+      function withIndex(
+        list: Array<PayeeAutocompleteItem>,
+        startIndex: number,
+      ) {
+        return list.map((item, index) => ({
+          ...item,
+          highlightedIndex: startIndex + index,
+        }));
+      }
+
       const newPayeeWithIndex = result.newPayee
         ? { ...result.newPayee, highlightedIndex: 0 }
         : null;
 
-      const nearbyOffset = newPayeeWithIndex ? 1 : 0;
-      const nearbyPayeesWithIndex = result.nearbyPayees.map((item, i) => ({
-        ...item,
-        highlightedIndex: nearbyOffset + i,
-      }));
+      const nearbyStart = result.newPayee ? 1 : 0;
+      const suggestedStart = nearbyStart + result.nearbyPayees.length;
+      const payeesStart = suggestedStart + result.suggestedPayees.length;
+      const transferStart = payeesStart + result.payees.length;
 
-      const suggestedOffset = nearbyOffset + nearbyPayeesWithIndex.length;
-      const suggestedPayeesWithIndex = result.suggestedPayees.map(
-        (item, i) => ({
-          ...item,
-          highlightedIndex: suggestedOffset + i,
-        }),
+      const nearbyPayeesWithIndex = withIndex(result.nearbyPayees, nearbyStart);
+      const suggestedPayeesWithIndex = withIndex(
+        result.suggestedPayees,
+        suggestedStart,
       );
-
-      const payeesOffset = suggestedOffset + suggestedPayeesWithIndex.length;
-      const payeesWithIndex = result.payees.map((item, i) => ({
-        ...item,
-        highlightedIndex: payeesOffset + i,
-      }));
-
-      const transferOffset = payeesOffset + payeesWithIndex.length;
-      const transferPayeesWithIndex = result.transferPayees.map((item, i) => ({
-        ...item,
-        highlightedIndex: transferOffset + i,
-      }));
+      const payeesWithIndex = withIndex(result.payees, payeesStart);
+      const transferPayeesWithIndex = withIndex(
+        result.transferPayees,
+        transferStart,
+      );
 
       return {
         newPayee: newPayeeWithIndex,

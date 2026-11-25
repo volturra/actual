@@ -4,7 +4,7 @@
 # Dispatches github MCP calls to the matching shared guard(s) in
 # scripts/agent-hooks/: issue_write must not create issues (no-issue-create.sh).
 # This fork doesn't wire upstream's 🤖-prefix (github-comment-style.sh) or
-# blank-PR-template (pr-template-blank.sh) guards; see
+# PR-description (pr-description.sh) guards; see
 # .github/agents/pr-and-commit-rules.md.
 # Cursor input on stdin: { tool_name, tool_input, ... }. Output on stdout:
 # { permission: "allow" | "deny", userMessage, agentMessage }.
