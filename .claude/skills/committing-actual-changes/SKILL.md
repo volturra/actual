@@ -13,7 +13,7 @@ It is the authoritative source for the rules you must apply yourself: the `[AI]`
 
 ## The one rule worth restating
 
-Every commit message and every pull request title MUST begin with `[AI]`. Commit messages are checked by the git-guard hook (a missing prefix is blocked before the commit lands), so the one that needs _your_ attention is the PR title — nothing checks it for you, and the cost of forgetting it is high since the PR has to be renamed by hand. Examples:
+Every commit message and every pull request title MUST begin with `[AI]`. Nothing checks either for you (upstream dropped the prefix and its git-guard check; this fork keeps the rule), and the cost of forgetting it is high since the PR has to be renamed by hand. Examples:
 
 - `[AI] Fix type error in account validation` — correct
 - `Fix type error in account validation` — wrong, missing prefix
@@ -22,6 +22,6 @@ The PR-description rule and the rest live in the rules file. Read it before each
 
 ## Why this matters
 
-Maintainers triage AI-authored contributions separately, and the `[AI]` prefix is what makes that triage fast — it also drives the automatic `"AI generated"` PR label, so getting the prefix right is the one action that gates the whole triage path. Without it the PR looks like a normal human contribution and the wrong review process gets applied.
+The fork owner triages AI-authored contributions separately, and the `[AI]` prefix is what makes that triage fast. Without it the PR looks like a normal human contribution and the wrong review process gets applied.
 
 The rules file is short. Read it.

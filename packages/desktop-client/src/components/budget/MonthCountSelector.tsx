@@ -41,12 +41,14 @@ export function MonthCountSelector({
   }
 
   const calendars = Array.from({ length: displayMax }, (_, index) => {
-    const count = index + 1;
+    const monthCount = index + 1;
     return (
       <Calendar
-        key={count}
-        color={maxMonths >= count ? theme.pageTextLight : theme.pageTextSubdued}
-        onClick={() => onChange(count)}
+        key={monthCount}
+        color={
+          maxMonths >= monthCount ? theme.pageTextLight : theme.pageTextSubdued
+        }
+        onClick={() => onChange(monthCount)}
       />
     );
   });
