@@ -12,10 +12,10 @@ This file lists the PR and commit rules you have to apply yourself.
 
 ## Pull Request Rules
 
-### `[AI]` prefix on PR titles
+### `[AI]` prefix on PR titles and commit messages
 
-**ALL pull request titles MUST be prefixed with `[AI]`** — you have to apply it
-yourself.
+**ALL pull request titles and commit messages MUST be prefixed with `[AI]`** —
+you have to apply it yourself; no hook checks it.
 
 **Examples:**
 
@@ -31,7 +31,9 @@ review once it is done.
 
 Use the PR template (`.github/PULL_REQUEST_TEMPLATE.md`) as the layout and fill
 it in, in English: what changed and why, related issues, and what you tested.
-Only check a checklist box when it is actually true.
+On this fork you may write the Human Summary too, and the Proof section is
+optional, whatever the template's comments say. Only check a checklist box when
+it is actually true.
 
 ## Do not create GitHub issues
 
