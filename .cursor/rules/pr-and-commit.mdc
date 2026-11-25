@@ -12,7 +12,3 @@ and git rules are handled by tooling.
 ## Pull Request Rules
 
 Read `.github/agents/pr-and-commit-rules.md` before creating a pull request.
-
-- **ALL pull request titles and commit messages MUST be prefixed with `[AI]`**
-  on this fork. This isn't enforced automatically — you have to apply it
-  yourself.
