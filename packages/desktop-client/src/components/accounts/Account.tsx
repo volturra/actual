@@ -1197,6 +1197,13 @@ class AccountInternal extends PureComponent<
     }));
   };
 
+  onExitReconciling = () => {
+    this.setState(state => ({
+      reconcileAmount: null,
+      showCleared: state.prevShowCleared,
+    }));
+  };
+
   onDoneReconciling = async () => {
     const { accountId } = this.props;
     const account = this.props.accounts.find(
@@ -1208,17 +1215,21 @@ class AccountInternal extends PureComponent<
 
     const { reconcileAmount } = this.state;
 
-    await reconciliation.finishReconciliation(account.id, reconcileAmount, () =>
-      this.lockTransactions(),
+    const didReconcile = await reconciliation.finishReconciliation(
+      account.id,
+      reconcileAmount,
+      () => this.lockTransactions(),
     );
 
-    const lastReconciled = new Date().getTime().toString();
-    this.props.onUpdateAccount({ ...account, last_reconciled: lastReconciled });
+    if (didReconcile) {
+      const lastReconciled = new Date().getTime().toString();
+      this.props.onUpdateAccount({
+        ...account,
+        last_reconciled: lastReconciled,
+      });
+    }
 
-    this.setState(state => ({
-      reconcileAmount: null,
-      showCleared: state.prevShowCleared,
-    }));
+    this.onExitReconciling();
   };
 
   onCreateReconciliationTransaction = async (diff: number) => {
@@ -2004,6 +2015,7 @@ class AccountInternal extends PureComponent<
                 saveNameError={this.state.nameError}
                 onReconcile={this.onReconcile}
                 onDoneReconciling={this.onDoneReconciling}
+                onExitReconciling={this.onExitReconciling}
                 onCreateReconciliationTransaction={
                   this.onCreateReconciliationTransaction
                 }
