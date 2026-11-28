@@ -8,6 +8,11 @@ import type { ThemeName, TokenDefinition, TokenValue } from './types';
 const definitions: Record<string, TokenDefinition> = colors;
 
 function valueIn(name: string, theme: ThemeName) {
+  // Colors mixed from currentColor depend on where they're used, so they
+  // have no fixed value to show.
+  if (JSON.stringify(definitions[name]).includes('currentColor')) {
+    return 'Depends on the text color';
+  }
   const color = resolveToken(name, theme, colors, palette);
   const rgb = { mode: 'rgb' as const, ...color };
   return `\`${color.alpha < 1 ? formatHex8(rgb) : formatHex(rgb)}\``;

@@ -568,22 +568,19 @@ export const colors = {
     dark: 'navy800',
     midnight: 'gray800',
   },
+  // Hairline between category rows, softer than the group and month lines.
   budgetCategoryBorder: {
     all: {
       raw: 'color-mix(in srgb, var(--color-tableBorder) 40%, var(--color-budgetCurrentMonth))',
     },
-    description:
-      'Hairline between category rows, softer than the group and month lines',
   },
   budgetBalancePositive: { all: { ref: 'numberPositive' } },
+  // Tint behind non-zero category balances, taken from the text color.
   budgetBalancePillBackground: {
     all: { raw: 'color-mix(in srgb, currentColor 16%, transparent)' },
-    description: 'Tint behind non-zero category balances, from the text color',
   },
-  budgetMonthDivider: {
-    all: { ref: 'tableBorder' },
-    description: 'Vertical line between months on the budget page',
-  },
+  // Vertical line between months on the budget page.
+  budgetMonthDivider: { all: { ref: 'tableBorder' } },
 
   floatingActionBarBackground: { all: { ref: 'accent' } },
   floatingActionBarBorder: {
