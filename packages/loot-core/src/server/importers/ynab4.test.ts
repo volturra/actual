@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { send } from '#server/main-app';
 import { makeChild } from '#shared/transactions';
 
-import { doImport, getBudgetNotes, importTransactions } from './ynab4';
+import {
+  doImport,
+  getBudgetNotes,
+  importPayees,
+  importTransactions,
+} from './ynab4';
 import type { MonthlyBudget, MonthlySubCategoryBudget } from './ynab4-types';
 import type * as YNAB4 from './ynab4-types';
 
@@ -107,6 +112,131 @@ describe('importTransactions', () => {
 
     expect(transferChild.payee).toBe('transfer-payee-2');
     expect(transferChild.transfer_id).toBe(entityIdMap.get('txn-transfer-in'));
+  });
+
+  it('gives a transfer whose other side was deleted an ordinary payee', async () => {
+    const entityIdMap = new Map<string, string>([
+      ['ynab-account-1', 'actual-account-1'],
+      ['ynab-account-2', 'actual-account-2'],
+      // importPayees maps YNAB4 transfer payees onto Actual's
+      ['ynab-transfer-payee-2', 'transfer-payee-2'],
+    ]);
+    let createdPayees = 0;
+
+    vi.mocked(send).mockImplementation(async (name: string) => {
+      switch (name) {
+        case 'api/categories-get':
+          return [{ id: 'income-id', name: 'Income' }];
+        case 'api/accounts-get':
+          return [
+            { id: 'actual-account-1', offbudget: false },
+            { id: 'actual-account-2', offbudget: false },
+          ];
+        case 'api/payees-get':
+          return [
+            { id: 'transfer-payee-1', transfer_acct: 'actual-account-1' },
+            { id: 'transfer-payee-2', transfer_acct: 'actual-account-2' },
+          ];
+        case 'api/payee-create':
+          createdPayees++;
+          return 'one-sided-payee';
+        case 'api/transactions-add':
+          return null;
+        default:
+          throw new Error(`Unexpected send call: ${name}`);
+      }
+    });
+
+    await importTransactions(
+      {
+        payees: [
+          {
+            entityId: 'ynab-transfer-payee-2',
+            name: 'Transfer : Savings',
+            targetAccountId: 'ynab-account-2',
+          },
+        ],
+        accounts: [],
+        transactions: [
+          {
+            entityId: 'txn-out',
+            accountId: 'ynab-account-1',
+            payeeId: 'ynab-transfer-payee-2',
+            amount: -100,
+            date: '2024-10-07',
+            cleared: 'Uncleared',
+            targetAccountId: 'ynab-account-2',
+            transferTransactionId: 'txn-in',
+          },
+          {
+            entityId: 'txn-in',
+            accountId: 'ynab-account-2',
+            amount: 100,
+            date: '2024-10-07',
+            cleared: 'Uncleared',
+            targetAccountId: 'ynab-account-1',
+            transferTransactionId: 'txn-out',
+            isTombstone: true,
+          },
+        ],
+      } as unknown as YNAB4.YFull,
+      entityIdMap,
+      vi.fn(),
+    );
+
+    const imported = vi
+      .mocked(send)
+      .mock.calls.filter(([name]) => name === 'api/transactions-add')
+      .flatMap(([, args]) => args.transactions);
+    expect(imported).toHaveLength(1);
+    expect(imported[0].transfer_id).toBeNull();
+    expect(imported[0].payee).toBe('one-sided-payee');
+    expect(imported[0].imported_payee).toBe('Transfer : Savings');
+    expect(createdPayees).toBe(1);
+  });
+});
+
+describe('importPayees', () => {
+  it("maps YNAB4 transfer payees onto Actual's transfer payees", async () => {
+    const entityIdMap = new Map<string, string>([
+      ['ynab-account-2', 'actual-account-2'],
+    ]);
+
+    vi.mocked(send).mockImplementation(async (name: string) => {
+      switch (name) {
+        case 'api/payees-get':
+          return [
+            { id: 'transfer-payee-2', transfer_acct: 'actual-account-2' },
+          ];
+        case 'api/payee-create':
+          return 'created-payee';
+        default:
+          throw new Error(`Unexpected send call: ${name}`);
+      }
+    });
+
+    await importPayees(
+      {
+        payees: [
+          {
+            entityId: 'ynab-transfer-payee',
+            name: 'Transfer : Savings',
+            targetAccountId: 'ynab-account-2',
+          },
+          { entityId: 'ynab-normal-payee', name: 'Coffee Shop' },
+        ],
+      } as unknown as YNAB4.YFull,
+      entityIdMap,
+      vi.fn(),
+    );
+
+    expect(entityIdMap.get('ynab-transfer-payee')).toBe('transfer-payee-2');
+    expect(entityIdMap.get('ynab-normal-payee')).toBe('created-payee');
+    const created = vi
+      .mocked(send)
+      .mock.calls.filter(([name]) => name === 'api/payee-create')
+      .map(([, args]) => args.payee.name);
+    expect(created).toEqual(['Coffee Shop']);
   });
 });
 
