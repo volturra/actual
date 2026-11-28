@@ -2,6 +2,7 @@ import {
   clampChroma,
   converter,
   formatHex,
+  formatHex8,
   interpolate,
   modeHsl,
   modeLrgb,
@@ -11,6 +12,7 @@ import {
   parse,
   useMode as registerMode,
   wcagContrast,
+  wcagLuminance,
 } from 'culori/fn';
 
 registerMode(modeRgb);
@@ -19,4 +21,13 @@ registerMode(modeLrgb);
 registerMode(modeOklab);
 registerMode(modeOklch);
 
-export { clampChroma, converter, formatHex, interpolate, parse, wcagContrast };
+export {
+  clampChroma,
+  converter,
+  formatHex,
+  formatHex8,
+  interpolate,
+  parse,
+  wcagContrast,
+  wcagLuminance,
+};
